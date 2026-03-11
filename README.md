@@ -13,7 +13,7 @@ It acts as a privacy-first, on-device alternative to Pixel Screenshots, utilizin
 *   **Smart Organization:** Automatically extracts tags and summaries for a clutter-free gallery experience.
 
 ## Why On-Device AI?
-Skarmetoo utilizes local models (via Google LiteRT) because:
+Skarmetoo utilizes local models [gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/tree/main) (via Google LiteRT) because:
 1.  **Total Privacy:** No cloud APIs mean your personal visual data is never uploaded, scanned, or stored on remote servers.
 2.  **No Costs or Keys:** You don't need to manage API keys or worry about daily quotas or monthly billing. It is your hardware doing the work.
 3.  **No Restrictions:** Unlike cloud AI services bound by corporate content policies and server-side filters, the model runs entirely under your control, no content moderation, no request blocking, no one looking over your shoulder. What you do with it is your business.
