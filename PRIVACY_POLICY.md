@@ -43,3 +43,7 @@ We may update our Privacy Policy from time to time. Thus, you are advised to rev
 ## 8. Contact Us
 
 If you have any questions or suggestions about our Privacy Policy, do not hesitate to contact us at the GitHub repository or through the developer profile.
+
+<a href="https://buymeacoffee.com/derykcihc" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
+If you appreciate the project and want to help keep the app evolving, you can donate via Buy Me a Coffee. Otherwise, it is always free on GitHub!

@@ -1,15 +1,17 @@
 package com.deryk.skarmetoo
 
-import android.os.Build
+import android.annotation.SuppressLint
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,11 +19,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.Image
 
 // =============================================
@@ -69,19 +77,7 @@ fun SettingsScreen(
         treeUri?.let { viewModel.loadImagesFromFolder(it) }
     }
 
-    // Export launcher
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        uri?.let { viewModel.exportData(it) }
-    }
 
-    // Import launcher
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let { viewModel.importData(it) }
-    }
 
     Column(
         modifier = Modifier
@@ -221,7 +217,7 @@ fun SettingsScreen(
                             folderImageCounts.entries.forEachIndexed { index, entry ->
                                 val folderName = try {
                                     android.net.Uri.decode(android.net.Uri.parse(entry.key).lastPathSegment?.substringAfterLast(":") ?: "Folder")
-                                } catch (e: Exception) {
+                                } catch (_: Exception) {
                                     "Folder"
                                 }
                                 val percentage = (entry.value.toFloat() / totalInMap * 100).toInt()
@@ -257,7 +253,7 @@ fun SettingsScreen(
                         contentPadding = PaddingValues(vertical = 12.dp),
                         enabled = sourceFolders.isNotEmpty()
                     ) {
-                        Icon(Icons.Rounded.FormatListBulleted, null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.AutoMirrored.Rounded.FormatListBulleted, null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Manage Folders", fontWeight = FontWeight.SemiBold)
                     }
@@ -535,6 +531,7 @@ fun SettingsScreen(
                         )
                         HorizontalDivider()
                         
+                        @SuppressLint("SetJavaScriptEnabled")
                         androidx.compose.ui.viewinterop.AndroidView(
                             factory = { context ->
                                 android.webkit.WebView(context).apply {
@@ -666,6 +663,93 @@ fun SettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+
+        // Buy Me a Coffee
+        val uriHandler = LocalUriHandler.current
+        Surface(
+            onClick = { uriHandler.openUri("https://buymeacoffee.com/derykcihc") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .graphicsLayer {
+                    shadowElevation = 6.dp.toPx()
+                    shape = RoundedCornerShape(24.dp)
+                    clip = true
+                    spotShadowColor = Color(0xFFFFDD00).copy(alpha = 0.5f)
+                    ambientShadowColor = Color(0xFFFFDD00).copy(alpha = 0.5f)
+                },
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFFFFDD00), // BMC Yellow
+            shadowElevation = 6.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(vertical = 16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Rounded.Coffee,
+                    contentDescription = null,
+                    tint = Color(0xFF0D1B2A),
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    "Buy me a coffee",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF0D1B2A)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "If you appreciate the idea and want to help keep the app available on the Play Store, you can donate via Buy Me a Coffee. Otherwise, it's always free on GitHub!",
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 32.dp),
+            lineHeight = 18.sp
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Text(
+            text = buildAnnotatedString {
+                withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+                    append("Have bugs, feedback, or suggestions?\nLeave it in the ")
+                }
+                withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline)) {
+                    append("GitHub repository!")
+                }
+            },
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clickable {
+                    uriHandler.openUri("https://github.com/deRykcihC/skarmetoo")
+                }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // Privacy Policy Link
+        TextButton(
+            onClick = { uriHandler.openUri("https://github.com/deRykcihC/skarmetoo/blob/master/PRIVACY_POLICY.md") },
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Text(
+                "Privacy Policy",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
     }
 
     if (showManageFoldersDialog) {
@@ -690,7 +774,7 @@ fun SettingsScreen(
                         sourceFolders.forEach { uriStr ->
                             val folderName = try {
                                 android.net.Uri.decode(android.net.Uri.parse(uriStr).lastPathSegment?.substringAfterLast(":") ?: "Folder")
-                            } catch (e: Exception) {
+                            } catch (_: Exception) {
                                 "Folder"
                             }
                             Surface(
