@@ -13,7 +13,7 @@ data class ChatMessage(
     val text: String,
     val isUser: Boolean,
     val isGenerating: Boolean = false,
-    val image: Bitmap? = null
+    val image: Bitmap? = null,
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -55,23 +55,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val currentMessages = _messages.value.toMutableList()
                 if (currentMessages.isNotEmpty() && !currentMessages.last().isUser) {
                     val lastMessage = currentMessages.last()
-                    currentMessages[currentMessages.size - 1] = lastMessage.copy(
-                        text = lastMessage.text + partialResult,
-                        isGenerating = !done
-                    )
+                    currentMessages[currentMessages.size - 1] =
+                        lastMessage.copy(
+                            text = lastMessage.text + partialResult,
+                            isGenerating = !done,
+                        )
                     _messages.value = currentMessages
                 }
             }
         }
     }
 
-    fun initializeModel(path: String, useGpu: Boolean = false) {
+    fun initializeModel(
+        path: String,
+        useGpu: Boolean = false,
+    ) {
         llmManager.initializeModel(path, useGpu = useGpu)
     }
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
-        
+
         val newMessages = _messages.value.toMutableList()
         newMessages.add(ChatMessage(text = text, isUser = true))
         newMessages.add(ChatMessage(text = "", isUser = false, isGenerating = true))
@@ -80,7 +84,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         llmManager.generateResponse(text)
     }
 
-    fun sendImageMessage(bitmap: Bitmap, prompt: String) {
+    fun sendImageMessage(
+        bitmap: Bitmap,
+        prompt: String,
+    ) {
         val displayPrompt = prompt.ifBlank { "Describe this image in detail." }
 
         val newMessages = _messages.value.toMutableList()

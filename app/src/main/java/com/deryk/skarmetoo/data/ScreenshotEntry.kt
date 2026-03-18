@@ -8,10 +8,13 @@ data class ScreenshotEntry(
     val tags: String = "",
     val analyzedAt: Long = 0,
     val isAnalyzing: Boolean = false,
-    val note: String = ""
+    val note: String = "",
 ) {
     fun getTagList(): List<String> {
-        return if (tags.isBlank()) emptyList()
-        else tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        return if (tags.isBlank()) {
+            emptyList()
+        } else {
+            tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        }
     }
 }

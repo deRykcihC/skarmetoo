@@ -12,7 +12,6 @@ import java.io.InputStreamReader
  * Only exports hash + summary + tags (no image data or device-specific URIs).
  */
 object DataManager {
-
     private const val KEY_VERSION = "version"
     private const val KEY_ENTRIES = "entries"
     private const val KEY_HASH = "imageHash"
@@ -29,19 +28,21 @@ object DataManager {
         val jsonArray = JSONArray()
 
         for (entry in entries) {
-            val obj = JSONObject().apply {
-                put(KEY_HASH, entry.imageHash)
-                put(KEY_SUMMARY, entry.summary)
-                put(KEY_TAGS, entry.tags)
-                put(KEY_ANALYZED_AT, entry.analyzedAt)
-            }
+            val obj =
+                JSONObject().apply {
+                    put(KEY_HASH, entry.imageHash)
+                    put(KEY_SUMMARY, entry.summary)
+                    put(KEY_TAGS, entry.tags)
+                    put(KEY_ANALYZED_AT, entry.analyzedAt)
+                }
             jsonArray.put(obj)
         }
 
-        val root = JSONObject().apply {
-            put(KEY_VERSION, CURRENT_VERSION)
-            put(KEY_ENTRIES, jsonArray)
-        }
+        val root =
+            JSONObject().apply {
+                put(KEY_VERSION, CURRENT_VERSION)
+                put(KEY_ENTRIES, jsonArray)
+            }
 
         return root.toString(2)
     }
@@ -49,7 +50,11 @@ object DataManager {
     /**
      * Export to a file via content URI (from SAF createDocument).
      */
-    fun exportToUri(context: Context, uri: Uri, db: ScreenshotDatabase): Boolean {
+    fun exportToUri(
+        context: Context,
+        uri: Uri,
+        db: ScreenshotDatabase,
+    ): Boolean {
         return try {
             val json = exportToJson(db)
             context.contentResolver.openOutputStream(uri)?.use { outputStream ->
@@ -65,7 +70,11 @@ object DataManager {
     /**
      * Import from a JSON file URI. Returns the number of entries imported.
      */
-    fun importFromUri(context: Context, uri: Uri, db: ScreenshotDatabase): Int {
+    fun importFromUri(
+        context: Context,
+        uri: Uri,
+        db: ScreenshotDatabase,
+    ): Int {
         return try {
             val inputStream = context.contentResolver.openInputStream(uri) ?: return 0
             val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))

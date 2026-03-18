@@ -9,7 +9,6 @@ import android.graphics.Color
  * Same image on different devices → same hash.
  */
 object ImageHasher {
-
     /**
      * Compute a difference hash (dHash) for the given bitmap.
      * 1. Resize to 9x8 grayscale
@@ -44,7 +43,10 @@ object ImageHasher {
      * Lower = more similar. 0 = identical.
      * Typically < 10 means same image with minor differences.
      */
-    fun hammingDistance(hash1: String, hash2: String): Int {
+    fun hammingDistance(
+        hash1: String,
+        hash2: String,
+    ): Int {
         if (hash1.length != hash2.length) return Int.MAX_VALUE
         var distance = 0
         for (i in hash1.indices) {

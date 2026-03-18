@@ -2,7 +2,6 @@ package com.deryk.skarmetoo
 
 import android.app.Application
 import android.content.ContentUris
-import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -29,7 +28,7 @@ private const val TAG = "ScreenshotVM"
 data class AlbumInfo(
     val name: String,
     val bucketId: String,
-    val count: Int
+    val count: Int,
 )
 
 class ScreenshotViewModel(application: Application) : AndroidViewModel(application) {
@@ -47,8 +46,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
-
-
 
     // Analysis progress: Pair(remaining, total)
     private val _analysisProgress = MutableStateFlow<Pair<Int, Int>?>(null)
@@ -92,18 +89,51 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     private val isAnalyzing = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    private val _appLanguage = MutableStateFlow("en")
+    val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
+
+    private val _analysisLanguage = MutableStateFlow("en")
+    val analysisLanguage: StateFlow<String> = _analysisLanguage.asStateFlow()
+
+    private val _isSortDescending = MutableStateFlow(true)
+    val isSortDescending: StateFlow<Boolean> = _isSortDescending.asStateFlow()
+
+    fun setAppLanguage(lang: String) {
+        _appLanguage.value = lang
+        prefs.edit().putString("app_language", lang).apply()
+    }
+
+    fun setAnalysisLanguage(lang: String) {
+        _analysisLanguage.value = lang
+        prefs.edit().putString("analysis_language", lang).apply()
+    }
+
+    fun toggleSortOrder() {
+        _isSortDescending.value = !_isSortDescending.value
+        prefs.edit().putBoolean("is_sort_descending", _isSortDescending.value).apply()
+    }
+
     init {
         val currentUris = prefs.getStringSet("saved_folder_uris", emptySet()) ?: emptySet()
         _sourceFolders.value = currentUris
-        
+
         val savedLevel = prefs.getString("detail_level", LlmManager.DetailLevel.DETAILED.name)
-        _detailLevel.value = try {
-            LlmManager.DetailLevel.valueOf(savedLevel ?: LlmManager.DetailLevel.DETAILED.name)
-        } catch (e: Exception) {
-            LlmManager.DetailLevel.DETAILED
-        }
+        _detailLevel.value =
+            try {
+                LlmManager.DetailLevel.valueOf(savedLevel ?: LlmManager.DetailLevel.DETAILED.name)
+            } catch (e: Exception) {
+                LlmManager.DetailLevel.DETAILED
+            }
         _customPrompt.value = prefs.getString("custom_prompt", "") ?: ""
-        
+
+        val savedLang = prefs.getString("app_language", "en") ?: "en"
+        _appLanguage.value = savedLang
+
+        val savedAnalysisLang = prefs.getString("analysis_language", "en") ?: "en"
+        _analysisLanguage.value = savedAnalysisLang
+
+        _isSortDescending.value = prefs.getBoolean("is_sort_descending", true)
+
         viewModelScope.launch {
             llmManager.uiState.collect { state ->
                 when (state) {
@@ -146,7 +176,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 Log.e(TAG, "Error looking for model automatically", e)
             }
         }
-        
+
         // Auto-refresh images on startup if a folder was selected
         refreshImages()
     }
@@ -165,7 +195,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun initializeModel(path: String, useGpu: Boolean = false) {
+    fun initializeModel(
+        path: String,
+        useGpu: Boolean = false,
+    ) {
         checkModelExists()
         if (!_isModelFound.value) return
         llmManager.initializeModel(path, useGpu = useGpu)
@@ -174,11 +207,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     fun refreshEntries() {
         viewModelScope.launch(Dispatchers.IO) {
             val query = _searchQuery.value
-            val result = if (query.isBlank()) {
-                db.getAllEntries()
-            } else {
-                db.searchEntries(query)
-            }
+            val result =
+                if (query.isBlank()) {
+                    db.getAllEntries()
+                } else {
+                    db.searchEntries(query)
+                }
             _entries.value = result
         }
     }
@@ -187,8 +221,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         _searchQuery.value = query
         refreshEntries()
     }
-
-
 
     fun setDetailLevel(level: LlmManager.DetailLevel) {
         _detailLevel.value = level
@@ -200,11 +232,16 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         prefs.edit().putString("custom_prompt", prompt).apply()
     }
 
-    fun downloadModel(url: String, token: String, cookies: String?, useGpu: Boolean) {
+    fun downloadModel(
+        url: String,
+        token: String,
+        cookies: String?,
+        useGpu: Boolean,
+    ) {
         if (_isDownloadingModel.value) return
         _isDownloadingModel.value = true
         _downloadProgress.value = 0f
-        
+
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             val destFile = java.io.File(context.filesDir, "gemma-3n-E2B-it-int4.litertlm")
@@ -212,14 +249,14 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 var currentUrl = url
                 var connection: java.net.HttpURLConnection
                 var redirects = 0
-                
+
                 while (true) {
                     connection = java.net.URL(currentUrl).openConnection() as java.net.HttpURLConnection
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept-Encoding", "identity")
                     connection.connectTimeout = 60000
                     connection.readTimeout = 60000
-                    
+
                     // Only send auth headers to HuggingFace, but DROP them for subsequent AWS S3 CDN redirects
                     if (currentUrl.contains("huggingface.co") && !currentUrl.contains("cdn-lfs")) {
                         if (token.isNotBlank()) {
@@ -230,7 +267,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     }
 
                     connection.connect()
-                    
+
                     val status = connection.responseCode
                     if (status in 300..399) {
                         val newUrl = connection.getHeaderField("Location")
@@ -244,7 +281,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                             throw Exception("Redirect missing Location header")
                         }
                     }
-                    
+
                     if (status != java.net.HttpURLConnection.HTTP_OK) {
                         try {
                             if (status == 401) {
@@ -257,20 +294,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                             if (e.message?.contains("Unauthorized:") == true) {
                                 throw e
                             }
-                            throw Exception("Server returned HTTP $status ${connection.responseMessage}")  
+                            throw Exception("Server returned HTTP $status ${connection.responseMessage}")
                         }
                     }
                     break // Connected successfully
                 }
-                
+
                 val fileLength = connection.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
                 val input = java.io.BufferedInputStream(connection.inputStream)
                 val output = java.io.FileOutputStream(destFile)
-                
+
                 val data = ByteArray(8192)
                 var total: Long = 0
                 var count: Int
-                
+
                 var lastUIUpdateStamp = System.currentTimeMillis()
                 while (input.read(data).also { count = it } != -1) {
                     total += count.toLong()
@@ -283,24 +320,21 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     }
                     output.write(data, 0, count)
                 }
-                
+
                 _downloadProgress.value = 1.0f
                 output.flush()
                 output.close()
                 input.close()
                 connection.disconnect()
-                
+
                 withContext(Dispatchers.Main) {
                     _modelStatus.value = "Downloaded to internal storage"
-
                 }
                 initializeModel(destFile.absolutePath, useGpu = useGpu)
-                
             } catch (e: Exception) {
                 Log.e(TAG, "Failed downloading model", e)
                 if (destFile.exists()) destFile.delete()
                 withContext(Dispatchers.Main) {
-
                 }
             } finally {
                 _isDownloadingModel.value = false
@@ -315,14 +349,19 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             val albums = mutableMapOf<String, AlbumInfo>()
             val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            val projection = arrayOf(
-                MediaStore.Images.Media.BUCKET_ID,
-                MediaStore.Images.Media.BUCKET_DISPLAY_NAME
-            )
+            val projection =
+                arrayOf(
+                    MediaStore.Images.Media.BUCKET_ID,
+                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+                )
 
             try {
                 context.contentResolver.query(
-                    uri, projection, null, null, null
+                    uri,
+                    projection,
+                    null,
+                    null,
+                    null,
                 )?.use { cursor ->
                     val bucketIdCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
                     val bucketNameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
@@ -343,9 +382,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 Log.e(TAG, "Failed to load albums", e)
             }
 
-            _availableAlbums.value = albums.values
-                .sortedByDescending { it.count }
-                .toList()
+            _availableAlbums.value =
+                albums.values
+                    .sortedByDescending { it.count }
+                    .toList()
 
             Log.d(TAG, "Found ${albums.size} albums")
         }
@@ -364,7 +404,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     fun loadSelectedAlbums() {
         val selected = _selectedAlbums.value
         if (selected.isEmpty()) {
-
             return
         }
 
@@ -380,15 +419,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     val selectionArgs = arrayOf(bucketId)
 
                     context.contentResolver.query(
-                        uri, projection, selection, selectionArgs,
-                        "${MediaStore.Images.Media.DATE_MODIFIED} DESC"
+                        uri,
+                        projection,
+                        selection,
+                        selectionArgs,
+                        "${MediaStore.Images.Media.DATE_MODIFIED} DESC",
                     )?.use { cursor ->
                         val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
                         while (cursor.moveToNext()) {
                             val imageId = cursor.getLong(idCol)
-                            val imageUri = ContentUris.withAppendedId(
-                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, imageId
-                            )
+                            val imageUri =
+                                ContentUris.withAppendedId(
+                                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                    imageId,
+                                )
                             uris.add(imageUri)
                         }
                     }
@@ -413,9 +457,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 try {
                     try {
                         context.contentResolver.takePersistableUriPermission(
-                            uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            uri,
+                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
                         )
-                    } catch (_: Exception) { }
+                    } catch (_: Exception) {
+                    }
 
                     val bitmap = loadBitmap(uri) ?: continue
                     val hash = ImageHasher.computeDHash(bitmap)
@@ -431,10 +477,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                         continue
                     }
 
-                    val entry = ScreenshotEntry(
-                        imageUri = uri.toString(),
-                        imageHash = hash
-                    )
+                    val entry =
+                        ScreenshotEntry(
+                            imageUri = uri.toString(),
+                            imageHash = hash,
+                        )
                     db.insertEntry(entry)
                     Log.d(TAG, "Added screenshot: hash=$hash")
                 } catch (e: Exception) {
@@ -458,7 +505,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             db.deleteAllEntries()
             refreshEntries()
             withContext(Dispatchers.Main) {
-
             }
         }
     }
@@ -469,14 +515,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             prefs.edit().putStringSet("saved_folder_uris", currentUris).apply()
             _sourceFolders.value = currentUris
             _folderImageCounts.value = _folderImageCounts.value.toMutableMap().apply { remove(uriStr) }
-            
+
             viewModelScope.launch(Dispatchers.IO) {
                 val context = getApplication<Application>()
                 db.deleteAllEntries()
                 refreshImagesInternal()
                 refreshEntries()
                 withContext(Dispatchers.Main) {
-
                 }
             }
         }
@@ -485,7 +530,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     fun loadImagesFromFolder(treeUri: Uri) {
         val context = getApplication<Application>()
         _isRefreshing.value = true
-        
+
         val currentUris = prefs.getStringSet("saved_folder_uris", emptySet())?.toMutableSet() ?: mutableSetOf()
         currentUris.add(treeUri.toString())
         prefs.edit().putStringSet("saved_folder_uris", currentUris).apply()
@@ -496,12 +541,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 // Take persistable permission so we can read this folder later
                 context.contentResolver.takePersistableUriPermission(
                     treeUri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
-            } catch (_: Exception) { }
+            } catch (_: Exception) {
+            }
 
             refreshImagesInternal()
-            
+
             withContext(Dispatchers.Main) {
                 _isRefreshing.value = false
             }
@@ -509,9 +555,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private suspend fun scanAndAddFolder(
-        treeUri: Uri, 
+        treeUri: Uri,
         context: android.content.Context,
-        globalSeenFiles: MutableSet<String>
+        globalSeenFiles: MutableSet<String>,
     ) {
         try {
             val imageUris = mutableListOf<Uri>()
@@ -540,10 +586,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             scanFolder(treeUri)
 
             Log.d(TAG, "Found ${imageUris.size} images in folder $treeUri")
-            _folderImageCounts.value = _folderImageCounts.value.toMutableMap().apply { 
-                put(treeUri.toString(), imageUris.size) 
-            }
-            
+            _folderImageCounts.value =
+                _folderImageCounts.value.toMutableMap().apply {
+                    put(treeUri.toString(), imageUris.size)
+                }
+
             if (imageUris.isNotEmpty()) {
                 val job = addScreenshots(imageUris)
                 job.join()
@@ -556,12 +603,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun refreshImagesInternal() {
         val savedUris = prefs.getStringSet("saved_folder_uris", emptySet()) ?: emptySet()
         val context = getApplication<Application>()
-        
+
         // Wipe old counts to cleanly recalculate fresh deduplicated counts
         _folderImageCounts.value = emptyMap()
-        
+
         val globalSeenFiles = mutableSetOf<String>()
-        
+
         for (uriStr in savedUris) {
             val uri = Uri.parse(uriStr)
             scanAndAddFolder(uri, context, globalSeenFiles)
@@ -574,11 +621,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         var deletedCount = 0
         for (entry in allEntries) {
             if (entry.imageUri.isNotBlank()) {
-                val stillExists = try {
-                    context.contentResolver.openAssetFileDescriptor(Uri.parse(entry.imageUri), "r")?.use { true } == true
-                } catch (e: Exception) {
-                    false
-                }
+                val stillExists =
+                    try {
+                        context.contentResolver.openAssetFileDescriptor(Uri.parse(entry.imageUri), "r")?.use { true } == true
+                    } catch (e: Exception) {
+                        false
+                    }
                 if (!stillExists) {
                     db.deleteEntry(entry.id)
                     deletedCount++
@@ -599,7 +647,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 refreshImagesInternal()
             }
             cleanupMissingImages()
-            
+
             withContext(Dispatchers.Main) {
                 _isRefreshing.value = false
             }
@@ -637,9 +685,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             }
             isAnalyzing.set(false)
             refreshEntries()
-            
-            withContext(Dispatchers.Main) {
 
+            withContext(Dispatchers.Main) {
             }
             startAnalysisQueue()
         }
@@ -652,37 +699,39 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         try {
-            var allUnprocessed = db.getAllEntries().filter {
-                it.analyzedAt == 0L && !it.isAnalyzing && it.imageUri.isNotBlank()
-            }
+            var allUnprocessed =
+                db.getAllEntries().filter {
+                    it.analyzedAt == 0L && !it.isAnalyzing && it.imageUri.isNotBlank()
+                }
             if (allUnprocessed.isEmpty()) {
                 return
             }
 
             val total = allUnprocessed.size
             var counts = 0
-            
-            while(counts < total) {
+
+            while (counts < total) {
                 // Fetch the latest unanalyzed image from DB again to handle new inserts dynamically
-                val currentUnprocessed = db.getAllEntries().filter {
-                    it.analyzedAt == 0L && !it.isAnalyzing && it.imageUri.isNotBlank()
-                }.sortedByDescending { it.id }
-                
+                val currentUnprocessed =
+                    db.getAllEntries().filter {
+                        it.analyzedAt == 0L && !it.isAnalyzing && it.imageUri.isNotBlank()
+                    }.sortedByDescending { it.id }
+
                 if (currentUnprocessed.isEmpty()) break
-                
+
                 val entry = currentUnprocessed.first()
                 val remaining = total - counts
                 _analysisProgress.value = remaining to total
                 Log.d(TAG, "Analyzing $remaining/$total: id=${entry.id}")
 
                 val success = analyzeEntrySuspend(entry)
-                
+
                 counts++
-                
+
                 if (!success) {
                     Log.w(TAG, "Analysis failed for id=${entry.id}, continuing to next...")
                 }
-                
+
                 // Allow underlying C++ LiteRT engine time to gracefully finalize callback threads naturally before the next iteration rips it away
                 Log.d(TAG, "Delaying 2s to allow JNI engine teardown...")
                 kotlinx.coroutines.delay(2000L)
@@ -693,7 +742,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             // Clear progress after a moment
             kotlinx.coroutines.delay(1500)
             _analysisProgress.value = null
-
         } finally {
             isAnalyzing.set(false)
         }
@@ -715,35 +763,37 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             return false
         }
 
-        val result = kotlinx.coroutines.withTimeoutOrNull(300_000L) {
-            suspendCancellableCoroutine<Boolean> { continuation ->
-                llmManager.analyzeScreenshot(
-                    bitmap = bitmap,
-                    detailLevel = _detailLevel.value,
-                    customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
-                    onProgress = { progress -> 
-                        _currentImageProgress.value = progress 
-                    },
-                    onResult = { summary, tags ->
-                        viewModelScope.launch(Dispatchers.IO) {
-                            db.updateAnalysis(entry.id, summary, tags)
-                            refreshEntries()
-                            Log.d(TAG, "Analysis complete: id=${entry.id}")
-                            if (continuation.isActive) continuation.resume(true)
-                        }
-                    },
-                    onError = { error ->
-                        viewModelScope.launch(Dispatchers.IO) {
-                            db.setAnalyzing(entry.id, false)
-                            refreshEntries()
-                            Log.e(TAG, "Analysis failed for ${entry.id}: $error")
-                            if (continuation.isActive) continuation.resume(false)
-                        }
-                    }
-                )
+        val result =
+            kotlinx.coroutines.withTimeoutOrNull(300_000L) {
+                suspendCancellableCoroutine<Boolean> { continuation ->
+                    llmManager.analyzeScreenshot(
+                        bitmap = bitmap,
+                        detailLevel = _detailLevel.value,
+                        customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
+                        isChinese = _analysisLanguage.value == "zh-rTW",
+                        onProgress = { progress ->
+                            _currentImageProgress.value = progress
+                        },
+                        onResult = { summary, tags ->
+                            viewModelScope.launch(Dispatchers.IO) {
+                                db.updateAnalysis(entry.id, summary, tags)
+                                refreshEntries()
+                                Log.d(TAG, "Analysis complete: id=${entry.id}")
+                                if (continuation.isActive) continuation.resume(true)
+                            }
+                        },
+                        onError = { error ->
+                            viewModelScope.launch(Dispatchers.IO) {
+                                db.setAnalyzing(entry.id, false)
+                                refreshEntries()
+                                Log.e(TAG, "Analysis failed for ${entry.id}: $error")
+                                if (continuation.isActive) continuation.resume(false)
+                            }
+                        },
+                    )
+                }
             }
-        }
-        
+
         if (result == null) {
             // Un-hang the database if timeout occurred
             db.setAnalyzing(entry.id, false)
@@ -751,7 +801,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             Log.e(TAG, "Analysis timed out after 300s for id=${entry.id}")
             return false
         }
-        
+
         return result
     }
 
@@ -767,14 +817,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun updateSummary(id: Long, summary: String) {
+    fun updateSummary(
+        id: Long,
+        summary: String,
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             db.updateSummary(id, summary)
             refreshEntries()
         }
     }
 
-    fun updateTags(id: Long, tags: String) {
+    fun updateTags(
+        id: Long,
+        tags: String,
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             db.updateTags(id, tags)
             refreshEntries()
@@ -788,7 +844,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun updateNote(id: Long, note: String) {
+    fun updateNote(
+        id: Long,
+        note: String,
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             db.updateNote(id, note)
             refreshEntries()
@@ -808,7 +867,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             val success = DataManager.exportToUri(context, uri, db)
             withContext(Dispatchers.Main) {
-
             }
         }
     }
@@ -819,7 +877,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             val count = DataManager.importFromUri(context, uri, db)
             refreshEntries()
             withContext(Dispatchers.Main) {
-
             }
         }
     }

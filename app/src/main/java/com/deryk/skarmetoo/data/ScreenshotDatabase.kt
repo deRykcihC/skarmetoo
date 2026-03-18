@@ -7,7 +7,6 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
-
     companion object {
         private const val DB_NAME = "screenshots.db"
         private const val DB_VERSION = 2
@@ -24,7 +23,8 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("""
+        db.execSQL(
+            """
             CREATE TABLE $TABLE (
                 $COL_ID INTEGER PRIMARY KEY AUTOINCREMENT,
                 $COL_IMAGE_URI TEXT NOT NULL,
@@ -35,11 +35,16 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
                 $COL_IS_ANALYZING INTEGER DEFAULT 0,
                 $COL_NOTE TEXT DEFAULT ''
             )
-        """)
+        """,
+        )
         db.execSQL("CREATE INDEX idx_hash ON $TABLE ($COL_IMAGE_HASH)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+    override fun onUpgrade(
+        db: SQLiteDatabase,
+        oldVersion: Int,
+        newVersion: Int,
+    ) {
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_NOTE TEXT DEFAULT ''")
         }
@@ -47,57 +52,77 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
 
     fun insertEntry(entry: ScreenshotEntry): Long {
         val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COL_IMAGE_URI, entry.imageUri)
-            put(COL_IMAGE_HASH, entry.imageHash)
-            put(COL_SUMMARY, entry.summary)
-            put(COL_TAGS, entry.tags)
-            put(COL_ANALYZED_AT, entry.analyzedAt)
-            put(COL_IS_ANALYZING, if (entry.isAnalyzing) 1 else 0)
-        }
+        val values =
+            ContentValues().apply {
+                put(COL_IMAGE_URI, entry.imageUri)
+                put(COL_IMAGE_HASH, entry.imageHash)
+                put(COL_SUMMARY, entry.summary)
+                put(COL_TAGS, entry.tags)
+                put(COL_ANALYZED_AT, entry.analyzedAt)
+                put(COL_IS_ANALYZING, if (entry.isAnalyzing) 1 else 0)
+            }
         return db.insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    fun updateAnalysis(id: Long, summary: String, tags: String) {
+    fun updateAnalysis(
+        id: Long,
+        summary: String,
+        tags: String,
+    ) {
         val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COL_SUMMARY, summary)
-            put(COL_TAGS, tags)
-            put(COL_ANALYZED_AT, System.currentTimeMillis())
-            put(COL_IS_ANALYZING, 0)
-        }
+        val values =
+            ContentValues().apply {
+                put(COL_SUMMARY, summary)
+                put(COL_TAGS, tags)
+                put(COL_ANALYZED_AT, System.currentTimeMillis())
+                put(COL_IS_ANALYZING, 0)
+            }
         db.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
     }
 
-    fun setAnalyzing(id: Long, analyzing: Boolean) {
+    fun setAnalyzing(
+        id: Long,
+        analyzing: Boolean,
+    ) {
         val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COL_IS_ANALYZING, if (analyzing) 1 else 0)
-        }
+        val values =
+            ContentValues().apply {
+                put(COL_IS_ANALYZING, if (analyzing) 1 else 0)
+            }
         db.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
     }
 
     fun resetAllAnalyzingFlags() {
         val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COL_IS_ANALYZING, 0)
-        }
+        val values =
+            ContentValues().apply {
+                put(COL_IS_ANALYZING, 0)
+            }
         db.update(TABLE, values, null, null)
     }
 
-    fun updateSummary(id: Long, summary: String) {
+    fun updateSummary(
+        id: Long,
+        summary: String,
+    ) {
         val db = writableDatabase
         val values = ContentValues().apply { put(COL_SUMMARY, summary) }
         db.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
     }
 
-    fun updateTags(id: Long, tags: String) {
+    fun updateTags(
+        id: Long,
+        tags: String,
+    ) {
         val db = writableDatabase
         val values = ContentValues().apply { put(COL_TAGS, tags) }
         db.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
     }
 
-    fun updateNote(id: Long, note: String) {
+    fun updateNote(
+        id: Long,
+        note: String,
+    ) {
         val db = writableDatabase
         val values = ContentValues().apply { put(COL_NOTE, note) }
         db.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
@@ -112,20 +137,32 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     }
 
     fun getEntryByHash(hash: String): ScreenshotEntry? {
-        val cursor = readableDatabase.query(
-            TABLE, null, "$COL_IMAGE_HASH = ?", arrayOf(hash),
-            null, null, null
-        )
+        val cursor =
+            readableDatabase.query(
+                TABLE,
+                null,
+                "$COL_IMAGE_HASH = ?",
+                arrayOf(hash),
+                null,
+                null,
+                null,
+            )
         return cursor.use {
             if (it.moveToFirst()) cursorToEntry(it) else null
         }
     }
 
     fun getEntryById(id: Long): ScreenshotEntry? {
-        val cursor = readableDatabase.query(
-            TABLE, null, "$COL_ID = ?", arrayOf(id.toString()),
-            null, null, null
-        )
+        val cursor =
+            readableDatabase.query(
+                TABLE,
+                null,
+                "$COL_ID = ?",
+                arrayOf(id.toString()),
+                null,
+                null,
+                null,
+            )
         return cursor.use {
             if (it.moveToFirst()) cursorToEntry(it) else null
         }
@@ -133,10 +170,16 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
 
     fun getAllEntries(): List<ScreenshotEntry> {
         val entries = mutableListOf<ScreenshotEntry>()
-        val cursor = readableDatabase.query(
-            TABLE, null, null, null, null, null,
-            "$COL_ID DESC"
-        )
+        val cursor =
+            readableDatabase.query(
+                TABLE,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "$COL_ID DESC",
+            )
         cursor.use {
             while (it.moveToNext()) {
                 entries.add(cursorToEntry(it))
@@ -148,12 +191,16 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     fun searchEntries(query: String): List<ScreenshotEntry> {
         val entries = mutableListOf<ScreenshotEntry>()
         val searchQuery = "%$query%"
-        val cursor = readableDatabase.query(
-            TABLE, null,
-            "$COL_SUMMARY LIKE ? OR $COL_TAGS LIKE ? OR $COL_NOTE LIKE ?",
-            arrayOf(searchQuery, searchQuery, searchQuery),
-            null, null, "$COL_ID DESC"
-        )
+        val cursor =
+            readableDatabase.query(
+                TABLE,
+                null,
+                "$COL_SUMMARY LIKE ? OR $COL_TAGS LIKE ? OR $COL_NOTE LIKE ?",
+                arrayOf(searchQuery, searchQuery, searchQuery),
+                null,
+                null,
+                "$COL_ID DESC",
+            )
         cursor.use {
             while (it.moveToNext()) {
                 entries.add(cursorToEntry(it))
@@ -170,9 +217,11 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     }
 
     fun getAnalyzedCount(): Int {
-        val cursor = readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM $TABLE WHERE $COL_ANALYZED_AT > 0", null
-        )
+        val cursor =
+            readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM $TABLE WHERE $COL_ANALYZED_AT > 0",
+                null,
+            )
         return cursor.use {
             if (it.moveToFirst()) it.getInt(0) else 0
         }
@@ -182,25 +231,32 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
      * Import entry by hash. If hash exists, update metadata.
      * If hash doesn't exist, insert with empty URI (unlinked).
      */
-    fun importEntry(hash: String, summary: String, tags: String, analyzedAt: Long) {
+    fun importEntry(
+        hash: String,
+        summary: String,
+        tags: String,
+        analyzedAt: Long,
+    ) {
         val existing = getEntryByHash(hash)
         if (existing != null) {
             // Update existing entry with imported metadata
-            val values = ContentValues().apply {
-                put(COL_SUMMARY, summary)
-                put(COL_TAGS, tags)
-                put(COL_ANALYZED_AT, analyzedAt)
-            }
+            val values =
+                ContentValues().apply {
+                    put(COL_SUMMARY, summary)
+                    put(COL_TAGS, tags)
+                    put(COL_ANALYZED_AT, analyzedAt)
+                }
             writableDatabase.update(TABLE, values, "$COL_ID = ?", arrayOf(existing.id.toString()))
         } else {
             // Insert new unlinked entry
-            val entry = ScreenshotEntry(
-                imageUri = "",
-                imageHash = hash,
-                summary = summary,
-                tags = tags,
-                analyzedAt = analyzedAt
-            )
+            val entry =
+                ScreenshotEntry(
+                    imageUri = "",
+                    imageHash = hash,
+                    summary = summary,
+                    tags = tags,
+                    analyzedAt = analyzedAt,
+                )
             insertEntry(entry)
         }
     }
@@ -208,10 +264,14 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     /**
      * Link an image URI to an existing hash entry (for imported entries).
      */
-    fun linkImageToHash(hash: String, imageUri: String) {
-        val values = ContentValues().apply {
-            put(COL_IMAGE_URI, imageUri)
-        }
+    fun linkImageToHash(
+        hash: String,
+        imageUri: String,
+    ) {
+        val values =
+            ContentValues().apply {
+                put(COL_IMAGE_URI, imageUri)
+            }
         writableDatabase.update(TABLE, values, "$COL_IMAGE_HASH = ?", arrayOf(hash))
     }
 
@@ -225,7 +285,7 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
             tags = cursor.getString(cursor.getColumnIndexOrThrow(COL_TAGS)),
             analyzedAt = cursor.getLong(cursor.getColumnIndexOrThrow(COL_ANALYZED_AT)),
             isAnalyzing = cursor.getInt(cursor.getColumnIndexOrThrow(COL_IS_ANALYZING)) == 1,
-            note = if (noteIdx >= 0) cursor.getString(noteIdx) ?: "" else ""
+            note = if (noteIdx >= 0) cursor.getString(noteIdx) ?: "" else "",
         )
     }
 }
