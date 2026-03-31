@@ -61,11 +61,11 @@ Before using Skarmetoo, you need to request access to the Gemma model on Hugging
 7. Click **Login**, then tap the top-right corner on the Hugging Face page and sign in with your account.
 8. Exit the page once you have confirmed you are logged in.
 9. Click the **Download** button on the right.
-10. Wait for the download to complete — the model is approximately **3GB**. Do not quit the app during this time, as it will suspend the download. You may use the built-in screen saver to save battery.
+10. Wait for the download to complete, the model is approximately **3GB**. Do not quit the app during this time, as it will suspend the download. You may use the built-in screen saver to save battery.
 11. Once downloaded, click the **Load** button at the top. A green **"Ready"** indicator will appear when the model is successfully loaded.
-12. At the top, **add a folder** to be analyzed — you can choose any folder you like.
+12. At the top, **add a folder** to be analyzed, you can choose any folder you like.
 13. Once loaded, your images will appear on the homepage.
-14. On-device analysis will begin automatically — you will see a loading indicator at the top right.
+14. On-device analysis will begin automatically, you will see a loading indicator at the top right.
 
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
