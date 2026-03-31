@@ -43,6 +43,30 @@ Note: 8GB of RAM is highly recommended for a smooth analysis experience. Devices
 **Is my data secure?**
 Yes. Your screenshots remain in your storage, and the analysis database is stored locally on your device. While the data is stored in standard local database format, the fundamental advantage is the **complete absence of internet transmission** for your visual information.
 
+## Guide
+
+### Pre-requisites: Setting Up Model Access
+
+Before using Skarmetoo, you need to request access to the Gemma model on Hugging Face.
+
+1. Go to [huggingface.co](https://huggingface.co) and register an account, then verify it via email.
+2. Search for `gemma-3n-E2B-it` or navigate directly to [google/gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it).
+3. Click **"Acknowledge License"**, then **"Authorised"**.
+4. Fill out the Gemma Access Request form.
+5. You should now have access to the model. If not, wait for approval.
+
+### In the App
+
+6. Open Skarmetoo and go to the **Settings** page.
+7. Click **Login**, then tap the top-right corner on the Hugging Face page and sign in with your account.
+8. Exit the page once you have confirmed you are logged in.
+9. Click the **Download** button on the right.
+10. Wait for the download to complete — the model is approximately **3GB**. Do not quit the app during this time, as it will suspend the download. You may use the built-in screen saver to save battery.
+11. Once downloaded, click the **Load** button at the top. A green **"Ready"** indicator will appear when the model is successfully loaded.
+12. At the top, **add a folder** to be analyzed — you can choose any folder you like.
+13. Once loaded, your images will appear on the homepage.
+14. On-device analysis will begin automatically — you will see a loading indicator at the top right.
+
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
 
