@@ -52,7 +52,7 @@ fun SettingsScreen(
 
     val modelPath = context.filesDir.absolutePath + "/gemma-3n-E2B-it-int4.litertlm"
 
-    var useGpu by remember { mutableStateOf(false) }
+
 
     val isDownloadingModel by viewModel.isDownloadingModel.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
@@ -421,48 +421,17 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Acceleration & Load Row
-                Text(
-                    stringResource(R.string.acceleration),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                // Load Model Button
+                FilledTonalButton(
+                    onClick = { viewModel.initializeModel(modelPath) },
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    enabled = isModelFound,
                 ) {
-                    FilledTonalButton(
-                        onClick = { viewModel.initializeModel(modelPath, useGpu = useGpu) },
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        modifier = Modifier.height(48.dp),
-                        enabled = isModelFound,
-                    ) {
-                        Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.load), fontWeight = FontWeight.Medium)
-                    }
-
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f).height(48.dp)) {
-                        SegmentedButton(
-                            selected = !useGpu,
-                            onClick = { useGpu = false },
-                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                            modifier = Modifier.fillMaxHeight(),
-                        ) {
-                            Text("CPU", style = MaterialTheme.typography.labelMedium)
-                        }
-                        SegmentedButton(
-                            selected = useGpu,
-                            onClick = { useGpu = true },
-                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                            modifier = Modifier.fillMaxHeight(),
-                        ) {
-                            Text("GPU", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
+                    Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.load), fontWeight = FontWeight.Medium)
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -618,7 +587,7 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
-                            viewModel.downloadModel(downloadUrl, "", cookies, useGpu)
+                            viewModel.downloadModel(downloadUrl, "", cookies, false)
                         },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(14.dp),
