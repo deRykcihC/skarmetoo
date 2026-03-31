@@ -51,7 +51,7 @@ Before using Skarmetoo, you need to request access to the Gemma model on Hugging
 
 1. Go to [huggingface.co](https://huggingface.co) and register an account, then verify it via email.
 2. Search for `gemma-3n-E2B-it` or navigate directly to [google/gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it).
-3. Click **"Acknowledge License"**, then **"Authorised"**.
+3. Click **"Acknowledge License"**, then **"Authorize"**.
 4. Fill out the Gemma Access Request form.
 5. You should now have access to the model. If not, wait for approval.
 
