@@ -13,7 +13,7 @@ It acts as a privacy-first, on-device alternative to Pixel Screenshots, utilizin
 *   **Smart Organization:** Automatically extracts tags and summaries for a clutter-free gallery experience.
 
 ## Why On-Device AI?
-Skarmetoo utilizes local models [gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/tree/main) (via Google LiteRT) because:
+Skarmetoo utilizes local models like [gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/tree/main) and [Gemma 4](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm) (via Google LiteRT) because:
 1.  **Total Privacy:** No cloud APIs mean your personal visual data is never uploaded, scanned, or stored on remote servers.
 2.  **No Costs or Keys:** You don't need to manage API keys or worry about daily quotas or monthly billing. It is your hardware doing the work.
 3.  **No Restrictions:** Unlike cloud AI services bound by corporate content policies and server-side filters, the model runs entirely under your control, no content moderation, no request blocking, no one looking over your shoulder. What you do with it is your business.
@@ -25,6 +25,7 @@ While Skarmetoo runs locally, it requires a device with a modern processor and s
 Device I've tried:
 | Name | SoC | RAM |
 | :--- | :--- | :--- |
+| Poco X8 Pro Max | - | 12GB |
 | Galaxy S23 | Snapdragon 8 Gen 2 | 8GB |
 | OnePlus 7T | Snapdragon 855+ | 8GB |
 | OnePlus Nord CE 3 Lite | Snapdragon 695 5G | 8GB |
@@ -50,7 +51,7 @@ Yes. Your screenshots remain in your storage, and the analysis database is store
 Before using Skarmetoo, you need to request access to the Gemma model on Hugging Face.
 
 1. Go to [huggingface.co](https://huggingface.co) and register an account, then verify it via email.
-2. Search for `gemma-3n-E2B-it` or navigate directly to [google/gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it).
+2. Search for `gemma-3n-E2B-it` (or `gemma-4-E2B-it`) or navigate directly to [google/gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it).
 3. Click **"Acknowledge License"**, then **"Authorize"**.
 4. Fill out the Gemma Access Request form.
 5. You should now have access to the model. If not, wait for approval.
