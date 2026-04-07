@@ -10,6 +10,7 @@ It acts as a privacy-first, on-device alternative to Pixel Screenshots, utilizin
 *   **Private & Secure:** Your images and analysis results never leave your phone.
 *   **Note Taking:** Add custom context or reminders to any screenshot entry.
 *   **High-Quality Sharing:** Generate image card with dynamic color-theming based on the image palette.
+*   **Multilingual Support:** Supports screenshot analysis and summaries in 7 languages (English, Traditional Chinese, Hindi, Spanish, Arabic, French, and Russian).
 *   **Smart Organization:** Automatically extracts tags and summaries for a clutter-free gallery experience.
 
 ## Why On-Device AI?
