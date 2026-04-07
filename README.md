@@ -1,5 +1,7 @@
 # Skarmetoo
 
+v1.01
+
 **Skarmetoo** is an intelligent mobile gallery assistant that automatically analyzes, tags, and adds context to your screenshots, making them instantly searchable.
 
 It acts as a privacy-first, on-device alternative to Pixel Screenshots, utilizing local AI models to unlock powerful context awareness for your visual data without ever sending your images to the cloud.
