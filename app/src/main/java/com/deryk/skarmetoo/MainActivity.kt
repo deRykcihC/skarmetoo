@@ -85,7 +85,6 @@ class MainActivity : ComponentActivity() {
             val context = LocalContext.current
             val currentLanguage by viewModel.appLanguage.collectAsState()
 
-            // Apply selected locale
             val localeContext =
                 remember(currentLanguage) {
                     val locale =
@@ -97,11 +96,10 @@ class MainActivity : ComponentActivity() {
                     val config = android.content.res.Configuration(context.resources.configuration)
                     config.setLocale(locale)
 
-                    val newConfigContext = context.createConfigurationContext(config)
-                    // Wrap the NEW context, not the old one, to ensure all calls (like getString) use the new config
-                    object : android.content.ContextWrapper(newConfigContext) {
+                    val localeResources = context.createConfigurationContext(config).resources
+                    object : android.content.ContextWrapper(context) {
                         override fun getResources(): android.content.res.Resources {
-                            return newConfigContext.resources
+                            return localeResources
                         }
                     }
                 }
@@ -156,6 +154,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                     NavigationBarItem(
                         selected = currentRoute == Routes.GALLERY,
                         onClick = {
+                            val now = System.currentTimeMillis()
                             if (currentRoute != Routes.GALLERY) {
                                 navController.navigate(Routes.GALLERY) {
                                     popUpTo(navController.graph.startDestinationId) { saveState = true }
@@ -163,7 +162,6 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                                     restoreState = true
                                 }
                             } else {
-                                val now = System.currentTimeMillis()
                                 if (now - lastGalleryClickTime < 400) {
                                     galleryRefreshKey++
                                     lastGalleryClickTime = 0L
@@ -284,9 +282,6 @@ fun MainApp(viewModel: ScreenshotViewModel) {
     }
 }
 
-// =============================================
-// GALLERY SCREEN
-// =============================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(
@@ -319,7 +314,6 @@ fun GalleryScreen(
         }
     }
 
-    // Collect all unique tags from entries for filter row
     val allTags =
         remember(entries) {
             entries.flatMap { it.getTagList() }
@@ -331,7 +325,6 @@ fun GalleryScreen(
                 .take(20)
         }
 
-    // Filter entries by selected tag
     val filteredEntries =
         remember(entries, selectedTag, isSortDescending) {
             val filtered =
@@ -350,7 +343,6 @@ fun GalleryScreen(
             }
         }
 
-    // Count pending (not analyzed)
     val pendingCount =
         remember(entries) {
             entries.count { it.summary.isBlank() && !it.isAnalyzing }
@@ -371,7 +363,6 @@ fun GalleryScreen(
         Column(
             modifier = Modifier.fillMaxSize(),
         ) {
-            // ===== Header: Icon + Title + Pending count =====
             Row(
                 modifier =
                     Modifier
@@ -379,7 +370,6 @@ fun GalleryScreen(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // App icon
                 Image(
                     painter = painterResource(id = logoRes),
                     contentDescription = stringResource(R.string.logo),
@@ -393,7 +383,6 @@ fun GalleryScreen(
                 )
                 Spacer(modifier = Modifier.weight(1f))
 
-                // Pending count
                 if (pendingCount > 0 || analyzingCount > 0) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
@@ -472,7 +461,6 @@ fun GalleryScreen(
                 }
             }
 
-            // ===== Search bar =====
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { viewModel.setSearchQuery(it) },
@@ -502,7 +490,6 @@ fun GalleryScreen(
                     ),
             )
 
-            // ===== Tag filter chips row =====
             if (entries.isNotEmpty()) {
                 LazyRow(
                     modifier = Modifier.padding(vertical = 12.dp),
@@ -560,7 +547,6 @@ fun GalleryScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // ===== Content =====
             if (entries.isEmpty()) {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -630,7 +616,6 @@ fun ScreenshotGridItem(
             ),
     ) {
         Column {
-            // Thumbnail â€” natural aspect ratio
             if (entry.imageUri.isNotBlank()) {
                 AsyncImage(
                     model = entry.imageUri,
@@ -659,7 +644,6 @@ fun ScreenshotGridItem(
                 }
             }
 
-            // Analyzing indicator
             if (entry.isAnalyzing) {
                 LinearProgressIndicator(
                     progress = { currentImageProgress },
@@ -669,7 +653,6 @@ fun ScreenshotGridItem(
                 )
             }
 
-            // Summary title + tags text
             Column(modifier = Modifier.padding(10.dp)) {
                 if (entry.summary.isNotBlank()) {
                     Text(
@@ -695,7 +678,6 @@ fun ScreenshotGridItem(
                     )
                 }
 
-                // Tags as plain text
                 if (entry.tags.isNotBlank()) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -710,9 +692,6 @@ fun ScreenshotGridItem(
         }
     }
 }
-
-// =============================================
-// DETAIL SCREEN
 
 @Composable
 fun ScreenSaver(

@@ -9,7 +9,7 @@ import android.database.sqlite.SQLiteOpenHelper
 class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
     companion object {
         private const val DB_NAME = "screenshots.db"
-        private const val DB_VERSION = 2
+        private const val DB_VERSION = 3
         private const val TABLE = "screenshots"
 
         private const val COL_ID = "id"
@@ -20,6 +20,7 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
         private const val COL_ANALYZED_AT = "analyzed_at"
         private const val COL_IS_ANALYZING = "is_analyzing"
         private const val COL_NOTE = "note"
+        private const val COL_MODEL_USED = "model_used"
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -33,7 +34,8 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
                 $COL_TAGS TEXT DEFAULT '',
                 $COL_ANALYZED_AT INTEGER DEFAULT 0,
                 $COL_IS_ANALYZING INTEGER DEFAULT 0,
-                $COL_NOTE TEXT DEFAULT ''
+                $COL_NOTE TEXT DEFAULT '',
+                $COL_MODEL_USED TEXT DEFAULT ''
             )
         """,
         )
@@ -48,6 +50,9 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_NOTE TEXT DEFAULT ''")
         }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_MODEL_USED TEXT DEFAULT ''")
+        }
     }
 
     fun insertEntry(entry: ScreenshotEntry): Long {
@@ -60,6 +65,8 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
                 put(COL_TAGS, entry.tags)
                 put(COL_ANALYZED_AT, entry.analyzedAt)
                 put(COL_IS_ANALYZING, if (entry.isAnalyzing) 1 else 0)
+                put(COL_NOTE, entry.note)
+                put(COL_MODEL_USED, entry.modelUsed)
             }
         return db.insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -68,6 +75,7 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
         id: Long,
         summary: String,
         tags: String,
+        modelUsed: String,
     ) {
         val db = writableDatabase
         val values =
@@ -76,6 +84,7 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
                 put(COL_TAGS, tags)
                 put(COL_ANALYZED_AT, System.currentTimeMillis())
                 put(COL_IS_ANALYZING, 0)
+                put(COL_MODEL_USED, modelUsed)
             }
         db.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
     }
@@ -256,6 +265,7 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
                     summary = summary,
                     tags = tags,
                     analyzedAt = analyzedAt,
+                    modelUsed = "",
                 )
             insertEntry(entry)
         }
@@ -277,6 +287,7 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
 
     private fun cursorToEntry(cursor: Cursor): ScreenshotEntry {
         val noteIdx = cursor.getColumnIndex(COL_NOTE)
+        val modelUsedIdx = cursor.getColumnIndex(COL_MODEL_USED)
         return ScreenshotEntry(
             id = cursor.getLong(cursor.getColumnIndexOrThrow(COL_ID)),
             imageUri = cursor.getString(cursor.getColumnIndexOrThrow(COL_IMAGE_URI)),
@@ -286,6 +297,7 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
             analyzedAt = cursor.getLong(cursor.getColumnIndexOrThrow(COL_ANALYZED_AT)),
             isAnalyzing = cursor.getInt(cursor.getColumnIndexOrThrow(COL_IS_ANALYZING)) == 1,
             note = if (noteIdx >= 0) cursor.getString(noteIdx) ?: "" else "",
+            modelUsed = if (modelUsedIdx >= 0) cursor.getString(modelUsedIdx) ?: "" else "",
         )
     }
 }

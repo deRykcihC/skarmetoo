@@ -33,9 +33,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// =============================================
-// SETTINGS SCREEN
-// =============================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -50,17 +47,22 @@ fun SettingsScreen(
     val entries by viewModel.entries.collectAsState()
     val context = LocalContext.current
 
-    val modelPath = context.filesDir.absolutePath + "/gemma-3n-E2B-it-int4.litertlm"
-
-
-
     val isDownloadingModel by viewModel.isDownloadingModel.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
-    var downloadUrl by remember {
-        mutableStateOf("https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm")
-    }
+    val selectedModel by viewModel.selectedModel.collectAsState()
+    val isGemma3nDownloaded by viewModel.isGemma3nDownloaded.collectAsState()
+    val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
+    val downloadingModelType by viewModel.downloadingModelType.collectAsState()
+
+    val modelPath = context.filesDir.absolutePath + "/" + selectedModel.fileName
+
+    val gemma3nUrl = "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm"
+    val gemma4Url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+
     var showHfLogin by remember { mutableStateOf(false) }
+    var hfLoginModelType by remember { mutableStateOf(ModelType.GEMMA_3N) }
     var showManageFoldersDialog by remember { mutableStateOf(false) }
+    var isHfLoggedIn by remember { mutableStateOf(false) }
 
     val isModelFound by viewModel.isModelFound.collectAsState()
     val sourceFolders by viewModel.sourceFolders.collectAsState()
@@ -68,6 +70,8 @@ fun SettingsScreen(
 
     LaunchedEffect(Unit) {
         viewModel.checkModelExists()
+        val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
+        isHfLoggedIn = !cookies.isNullOrEmpty()
     }
 
     val totalImages = entries.size
@@ -88,7 +92,6 @@ fun SettingsScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .verticalScroll(rememberScrollState()),
     ) {
-        // ===== Header: emoji + Settings =====
         Row(
             modifier =
                 Modifier
@@ -421,17 +424,152 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Load Model Button
-                FilledTonalButton(
-                    onClick = { viewModel.initializeModel(modelPath) },
+                // Model Selector
+                Text(
+                    stringResource(R.string.select_model),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                val isGemma3nSelected = selectedModel == ModelType.GEMMA_3N
+                val isDownloadingGemma3n = isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
+                OutlinedCard(
+                    onClick = {
+                        viewModel.setSelectedModel(ModelType.GEMMA_3N)
+                        if (isGemma3nDownloaded) {
+                            val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
+                            viewModel.initializeModel(path, isGemma4 = false)
+                        } else if (!isDownloadingModel) {
+                            hfLoginModelType = ModelType.GEMMA_3N
+                            showHfLogin = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(vertical = 14.dp),
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    enabled = isModelFound,
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = if (isGemma3nSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                    ),
+                    border = if (isGemma3nSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
                 ) {
-                    Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(R.string.load), fontWeight = FontWeight.Medium)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.model_gemma3n),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = if (isGemma3nSelected) FontWeight.Bold else FontWeight.Medium,
+                            )
+                            Text(
+                                stringResource(R.string.model_gemma3n_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isDownloadingGemma3n) Color(0xFFFFF3E0) else if (isGemma3nDownloaded) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                if (isDownloadingGemma3n) {
+                                    Text(
+                                        text = "${(downloadProgress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFE65100),
+                                    )
+                                } else if (isGemma3nDownloaded) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Downloaded",
+                                        tint = Color(0xFF2E7D32),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = "Download Model",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val isGemma4Selected = selectedModel == ModelType.GEMMA_4
+                val isDownloadingGemma4 = isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
+                OutlinedCard(
+                    onClick = {
+                        viewModel.setSelectedModel(ModelType.GEMMA_4)
+                        if (isGemma4Downloaded) {
+                            val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_4.fileName
+                            viewModel.initializeModel(path, isGemma4 = true)
+                        } else if (!isDownloadingModel) {
+                            hfLoginModelType = ModelType.GEMMA_4
+                            showHfLogin = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = if (isGemma4Selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                    ),
+                    border = if (isGemma4Selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.model_gemma4),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = if (isGemma4Selected) FontWeight.Bold else FontWeight.Medium,
+                            )
+                            Text(
+                                stringResource(R.string.model_gemma4_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isDownloadingGemma4) Color(0xFFFFF3E0) else if (isGemma4Downloaded) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                if (isDownloadingGemma4) {
+                                    Text(
+                                        text = "${(downloadProgress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFE65100),
+                                    )
+                                } else if (isGemma4Downloaded) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Downloaded",
+                                        tint = Color(0xFF2E7D32),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = "Download Model",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -444,22 +582,59 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 val analysisLang by viewModel.analysisLanguage.collectAsState()
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    SegmentedButton(
+                var showMoreLanguages by remember { mutableStateOf(false) }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    DetailLevelCard(
+                        modifier = Modifier.weight(1f),
+                        label = stringResource(R.string.language_en),
                         selected = analysisLang == "en",
-                        onClick = { viewModel.setAnalysisLanguage("en") },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                        modifier = Modifier.fillMaxHeight(),
-                    ) {
-                        Text(stringResource(R.string.language_en), style = MaterialTheme.typography.labelMedium)
-                    }
-                    SegmentedButton(
-                        selected = analysisLang == "zh-rTW",
-                        onClick = { viewModel.setAnalysisLanguage("zh-rTW") },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                        modifier = Modifier.fillMaxHeight(),
-                    ) {
-                        Text(stringResource(R.string.language_zh), style = MaterialTheme.typography.labelMedium)
+                        onClick = { 
+                            viewModel.setAnalysisLanguage("en")
+                            showMoreLanguages = false
+                        },
+                    )
+                    DetailLevelCard(
+                        modifier = Modifier.weight(1f),
+                        label = if (analysisLang != "en" && !showMoreLanguages) {
+                            when (analysisLang) {
+                                "zh-rTW" -> stringResource(R.string.language_zh)
+                                "hi" -> stringResource(R.string.language_hi)
+                                "es" -> stringResource(R.string.language_es)
+                                "ar" -> stringResource(R.string.language_ar)
+                                "fr" -> stringResource(R.string.language_fr)
+                                "ru" -> stringResource(R.string.language_ru)
+                                else -> stringResource(R.string.language_more)
+                            }
+                        } else {
+                            stringResource(R.string.language_more)
+                        },
+                        selected = analysisLang != "en",
+                        onClick = { showMoreLanguages = !showMoreLanguages },
+                    )
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showMoreLanguages,
+                    enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut(),
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DetailLevelCard(modifier = Modifier.weight(1f), label = stringResource(R.string.language_zh), selected = analysisLang == "zh-rTW", onClick = { viewModel.setAnalysisLanguage("zh-rTW"); showMoreLanguages = false })
+                            DetailLevelCard(modifier = Modifier.weight(1f), label = stringResource(R.string.language_hi), selected = analysisLang == "hi", onClick = { viewModel.setAnalysisLanguage("hi"); showMoreLanguages = false })
+                            DetailLevelCard(modifier = Modifier.weight(1f), label = stringResource(R.string.language_es), selected = analysisLang == "es", onClick = { viewModel.setAnalysisLanguage("es"); showMoreLanguages = false })
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DetailLevelCard(modifier = Modifier.weight(1f), label = stringResource(R.string.language_ar), selected = analysisLang == "ar", onClick = { viewModel.setAnalysisLanguage("ar"); showMoreLanguages = false })
+                            DetailLevelCard(modifier = Modifier.weight(1f), label = stringResource(R.string.language_fr), selected = analysisLang == "fr", onClick = { viewModel.setAnalysisLanguage("fr"); showMoreLanguages = false })
+                            DetailLevelCard(modifier = Modifier.weight(1f), label = stringResource(R.string.language_ru), selected = analysisLang == "ru", onClick = { viewModel.setAnalysisLanguage("ru"); showMoreLanguages = false })
+                        }
                     }
                 }
 
@@ -547,91 +722,25 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Spacer(modifier = Modifier.height(16.dp))
 
-                // Download Section Integrated
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.CloudDownload, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        stringResource(R.string.download_model_full),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = { showHfLogin = true },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(vertical = 12.dp),
-                    ) {
-                        Icon(Icons.Rounded.AccountCircle, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            stringResource(R.string.sign_in),
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-
-                    Button(
-                        onClick = {
-                            val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
-                            viewModel.downloadModel(downloadUrl, "", cookies, false)
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(vertical = 12.dp),
-                        enabled = !isDownloadingModel,
-                        colors =
-                            ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                            ),
-                    ) {
-                        Icon(Icons.Rounded.Download, null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            stringResource(R.string.download),
-                            fontWeight = FontWeight.Medium,
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                }
-
-                if (isDownloadingModel) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        LinearProgressIndicator(
-                            progress = { downloadProgress },
-                            modifier = Modifier.fillMaxWidth().height(8.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "${(downloadProgress * 100).toInt()}% downloaded...",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
             }
         }
 
         if (showHfLogin) {
+            val loginRepoUrl = when (hfLoginModelType) {
+                ModelType.GEMMA_3N -> "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm"
+                ModelType.GEMMA_4 -> "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
+            }
             androidx.compose.ui.window.Dialog(
-                onDismissRequest = { showHfLogin = false },
+                onDismissRequest = {
+                    showHfLogin = false
+                    val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
+                    isHfLoggedIn = !cookies.isNullOrEmpty()
+                    if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
+                        val url = if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
+                        viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+                    }
+                },
                 properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -646,7 +755,15 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                             )
-                            IconButton(onClick = { showHfLogin = false }) {
+                            IconButton(onClick = {
+                                showHfLogin = false
+                                val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
+                                isHfLoggedIn = !cookies.isNullOrEmpty()
+                                if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
+                                    val url = if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
+                                    viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+                                }
+                            }) {
                                 Icon(Icons.Rounded.Close, "Close")
                             }
                         }
@@ -666,12 +783,7 @@ fun SettingsScreen(
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
                                     webViewClient = android.webkit.WebViewClient()
-                                    // Load the base repository URL so user can accept the license
-                                    val repoUrl =
-                                        downloadUrl.substringBefore(
-                                            "/resolve/",
-                                        ).ifEmpty { "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm" }
-                                    loadUrl(repoUrl)
+                                    loadUrl(loginRepoUrl)
                                 }
                             },
                             modifier = Modifier.fillMaxSize().weight(1f),

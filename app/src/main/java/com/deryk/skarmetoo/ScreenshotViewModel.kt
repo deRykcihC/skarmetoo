@@ -31,6 +31,11 @@ data class AlbumInfo(
     val count: Int,
 )
 
+enum class ModelType(val fileName: String, val displayName: String) {
+    GEMMA_3N("gemma-3n-E2B-it-int4.litertlm", "Gemma 3n"),
+    GEMMA_4("gemma-4-E2B-it.litertlm", "Gemma 4"),
+}
+
 class ScreenshotViewModel(application: Application) : AndroidViewModel(application) {
     private val db = ScreenshotDatabase(application)
     val llmManager = LlmManager.getInstance(application)
@@ -47,7 +52,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    // Analysis progress: Pair(remaining, total)
     private val _analysisProgress = MutableStateFlow<Pair<Int, Int>?>(null)
     val analysisProgress: StateFlow<Pair<Int, Int>?> = _analysisProgress.asStateFlow()
 
@@ -60,6 +64,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     private val _isDownloadingModel = MutableStateFlow(false)
     val isDownloadingModel: StateFlow<Boolean> = _isDownloadingModel.asStateFlow()
 
+    private val _downloadingModelType = MutableStateFlow<ModelType?>(null)
+    val downloadingModelType: StateFlow<ModelType?> = _downloadingModelType.asStateFlow()
+
     private val _downloadProgress = MutableStateFlow(0f)
     val downloadProgress: StateFlow<Float> = _downloadProgress.asStateFlow()
 
@@ -71,7 +78,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     private val prefs = application.getSharedPreferences("skarmetoo_prefs", android.content.Context.MODE_PRIVATE)
 
-    // Albums
     private val _availableAlbums = MutableStateFlow<List<AlbumInfo>>(emptyList())
     val availableAlbums: StateFlow<List<AlbumInfo>> = _availableAlbums.asStateFlow()
 
@@ -80,6 +86,15 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _isModelFound = MutableStateFlow(true)
     val isModelFound: StateFlow<Boolean> = _isModelFound.asStateFlow()
+
+    private val _selectedModel = MutableStateFlow(ModelType.GEMMA_3N)
+    val selectedModel: StateFlow<ModelType> = _selectedModel.asStateFlow()
+
+    private val _isGemma3nDownloaded = MutableStateFlow(false)
+    val isGemma3nDownloaded: StateFlow<Boolean> = _isGemma3nDownloaded.asStateFlow()
+
+    private val _isGemma4Downloaded = MutableStateFlow(false)
+    val isGemma4Downloaded: StateFlow<Boolean> = _isGemma4Downloaded.asStateFlow()
 
     private val _sourceFolders = MutableStateFlow<Set<String>>(emptySet())
     val sourceFolders: StateFlow<Set<String>> = _sourceFolders.asStateFlow()
@@ -134,6 +149,15 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
         _isSortDescending.value = prefs.getBoolean("is_sort_descending", true)
 
+        // Restore selected model from prefs
+        val savedModelType = prefs.getString("selected_model", ModelType.GEMMA_3N.name)
+        _selectedModel.value =
+            try {
+                ModelType.valueOf(savedModelType ?: ModelType.GEMMA_3N.name)
+            } catch (e: Exception) {
+                ModelType.GEMMA_3N
+            }
+
         viewModelScope.launch {
             llmManager.uiState.collect { state ->
                 when (state) {
@@ -167,10 +191,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             loadAlbums()
 
             try {
-                // Auto-load model on startup if it exists at the exact path
-                val internalModel = java.io.File(application.filesDir, "gemma-3n-E2B-it-int4.litertlm")
-                if (internalModel.exists()) {
-                    initializeModel(internalModel.absolutePath)
+                refreshModelDownloadStatus()
+
+                val selected = _selectedModel.value
+                val selectedModelFile = java.io.File(application.filesDir, selected.fileName)
+                if (selectedModelFile.exists()) {
+                    initializeModel(selectedModelFile.absolutePath, isGemma4 = selected == ModelType.GEMMA_4)
+                } else {
+                    val fallback = if (selected == ModelType.GEMMA_3N) ModelType.GEMMA_4 else ModelType.GEMMA_3N
+                    val fallbackFile = java.io.File(application.filesDir, fallback.fileName)
+                    if (fallbackFile.exists()) {
+                        _selectedModel.value = fallback
+                        prefs.edit().putString("selected_model", fallback.name).apply()
+                        initializeModel(fallbackFile.absolutePath, isGemma4 = fallback == ModelType.GEMMA_4)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error looking for model automatically", e)
@@ -181,10 +215,34 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         refreshImages()
     }
 
+    fun setSelectedModel(model: ModelType) {
+        _selectedModel.value = model
+        prefs.edit().putString("selected_model", model.name).apply()
+        checkModelExists()
+    }
+
+    private fun refreshModelDownloadStatus() {
+        val context = getApplication<Application>()
+        val isDownloading = _isDownloadingModel.value
+        val downloadingType = _downloadingModelType.value
+
+        val g3File = java.io.File(context.filesDir, ModelType.GEMMA_3N.fileName)
+        _isGemma3nDownloaded.value =
+            g3File.exists() && g3File.length() > 100L * 1024 * 1024 &&
+                !(isDownloading && downloadingType == ModelType.GEMMA_3N)
+
+        val g4File = java.io.File(context.filesDir, ModelType.GEMMA_4.fileName)
+        _isGemma4Downloaded.value =
+            g4File.exists() && g4File.length() > 100L * 1024 * 1024 &&
+                !(isDownloading && downloadingType == ModelType.GEMMA_4)
+    }
+
     fun checkModelExists() {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
-            val exists = java.io.File(context.filesDir, "gemma-3n-E2B-it-int4.litertlm").exists()
+            refreshModelDownloadStatus()
+            val selectedFile = java.io.File(context.filesDir, _selectedModel.value.fileName)
+            val exists = selectedFile.exists()
             _isModelFound.value = exists
             if (!exists) {
                 _modelStatus.value = "Model not found"
@@ -198,10 +256,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     fun initializeModel(
         path: String,
         useGpu: Boolean = false,
+        isGemma4: Boolean = false,
     ) {
         checkModelExists()
-        if (!_isModelFound.value) return
-        llmManager.initializeModel(path, useGpu = useGpu)
+        val requestedFile = java.io.File(path)
+        if (!requestedFile.exists()) return
+        
+        llmManager.initializeModel(path, useGpu = useGpu, isGemma4 = isGemma4)
     }
 
     fun refreshEntries() {
@@ -237,14 +298,16 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         token: String,
         cookies: String?,
         useGpu: Boolean,
+        modelType: ModelType = ModelType.GEMMA_3N,
     ) {
         if (_isDownloadingModel.value) return
         _isDownloadingModel.value = true
+        _downloadingModelType.value = modelType
         _downloadProgress.value = 0f
 
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
-            val destFile = java.io.File(context.filesDir, "gemma-3n-E2B-it-int4.litertlm")
+            val destFile = java.io.File(context.filesDir, modelType.fileName)
             try {
                 var currentUrl = url
                 var connection: java.net.HttpURLConnection
@@ -302,7 +365,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
                 val fileLength = connection.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
                 val input = java.io.BufferedInputStream(connection.inputStream)
-                val output = java.io.FileOutputStream(destFile)
+                val tmpFile = java.io.File(context.filesDir, "${modelType.fileName}.tmp")
+                val output = java.io.FileOutputStream(tmpFile)
 
                 val data = ByteArray(8192)
                 var total: Long = 0
@@ -327,17 +391,35 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 input.close()
                 connection.disconnect()
 
+                if (destFile.exists()) destFile.delete()
+                tmpFile.renameTo(destFile)
+
+                // Update download status
+                refreshModelDownloadStatus()
+
                 withContext(Dispatchers.Main) {
                     _modelStatus.value = "Downloaded to internal storage"
                 }
-                initializeModel(destFile.absolutePath, useGpu = useGpu)
+
+                // Auto-select and load the just-downloaded model
+                _selectedModel.value = modelType
+                prefs.edit().putString("selected_model", modelType.name).apply()
+                _isModelFound.value = true
+                initializeModel(
+                    destFile.absolutePath,
+                    useGpu = useGpu,
+                    isGemma4 = modelType == ModelType.GEMMA_4,
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "Failed downloading model", e)
-                if (destFile.exists()) destFile.delete()
+                val tmpFile = java.io.File(context.filesDir, "${modelType.fileName}.tmp")
+                if (tmpFile.exists()) tmpFile.delete()
                 withContext(Dispatchers.Main) {
                 }
             } finally {
                 _isDownloadingModel.value = false
+                _downloadingModelType.value = null
+                refreshModelDownloadStatus()
             }
         }
     }
@@ -538,7 +620,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Take persistable permission so we can read this folder later
                 context.contentResolver.takePersistableUriPermission(
                     treeUri,
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
@@ -567,14 +648,16 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 val childrenUri = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri) ?: return
                 childrenUri.listFiles().forEach { file ->
                     if (file.isDirectory) {
-                        // Recurse into subdirectories
-                        file.uri.let { scanFolder(it) }
+                        val name = file.name ?: ""
+                        if (!name.startsWith(".")) {
+                            file.uri.let { scanFolder(it) }
+                        }
                     } else if (file.isFile) {
                         val name = file.name?.lowercase() ?: ""
+                        if (name.startsWith(".")) return@forEach
                         val ext = name.substringAfterLast('.', "")
                         if (ext in imageExtensions) {
                             val uniqueId = "$name-${file.length()}"
-                            // Global deduplication to prevent double-counting overlaps (e.g., Pictures and Pictures/Screenshots)
                             if (globalSeenFiles.add(uniqueId)) {
                                 imageUris.add(file.uri)
                             }
@@ -654,10 +737,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /**
-     * Start sequential analysis of all unprocessed screenshots.
-     * Processes one at a time and updates progress.
-     */
     fun analyzeUnprocessed() {
         if (!_isModelReady.value) {
             return
@@ -770,13 +849,22 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                         bitmap = bitmap,
                         detailLevel = _detailLevel.value,
                         customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
-                        isChinese = _analysisLanguage.value == "zh-rTW",
+                        targetLanguage = when (_analysisLanguage.value) {
+                            "en" -> "English"
+                            "zh-rTW" -> "Traditional Chinese"
+                            "hi" -> "Hindi"
+                            "es" -> "Spanish"
+                            "ar" -> "Arabic"
+                            "fr" -> "French"
+                            "ru" -> "Russian"
+                            else -> "English"
+                        },
                         onProgress = { progress ->
                             _currentImageProgress.value = progress
                         },
-                        onResult = { summary, tags ->
+                        onResult = { summary, tags, modelUsed ->
                             viewModelScope.launch(Dispatchers.IO) {
-                                db.updateAnalysis(entry.id, summary, tags)
+                                db.updateAnalysis(entry.id, summary, tags, modelUsed)
                                 refreshEntries()
                                 Log.d(TAG, "Analysis complete: id=${entry.id}")
                                 if (continuation.isActive) continuation.resume(true)

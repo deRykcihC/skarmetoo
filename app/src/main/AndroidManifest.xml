@@ -17,6 +17,11 @@
         android:largeHeap="true"
         android:theme="@style/Theme.Skarmetoo">
         <activity
+            android:name=".SaveToGalleryActivity"
+            android:exported="true"
+            android:label="Save to Gallery"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"

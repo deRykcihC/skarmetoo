@@ -36,6 +36,7 @@ private const val TAG = "LlmManager"
 class LlmManager(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: Conversation? = null
+    private var currentModelName: String = "Gemma 3n"
     private val scope = CoroutineScope(Dispatchers.IO)
     private val engineMutex = kotlinx.coroutines.sync.Mutex()
 
@@ -53,6 +54,7 @@ class LlmManager(private val context: Context) {
         modelPath: String,
         useGpu: Boolean = false,
         maxTokens: Int = 4096,
+        isGemma4: Boolean = false,
     ) {
         if (!File(modelPath).exists()) {
             _uiState.value = LlmState.Error("Model file not found at $modelPath")
@@ -70,19 +72,20 @@ class LlmManager(private val context: Context) {
                         engine?.close()
                         engine = null
                     } catch (e: Exception) {
-                        Log.w(TAG, "Error closing existing engine before init: ${e.message}")
+                        Log.e(TAG, "Error closing existing engine or conversation", e)
                     }
 
-                    // Use cacheDir for /data/local/tmp models (same as Gallery app)
                     val cacheDirPath = context.cacheDir.absolutePath
 
-                    val mainBackend = if (useGpu) Backend.GPU else Backend.CPU
-                    // Vision backend must be GPU for Gemma 3n
-                    val visionBk = Backend.GPU
+                    // Gemma 4 uses CPU for all backends; Gemma 3n uses GPU for vision
+                    val mainBackend = if (isGemma4) Backend.CPU() else if (useGpu) Backend.GPU() else Backend.CPU()
+                    val visionBk = if (isGemma4) Backend.CPU() else Backend.GPU()
 
+                    currentModelName = if (isGemma4) "Gemma 4" else "Gemma 3n"
                     Log.d(TAG, "Model path: $modelPath")
-                    Log.d(TAG, "Main backend: ${if (useGpu) "GPU" else "CPU"}")
-                    Log.d(TAG, "Vision backend: GPU")
+                    Log.d(TAG, "Model type: $currentModelName")
+                    Log.d(TAG, "Main backend: ${if (mainBackend is Backend.GPU) "GPU" else "CPU"}")
+                    Log.d(TAG, "Vision backend: ${if (visionBk is Backend.GPU) "GPU" else "CPU"}")
                     Log.d(TAG, "Max tokens: $maxTokens")
                     Log.d(TAG, "Cache dir: $cacheDirPath")
 
@@ -169,7 +172,6 @@ class LlmManager(private val context: Context) {
         _uiState.value = LlmState.Generating
         scope.launch {
             try {
-                // Reset conversation for new image query
                 conversation?.close()
                 val convConfig =
                     ConversationConfig(
@@ -182,9 +184,7 @@ class LlmManager(private val context: Context) {
                     )
                 conversation = engine?.createConversation(convConfig)
 
-                // Resize bitmap to max 768x768 maintaining aspect ratio
                 val resized = resizeBitmap(bitmap, 768)
-                // Ensure ARGB_8888 config
                 val argbBitmap =
                     if (resized.config != Bitmap.Config.ARGB_8888) {
                         resized.copy(Bitmap.Config.ARGB_8888, false)
@@ -193,9 +193,7 @@ class LlmManager(private val context: Context) {
                     }
 
                 val contents = mutableListOf<Content>()
-                // Add image first (as PNG bytes)
                 contents.add(Content.ImageBytes(argbBitmap.toPngByteArray()))
-                // Then add text prompt
                 contents.add(Content.Text(prompt))
 
                 conversation?.sendMessageAsync(
@@ -237,9 +235,9 @@ class LlmManager(private val context: Context) {
         bitmap: Bitmap,
         detailLevel: DetailLevel = DetailLevel.DETAILED,
         customPrompt: String? = null,
-        isChinese: Boolean = false,
+        targetLanguage: String = "English",
         onProgress: (Float) -> Unit = {},
-        onResult: (summary: String, tags: String) -> Unit,
+        onResult: (summary: String, tags: String, modelUsed: String) -> Unit,
         onError: (String) -> Unit,
     ) {
         if (engine == null) {
@@ -250,8 +248,6 @@ class LlmManager(private val context: Context) {
         scope.launch {
             engineMutex.withLock {
                 try {
-                    // CRITICAL: Close any existing conversation first!
-                    // Engine only supports one session at a time.
                     try {
                         conversation?.close()
                         conversation = null
@@ -285,21 +281,21 @@ class LlmManager(private val context: Context) {
                             resized
                         }
 
-                    val langName = if (isChinese) "Traditional Chinese" else "English"
+                    val langName = targetLanguage
                     val prompt =
                         when (detailLevel) {
                             DetailLevel.BRIEF ->
-                                """Describe this screenshot briefly in $langName. Respond with EXACTLY this format and nothing else:
+                                """Describe this image briefly in $langName. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your one sentence description]
 TAGS: [tag1, tag2, tag3]"""
 
                             DetailLevel.DETAILED ->
-                                """Describe this screenshot in detail in $langName. Write 2-3 sentences covering what is shown, visible text, UI elements, and purpose. Respond with EXACTLY this format and nothing else:
+                                """Describe this image in detail in $langName. Write 2-3 sentences. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your detailed 2-3 sentence description]
 TAGS: [tag1, tag2, tag3, tag4, tag5]"""
 
                             DetailLevel.COMPREHENSIVE ->
-                                """Describe this screenshot with maximum detail in $langName, using a single paragraph. Cover ALL visible text, UI elements, colors, layout, branding, and objects. Omit nothing. Respond with EXACTLY this format and nothing else:
+                                """Describe this image with maximum detail in $langName, using a single paragraph. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your comprehensive paragraph describing absolutely everything visible in the image]
 TAGS: [tag1, tag2, tag3, tag4, tag5, tag6, tag7, tag8]"""
 
@@ -382,7 +378,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
                         }
 
                     if (resultPair != null) {
-                        onResult(resultPair.first, resultPair.second)
+                        onResult(resultPair.first, resultPair.second, currentModelName ?: "Unknown Model")
                     } else {
                         onError("Analysis returned null result")
                     }
@@ -406,15 +402,12 @@ TAGS: [extracted tag1, tag2, tag3]"""
         var summary = ""
         var tags = ""
 
-        // Cleanup: strip markdown code fences and common leading/trailing artifacts
         val cleaned =
             result
                 .replace(Regex("```(json)?\\s*"), "")
                 .replace(Regex("```\\s*$"), "")
                 .trim()
 
-        // 1. Try robust Regex extraction for "SUMMARY:" and "TAGS:"
-        // This handles cases where SUMMARY and TAGS are on the same line or separated by any whitespace/newlines.
         val summaryMatch = Regex("(?i)SUMMARY\\s*:\\s*(.*?)(?=\\s*(?:TAGS\\s*:|$))", RegexOption.DOT_MATCHES_ALL).find(cleaned)
         val tagsMatch = Regex("(?i)TAGS\\s*:\\s*(.*)", RegexOption.DOT_MATCHES_ALL).find(cleaned)
 
@@ -425,7 +418,6 @@ TAGS: [extracted tag1, tag2, tag3]"""
             tags = tagsMatch.groupValues[1].trim().trim('"').trim('[', ']')
         }
 
-        // 2. Fallback: If summary is still blank, try Regex for JSON-style keys (handles malformed JSON)
         if (summary.isBlank()) {
             val jsonSummaryMatch = Regex("(?i)\"summary\"\\s*:\\s*\"(.*?)\"").find(cleaned)
             val jsonTagsMatch = Regex("(?i)\"tags\"\\s*:\\s*\"(.*?)\"").find(cleaned)
@@ -433,14 +425,12 @@ TAGS: [extracted tag1, tag2, tag3]"""
             if (jsonSummaryMatch != null) summary = jsonSummaryMatch.groupValues[1]
             if (jsonTagsMatch != null) tags = jsonTagsMatch.groupValues[1]
 
-            // If still nothing, check for any common description keys
             if (summary.isBlank()) {
                 val altSummaryMatch = Regex("(?i)\"(?:description|content|caption)\"\\s*:\\s*\"(.*?)\"").find(cleaned)
                 if (altSummaryMatch != null) summary = altSummaryMatch.groupValues[1]
             }
         }
 
-        // 3. Final fallback: use raw output if we found nothing structured
         if (summary.isBlank() && cleaned.isNotBlank()) {
             val firstLine = cleaned.lines().firstOrNull { it.isNotBlank() } ?: ""
             summary = if (firstLine.length > 30) firstLine else cleaned.replace("\n", " ").take(1000)

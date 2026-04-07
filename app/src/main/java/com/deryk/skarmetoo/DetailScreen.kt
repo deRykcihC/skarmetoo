@@ -42,9 +42,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// =============================================
-// DETAIL SCREEN
-// =============================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun DetailScreen(
@@ -174,7 +171,6 @@ fun DetailScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
     ) {
-        // Top Bar — exactly matching home page style
         Row(
             modifier =
                 Modifier
@@ -307,7 +303,6 @@ fun DetailScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            // Screenshot image in rounded card (clickable for fullscreen)
             Card(
                 shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -494,6 +489,14 @@ fun DetailScreen(
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
+                    if (entry.modelUsed.isNotBlank()) {
+                        MetadataRow(
+                            label = stringResource(R.string.meta_model_used),
+                            value = entry.modelUsed,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
                     MetadataRow(
                         label = stringResource(R.string.meta_hash),
                         value = entry.imageHash.take(16) + if (entry.imageHash.length > 16) "..." else "",

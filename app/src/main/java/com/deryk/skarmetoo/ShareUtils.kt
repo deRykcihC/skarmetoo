@@ -86,11 +86,12 @@ object ShareUtils {
                         }
                     }?.asImageBitmap()
 
-                var currentContext = context
+                var currentContext: Context = context
                 while (currentContext is ContextWrapper && currentContext !is Activity) {
                     currentContext = currentContext.baseContext
                 }
-                val activity = currentContext as Activity
+                val activity = currentContext as? Activity
+                    ?: throw IllegalStateException("Cannot resolve Activity from context")
                 val rootViewGroup = activity.findViewById<ViewGroup>(android.R.id.content)
 
                 val composeView =
@@ -227,8 +228,26 @@ object ShareUtils {
                                 Intent(Intent.ACTION_SEND).apply {
                                     type = "image/png"
                                     putExtra(Intent.EXTRA_STREAM, imageUriOut)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
-                            context.startActivity(Intent.createChooser(intent, "Share Analysis"))
+                            val chooser = Intent.createChooser(intent, "Share Analysis").apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                
+                                val saveIntent = Intent(activity, SaveToGalleryActivity::class.java).apply {
+                                    action = Intent.ACTION_SEND
+                                    type = "image/png"
+                                    putExtra(Intent.EXTRA_STREAM, imageUriOut)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                val customTarget = android.content.pm.LabeledIntent(
+                                    saveIntent,
+                                    activity.packageName,
+                                    "Save to Gallery",
+                                    android.R.drawable.ic_menu_save
+                                )
+                                putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(customTarget))
+                            }
+                            activity.startActivity(chooser)
                         }
                     }
                 } else {

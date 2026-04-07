@@ -9,6 +9,7 @@ data class ScreenshotEntry(
     val analyzedAt: Long = 0,
     val isAnalyzing: Boolean = false,
     val note: String = "",
+    val modelUsed: String = "",
 ) {
     fun getTagList(): List<String> {
         return if (tags.isBlank()) {
