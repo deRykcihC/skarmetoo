@@ -25,7 +25,7 @@ While Skarmetoo runs locally, it requires a device with a modern processor and s
 Device I've tried:
 | Name | SoC | RAM |
 | :--- | :--- | :--- |
-| Poco X8 Pro Max | - | 12GB |
+| Poco X8 Pro Max | Dimensity 9500s | 12GB |
 | Galaxy S23 | Snapdragon 8 Gen 2 | 8GB |
 | OnePlus 7T | Snapdragon 855+ | 8GB |
 | OnePlus Nord CE 3 Lite | Snapdragon 695 5G | 8GB |
