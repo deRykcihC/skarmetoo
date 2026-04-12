@@ -33,12 +33,14 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: ScreenshotViewModel,
     onStartScreenSaver: () -> Unit,
     logoRes: Int = R.drawable.app_logo,
+    onRevisitTutorial: () -> Unit = {},
 ) {
     val isModelReady by viewModel.isModelReady.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
@@ -68,6 +70,7 @@ fun SettingsScreen(
     val sourceFolders by viewModel.sourceFolders.collectAsState()
     val folderImageCounts by viewModel.folderImageCounts.collectAsState()
 
+
     LaunchedEffect(Unit) {
         viewModel.checkModelExists()
         val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
@@ -85,6 +88,7 @@ fun SettingsScreen(
             treeUri?.let { viewModel.loadImagesFromFolder(it) }
         }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier =
             Modifier
@@ -113,7 +117,13 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.weight(1f))
 
             val currentLanguage by viewModel.appLanguage.collectAsState()
-            IconButton(onClick = {
+
+            IconButton(onClick = onRevisitTutorial) {
+                Icon(Icons.Rounded.MenuBook, contentDescription = "Tutorial")
+            }
+            IconButton(
+                modifier = Modifier,
+                onClick = {
                 val nextLang =
                     when (currentLanguage) {
                         "en" -> "zh-rTW"
@@ -198,7 +208,8 @@ fun SettingsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    ,
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -325,7 +336,19 @@ fun SettingsScreen(
                     }
 
                     FilledTonalButton(
-                        onClick = { folderPickerLauncher.launch(null) },
+                        onClick = {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                if (!android.os.Environment.isExternalStorageManager()) {
+                                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                                    intent.data = android.net.Uri.parse("package:${context.packageName}")
+                                    context.startActivity(intent)
+                                } else {
+                                    folderPickerLauncher.launch(null)
+                                }
+                            } else {
+                                folderPickerLauncher.launch(null)
+                            }
+                        },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(14.dp),
                         contentPadding = PaddingValues(vertical = 12.dp),
@@ -350,7 +373,8 @@ fun SettingsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    ,
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -648,7 +672,7 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 val detailLevels = LlmManager.DetailLevel.entries
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -744,6 +768,7 @@ fun SettingsScreen(
                 properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize()) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -763,7 +788,9 @@ fun SettingsScreen(
                                     val url = if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
                                     viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
                                 }
-                            }) {
+                            },
+                            modifier = Modifier
+                            ) {
                                 Icon(Icons.Rounded.Close, "Close")
                             }
                         }
@@ -789,6 +816,7 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxSize().weight(1f),
                         )
                     }
+                    }
                 }
             }
         }
@@ -799,7 +827,8 @@ fun SettingsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    ,
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -850,7 +879,8 @@ fun SettingsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    ,
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -912,7 +942,7 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "Coming soon",
+                    stringResource(R.string.coming_soon),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.fillMaxWidth(),
@@ -1021,6 +1051,8 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
     }
+
+    } // End of Box wrapper
 
     if (showManageFoldersDialog) {
         val dlgTitle = stringResource(R.string.manage_source_folders)

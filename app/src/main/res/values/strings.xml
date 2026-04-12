@@ -55,7 +55,7 @@
     <string name="select_model">Select Model</string>
     <string name="model_gemma3n">Gemma 3n</string>
     <string name="model_gemma4">Gemma 4</string>
-    <string name="model_gemma3n_desc">Previous generation model.</string>
+    <string name="model_gemma3n_desc">Previous generation model. Authorization &amp; Login required.</string>
     <string name="model_gemma4_desc">Faster, more detailed, smaller file size. Recommended.</string>
     <string name="download_gemma3n">Download Gemma 3n</string>
     <string name="download_gemma4">Download Gemma 4</string>
@@ -106,4 +106,21 @@
     <string name="share_failed">Share failed: %1$s</string>
     <string name="save_to_gallery">Save to Gallery</string>
     <string name="saved_to_gallery">Saved to gallery</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_get_started">Get Started</string>
+    <string name="onboarding_page0_desc">Start by downloading a local AI model in the Settings to enable on-device image analysis.</string>
+    <string name="onboarding_page1_desc">Change the language of the application interface using the globe button at the top right of the Settings screen.</string>
+    <string name="onboarding_page2_desc">Select your preferred language for the AI to output its analysis results.</string>
+    <string name="onboarding_page3_desc">Choose how detailed you want the AI to describe your images, from brief to comprehensive, or set a custom prompt.</string>
+    <string name="onboarding_page4_desc">Add folders from your device to be analyzed automatically. Skarmetoo will sort and index the items inside.</string>
+    <string name="onboarding_page5_desc">Activate the screen saver to keep your phone awake while the AI analyzes your images in the background.</string>
+    <string name="onboarding_page6_title">Share Output</string>
+    <string name="onboarding_page6_desc">You can share the AI-generated text and the image directly from the detail screen using the share button.</string>
+    <string name="onboarding_page7_title">Search Images</string>
+    <string name="onboarding_page7_desc">Looking for something specific? Use the search bar to find images based on what the AI discovered in them.</string>
+    <string name="onboarding_page8_title">Filter Pills</string>
+    <string name="onboarding_page8_desc">Quickly view images containing specific subjects like people, pets, or food by tapping the suggested filter pills.</string>
+    <string name="onboarding_page9_title">Reanalyze</string>
+    <string name="onboarding_page9_desc">If you want the AI to analyze an image again, simply double-click its status button in the gallery or the detail screen.</string>
 </resources>

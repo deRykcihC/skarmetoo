@@ -18,8 +18,8 @@ android {
         applicationId = "com.deryk.skarmetoo"
         minSdk = 29
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.01"
+        versionCode = 10
+        versionName = "1.02"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -59,6 +59,11 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    bundle {
+        language {
+            enableSplit = false
+        }
     }
 }
 

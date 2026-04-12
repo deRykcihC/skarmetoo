@@ -61,13 +61,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                intent.data = Uri.parse("package:$packageName")
-                startActivity(intent)
-            }
-        }
+        // Removed early permission request
 
         enableEdgeToEdge(
             statusBarStyle =
@@ -119,6 +113,7 @@ class MainActivity : ComponentActivity() {
 
 // --- Navigation ---
 object Routes {
+    const val ONBOARDING = "onboarding"
     const val GALLERY = "gallery"
     const val SETTINGS = "settings"
     const val DETAIL = "detail/{id}"
@@ -142,6 +137,8 @@ fun MainApp(viewModel: ScreenshotViewModel) {
     var lastGalleryClickTime by remember { mutableLongStateOf(0L) }
     val isEasterEgg = remember { kotlin.random.Random.nextFloat() < 0.069f }
     val logoRes = if (isEasterEgg) R.drawable.app_logo_rainbow else R.drawable.app_logo
+
+    val startDestination = remember { if (viewModel.hasSeenOnboarding.value) Routes.GALLERY else Routes.ONBOARDING }
 
     Scaffold(
         bottomBar = {
@@ -220,7 +217,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
         )
         NavHost(
             navController = navController,
-            startDestination = Routes.GALLERY,
+            startDestination = startDestination,
             modifier =
                 Modifier.padding(
                     top = innerPadding.calculateTopPadding(),
@@ -230,6 +227,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                 when (targetState.destination.route) {
                     Routes.SETTINGS -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
                     Routes.GALLERY -> slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn()
+                    Routes.ONBOARDING -> fadeIn()
                     else -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
                 }
             },
@@ -237,12 +235,23 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                 when (targetState.destination.route) {
                     Routes.SETTINGS -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
                     Routes.GALLERY -> slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut()
+                    Routes.ONBOARDING -> fadeOut()
                     else -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
                 }
             },
             popEnterTransition = { slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn() },
             popExitTransition = { slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut() },
         ) {
+            composable(Routes.ONBOARDING) {
+                OnboardingScreen(
+                    onFinish = {
+                        viewModel.setHasSeenOnboarding(true)
+                        navController.navigate(Routes.GALLERY) {
+                            popUpTo(Routes.ONBOARDING) { inclusive = true }
+                        }
+                    }
+                )
+            }
             composable(Routes.GALLERY) {
                 GalleryScreen(
                     viewModel = viewModel,
@@ -257,6 +266,9 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                     viewModel = viewModel,
                     onStartScreenSaver = { isScreenSaverActive = true },
                     logoRes = logoRes,
+                    onRevisitTutorial = {
+                        navController.navigate(Routes.ONBOARDING)
+                    }
                 )
             }
             composable(
@@ -451,7 +463,7 @@ fun GalleryScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                "Done",
+                                stringResource(R.string.done),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,

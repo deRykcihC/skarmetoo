@@ -55,7 +55,7 @@
     <string name="select_model">選擇模型</string>
     <string name="model_gemma3n">Gemma 3n</string>
     <string name="model_gemma4">Gemma 4</string>
-    <string name="model_gemma3n_desc">上一代模型。</string>
+    <string name="model_gemma3n_desc">上一代模型。需要授權與登入。</string>
     <string name="model_gemma4_desc">分析速度更快、更詳細且檔案更小。推薦使用。</string>
     <string name="download_gemma3n">下載 Gemma 3n</string>
     <string name="download_gemma4">下載 Gemma 4</string>
@@ -106,4 +106,21 @@
     <string name="share_failed">分享失敗：%1$s</string>
     <string name="save_to_gallery">儲存至相簿</string>
     <string name="saved_to_gallery">已儲存至相簿</string>
+    <string name="onboarding_skip">跳過</string>
+    <string name="onboarding_next">下一步</string>
+    <string name="onboarding_get_started">開始體驗</string>
+    <string name="onboarding_page0_desc">首先在設定中下載本地 AI 模型，以啟用裝置端圖片分析。</string>
+    <string name="onboarding_page1_desc">使用設定畫面右上角的地球按鈕，更改應用程式介面的語言。</string>
+    <string name="onboarding_page2_desc">選擇您希望 AI 輸出的分析結果語言。</string>
+    <string name="onboarding_page3_desc">選擇您希望 AI 描述圖片的詳細程度，從簡短到完整，或設定自訂提示詞。</string>
+    <string name="onboarding_page4_desc">從您的裝置新增資料夾以自動進行分析。Skarmetoo 將對其中的項目進行排序和索引。</string>
+    <string name="onboarding_page5_desc">啟動螢幕保護程式，在 AI 於背景分析圖片時保持手機喚醒。</string>
+    <string name="onboarding_page6_title">分享輸出</string>
+    <string name="onboarding_page6_desc">您可以使用分享按鈕，直接從詳情畫面分享 AI 生成的文字和圖片。</string>
+    <string name="onboarding_page7_title">搜尋圖片</string>
+    <string name="onboarding_page7_desc">正在尋找特定內容？使用搜尋列根據 AI 發現的內容尋找圖片。</string>
+    <string name="onboarding_page8_title">篩選標籤</string>
+    <string name="onboarding_page8_desc">點擊建議的篩選標籤，快速查看包含特定主題（如人物、寵物或食物）的圖片。</string>
+    <string name="onboarding_page9_title">重新分析</string>
+    <string name="onboarding_page9_desc">如果您想讓 AI 重新分析圖片，只需在圖庫或詳情畫面雙擊其狀態按鈕即可。</string>
 </resources>

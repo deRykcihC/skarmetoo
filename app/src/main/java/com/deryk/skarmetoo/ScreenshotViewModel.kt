@@ -113,6 +113,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     private val _isSortDescending = MutableStateFlow(true)
     val isSortDescending: StateFlow<Boolean> = _isSortDescending.asStateFlow()
 
+    private val _hasSeenOnboarding = MutableStateFlow(false)
+    val hasSeenOnboarding: StateFlow<Boolean> = _hasSeenOnboarding.asStateFlow()
+
     fun setAppLanguage(lang: String) {
         _appLanguage.value = lang
         prefs.edit().putString("app_language", lang).apply()
@@ -126,6 +129,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     fun toggleSortOrder() {
         _isSortDescending.value = !_isSortDescending.value
         prefs.edit().putBoolean("is_sort_descending", _isSortDescending.value).apply()
+    }
+
+    fun setHasSeenOnboarding(seen: Boolean) {
+        _hasSeenOnboarding.value = seen
+        prefs.edit().putBoolean("has_seen_onboarding", seen).apply()
     }
 
     init {
@@ -148,6 +156,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         _analysisLanguage.value = savedAnalysisLang
 
         _isSortDescending.value = prefs.getBoolean("is_sort_descending", true)
+        _hasSeenOnboarding.value = prefs.getBoolean("has_seen_onboarding", false)
 
         // Restore selected model from prefs
         val savedModelType = prefs.getString("selected_model", ModelType.GEMMA_3N.name)
