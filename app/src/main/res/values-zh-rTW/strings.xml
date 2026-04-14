@@ -123,4 +123,6 @@
     <string name="onboarding_page8_desc">點擊建議的篩選標籤，快速查看包含特定主題（如人物、寵物或食物）的圖片。</string>
     <string name="onboarding_page9_title">重新分析</string>
     <string name="onboarding_page9_desc">如果您想讓 AI 重新分析圖片，只需在圖庫或詳情畫面雙擊其狀態按鈕即可。</string>
+    <string name="experimental">實驗</string>
+    <string name="all">全部</string>
 </resources>
