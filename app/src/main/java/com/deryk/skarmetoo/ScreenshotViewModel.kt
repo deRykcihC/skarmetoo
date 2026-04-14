@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -29,6 +31,11 @@ data class AlbumInfo(
     val name: String,
     val bucketId: String,
     val count: Int,
+)
+
+data class AlbumWithThumbnails(
+    val album: AlbumInfo,
+    val thumbnailUris: List<Uri>,
 )
 
 enum class ModelType(val fileName: String, val displayName: String) {
@@ -80,6 +87,17 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _availableAlbums = MutableStateFlow<List<AlbumInfo>>(emptyList())
     val availableAlbums: StateFlow<List<AlbumInfo>> = _availableAlbums.asStateFlow()
+
+    private val _albumThumbnails = MutableStateFlow<List<AlbumWithThumbnails>>(emptyList())
+    val albumThumbnails: StateFlow<List<AlbumWithThumbnails>> = _albumThumbnails.asStateFlow()
+
+    // Pinned album IDs — persisted in SharedPreferences
+    private val _pinnedAlbumIds = MutableStateFlow<Set<String>>(emptySet())
+    val pinnedAlbumIds: StateFlow<Set<String>> = _pinnedAlbumIds.asStateFlow()
+
+    // Custom album ordering (list of bucket IDs) — persisted in SharedPreferences
+    private val _albumOrder = MutableStateFlow<List<String>>(emptyList())
+    val albumOrder: StateFlow<List<String>> = _albumOrder.asStateFlow()
 
     private val _selectedAlbums = MutableStateFlow<Set<String>>(emptySet())
     val selectedAlbums: StateFlow<Set<String>> = _selectedAlbums.asStateFlow()
@@ -136,6 +154,24 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         prefs.edit().putBoolean("has_seen_onboarding", seen).apply()
     }
 
+    /** Toggle pin/unpin for an album by its bucket ID. */
+    fun togglePinAlbum(bucketId: String) {
+        val current = _pinnedAlbumIds.value.toMutableSet()
+        if (current.contains(bucketId)) {
+            current.remove(bucketId)
+        } else {
+            current.add(bucketId)
+        }
+        _pinnedAlbumIds.value = current
+        prefs.edit().putStringSet("pinned_album_ids", current).apply()
+    }
+
+    /** Persist a fully custom album order (list of bucket IDs). */
+    fun updateAlbumOrder(orderedBucketIds: List<String>) {
+        _albumOrder.value = orderedBucketIds
+        prefs.edit().putString("album_order", orderedBucketIds.joinToString(",")).apply()
+    }
+
     init {
         val currentUris = prefs.getStringSet("saved_folder_uris", emptySet()) ?: emptySet()
         _sourceFolders.value = currentUris
@@ -157,6 +193,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
         _isSortDescending.value = prefs.getBoolean("is_sort_descending", true)
         _hasSeenOnboarding.value = prefs.getBoolean("has_seen_onboarding", false)
+
+        // Restore pinned album IDs
+        _pinnedAlbumIds.value = prefs.getStringSet("pinned_album_ids", emptySet()) ?: emptySet()
+        // Restore custom album order
+        val savedOrder = prefs.getString("album_order", null)
+        _albumOrder.value = savedOrder?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
 
         // Restore selected model from prefs
         val savedModelType = prefs.getString("selected_model", ModelType.GEMMA_3N.name)
@@ -284,6 +326,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     db.searchEntries(query)
                 }
             _entries.value = result
+            rebuildExperimentalStatuses()
         }
     }
 
@@ -490,6 +533,164 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             current.add(bucketId)
         }
         _selectedAlbums.value = current
+    }
+
+    private val _experimentalImageUris = MutableStateFlow<List<Uri>>(emptyList())
+    val experimentalImageUris: StateFlow<List<Uri>> = _experimentalImageUris.asStateFlow()
+
+    // Maps MediaStore URI string → (Entry ID, isAnalyzed)
+    private val _experimentalStatuses = MutableStateFlow<Map<String, Pair<Long, Boolean>>>(emptyMap())
+    val experimentalStatuses: StateFlow<Map<String, Pair<Long, Boolean>>> = _experimentalStatuses.asStateFlow()
+
+    // Maps file relative path → MediaStore URI string (built during loadExperimentalImages)
+    private val _experimentalPathMap = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    private val _experimentalGridColumns = MutableStateFlow(prefs.getInt("experimental_grid_columns", 3))
+    val experimentalGridColumns: StateFlow<Int> = _experimentalGridColumns.asStateFlow()
+
+    fun setExperimentalGridColumns(columns: Int) {
+        _experimentalGridColumns.value = columns
+        prefs.edit().putInt("experimental_grid_columns", columns).apply()
+    }
+
+    @Suppress("DEPRECATION")
+    fun loadExperimentalImages(bucketId: String? = null) {
+        val context = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val uris = mutableListOf<Uri>()
+            val pathToUri = mutableMapOf<String, String>() // relativePath → mediaStoreUriString
+            val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val projection = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DATA)
+            val externalRoot = Environment.getExternalStorageDirectory().absolutePath
+
+            try {
+                val (selection, selectionArgs) = if (bucketId != null) {
+                    "${MediaStore.Images.Media.BUCKET_ID} = ?" to arrayOf(bucketId)
+                } else {
+                    null to null
+                }
+
+                context.contentResolver.query(
+                    uri,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    "${MediaStore.Images.Media.DATE_ADDED} DESC",
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
+                    while (cursor.moveToNext()) {
+                        val imageId = cursor.getLong(idCol)
+                        val imageUri = ContentUris.withAppendedId(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            imageId,
+                        )
+                        uris.add(imageUri)
+
+                        // Extract relative file path for matching against SAF URIs
+                        val filePath = cursor.getString(dataCol) ?: ""
+                        if (filePath.isNotEmpty()) {
+                            val relativePath = filePath.removePrefix(externalRoot).trimStart('/')
+                            pathToUri[relativePath] = imageUri.toString()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load experimental images", e)
+            }
+
+            _experimentalImageUris.value = uris
+            _experimentalPathMap.value = pathToUri
+            rebuildExperimentalStatuses()
+        }
+    }
+
+    /**
+     * Cross-reference gallery entries (SAF URIs) with experimental images (MediaStore URIs)
+     * by extracting relative file paths from both URI types.
+     */
+    fun rebuildExperimentalStatuses() {
+        val entries = _entries.value
+        val pathToMediaUri = _experimentalPathMap.value
+        if (pathToMediaUri.isEmpty()) return
+
+        // Build a map of relativePath → entry from gallery entries
+        val entryByPath = mutableMapOf<String, ScreenshotEntry>()
+        for (entry in entries) {
+            val relativePath = extractRelativePathFromSafUri(entry.imageUri)
+            if (relativePath != null) {
+                entryByPath[relativePath] = entry
+            }
+        }
+
+        // Match: for each experimental image path, check if there's a gallery entry
+        val statuses = mutableMapOf<String, Pair<Long, Boolean>>()
+        for ((relativePath, mediaUriString) in pathToMediaUri) {
+            val entry = entryByPath[relativePath]
+            if (entry != null) {
+                statuses[mediaUriString] = entry.id to (entry.analyzedAt > 0L)
+            }
+        }
+
+        _experimentalStatuses.value = statuses
+    }
+
+    /**
+     * Extract the relative file path from a SAF document URI.
+     * e.g. content://com.android.externalstorage.documents/document/primary%3ADCIM%2Fphoto.jpg
+     *   → DCIM/photo.jpg
+     */
+    private fun extractRelativePathFromSafUri(uriString: String): String? {
+        if (uriString.isBlank()) return null
+        return try {
+            val uri = Uri.parse(uriString)
+            val docId = DocumentsContract.getDocumentId(uri)
+            val colonIndex = docId.indexOf(':')
+            if (colonIndex >= 0) docId.substring(colonIndex + 1) else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun loadAlbumThumbnails() {
+        val context = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val albums = _availableAlbums.value
+            val result = mutableListOf<AlbumWithThumbnails>()
+
+            for (album in albums) {
+                val thumbnailUris = mutableListOf<Uri>()
+                try {
+                    val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
+                    val selectionArgs = arrayOf(album.bucketId)
+                    val projection = arrayOf(MediaStore.Images.Media._ID)
+                    val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+                    context.contentResolver.query(
+                        uri,
+                        projection,
+                        selection,
+                        selectionArgs,
+                        "${MediaStore.Images.Media.DATE_ADDED} DESC",
+                    )?.use { cursor ->
+                        val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                        while (cursor.moveToNext() && thumbnailUris.size < 4) {
+                            val imageId = cursor.getLong(idCol)
+                            val imageUri = ContentUris.withAppendedId(
+                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                imageId,
+                            )
+                            thumbnailUris.add(imageUri)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load thumbnails for album ${album.name}", e)
+                }
+                result.add(AlbumWithThumbnails(album, thumbnailUris))
+            }
+
+            _albumThumbnails.value = result
+        }
     }
 
     fun loadSelectedAlbums() {

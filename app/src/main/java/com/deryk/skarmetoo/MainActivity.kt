@@ -1,6 +1,7 @@
 package com.deryk.skarmetoo
 
 import android.content.Intent
+import android.content.ContentUris
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -15,10 +16,13 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -28,11 +32,13 @@ import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridS
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -116,6 +122,7 @@ object Routes {
     const val ONBOARDING = "onboarding"
     const val GALLERY = "gallery"
     const val SETTINGS = "settings"
+    const val EXPERIMENTAL = "experimental"
     const val DETAIL = "detail/{id}"
 
     fun detail(id: Long) = "detail/$id"
@@ -129,7 +136,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
     val currentRoute = navBackStackEntry?.destination?.route
     val context = LocalContext.current
 
-    val showBottomBar = currentRoute == Routes.GALLERY || currentRoute == Routes.SETTINGS
+    val showBottomBar = currentRoute == Routes.GALLERY || currentRoute == Routes.SETTINGS || currentRoute == Routes.EXPERIMENTAL
 
     var galleryScrollKey by remember { mutableIntStateOf(0) }
     var galleryRefreshKey by remember { mutableIntStateOf(0) }
@@ -207,6 +214,31 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                                 selectedTextColor = MaterialTheme.colorScheme.onTertiaryContainer,
                             ),
                     )
+                    NavigationBarItem(
+                        selected = currentRoute == Routes.EXPERIMENTAL,
+                        onClick = {
+                            if (currentRoute != Routes.EXPERIMENTAL) {
+                                navController.navigate(Routes.EXPERIMENTAL) {
+                                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        },
+                        icon = {
+                            Icon(
+                                if (currentRoute == Routes.EXPERIMENTAL) Icons.Rounded.Science else Icons.Outlined.Science,
+                                "Experimental",
+                            )
+                        },
+                        label = { Text(stringResource(R.string.experimental)) },
+                        colors =
+                            NavigationBarItemDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            ),
+                    )
                 }
             }
         },
@@ -269,6 +301,13 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                     onRevisitTutorial = {
                         navController.navigate(Routes.ONBOARDING)
                     }
+                )
+            }
+            composable(Routes.EXPERIMENTAL) {
+                ExperimentalScreen(
+                    viewModel = viewModel,
+                    onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
+                    logoRes = logoRes,
                 )
             }
             composable(
@@ -704,6 +743,7 @@ fun ScreenshotGridItem(
         }
     }
 }
+
 
 @Composable
 fun ScreenSaver(

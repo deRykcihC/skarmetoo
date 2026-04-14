@@ -123,4 +123,6 @@
     <string name="onboarding_page8_desc">Quickly view images containing specific subjects like people, pets, or food by tapping the suggested filter pills.</string>
     <string name="onboarding_page9_title">Reanalyze</string>
     <string name="onboarding_page9_desc">If you want the AI to analyze an image again, simply double-click its status button in the gallery or the detail screen.</string>
+    <string name="experimental">Experimental</string>
+    <string name="all">All</string>
 </resources>
