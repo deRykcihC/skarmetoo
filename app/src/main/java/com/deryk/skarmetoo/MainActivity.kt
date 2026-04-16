@@ -247,6 +247,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             targetValue = innerPadding.calculateBottomPadding(),
             label = "bottomPadding",
         )
+        val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS, Routes.EXPERIMENTAL)
         NavHost(
             navController = navController,
             startDestination = startDestination,
@@ -256,19 +257,43 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                     bottom = bottomPadding,
                 ),
             enterTransition = {
-                when (targetState.destination.route) {
-                    Routes.SETTINGS -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
-                    Routes.GALLERY -> slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn()
-                    Routes.ONBOARDING -> fadeIn()
-                    else -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
+                val initialRoute = initialState.destination.route
+                val targetRoute = targetState.destination.route
+                val initialIndex = routeOrder.indexOf(initialRoute)
+                val targetIndex = routeOrder.indexOf(targetRoute)
+
+                if (initialIndex != -1 && targetIndex != -1) {
+                    if (targetIndex > initialIndex) {
+                        slideInHorizontally(initialOffsetX = { it }) + fadeIn()
+                    } else {
+                        slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
+                    }
+                } else {
+                    when (targetRoute) {
+                        Routes.GALLERY -> slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn()
+                        Routes.SETTINGS, Routes.EXPERIMENTAL -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
+                        else -> fadeIn()
+                    }
                 }
             },
             exitTransition = {
-                when (targetState.destination.route) {
-                    Routes.SETTINGS -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
-                    Routes.GALLERY -> slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut()
-                    Routes.ONBOARDING -> fadeOut()
-                    else -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
+                val initialRoute = initialState.destination.route
+                val targetRoute = targetState.destination.route
+                val initialIndex = routeOrder.indexOf(initialRoute)
+                val targetIndex = routeOrder.indexOf(targetRoute)
+
+                if (initialIndex != -1 && targetIndex != -1) {
+                    if (targetIndex > initialIndex) {
+                        slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
+                    } else {
+                        slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+                    }
+                } else {
+                    when (targetRoute) {
+                        Routes.GALLERY -> slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut()
+                        Routes.SETTINGS, Routes.EXPERIMENTAL -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
+                        else -> fadeOut()
+                    }
                 }
             },
             popEnterTransition = { slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn() },
