@@ -1,10 +1,16 @@
 package com.deryk.skarmetoo
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -334,36 +340,19 @@ fun OnboardingScreen(
             title = stringResource(R.string.add_folder),
             description = stringResource(R.string.onboarding_page4_desc)
         ) {
-            Row(
+            FilledTonalButton(
+                onClick = {},
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
             ) {
-                OutlinedButton(
-                    onClick = {},
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp),
-                    enabled = false,
-                ) {
-                    Icon(Icons.AutoMirrored.Rounded.FormatListBulleted, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(R.string.manage_folders), fontWeight = FontWeight.Medium)
-                }
-
-                FilledTonalButton(
-                    onClick = {},
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-                ) {
-                    Icon(Icons.Rounded.CreateNewFolder, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(R.string.add_folder), fontWeight = FontWeight.Medium)
-                }
+                Icon(Icons.Rounded.CreateNewFolder, null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(stringResource(R.string.add_media_folder), fontWeight = FontWeight.Medium)
             }
         },
 
@@ -625,14 +614,22 @@ fun OnboardingScreen(
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // Permission result handled — the ViewModel will pick up albums automatically
+    }
+
     LaunchedEffect(pagerState.currentPage) {
         // Index 4 is "Select Image Folders"
         if (pagerState.currentPage == 4) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                if (!Environment.isExternalStorageManager()) {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    intent.data = Uri.parse("package:${context.packageName}")
-                    context.startActivity(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.READ_MEDIA_IMAGES
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    mediaPermissionLauncher.launch(Manifest.permission.READ_MEDIA_IMAGES)
                 }
             }
         }

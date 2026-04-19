@@ -145,6 +145,33 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
         writableDatabase.delete(TABLE, null, null)
     }
 
+    fun getEntryByImageUri(imageUri: String): ScreenshotEntry? {
+        val cursor =
+            readableDatabase.query(
+                TABLE,
+                null,
+                "$COL_IMAGE_URI = ?",
+                arrayOf(imageUri),
+                null,
+                null,
+                null,
+            )
+        return cursor.use {
+            if (it.moveToFirst()) cursorToEntry(it) else null
+        }
+    }
+
+    fun deleteEntriesByImageUris(imageUris: Collection<String>): Int {
+        if (imageUris.isEmpty()) return 0
+        val db = writableDatabase
+        var deleted = 0
+        for (uri in imageUris) {
+            val count = db.delete(TABLE, "$COL_IMAGE_URI = ?", arrayOf(uri))
+            deleted += count
+        }
+        return deleted
+    }
+
     fun getEntryByHash(hash: String): ScreenshotEntry? {
         val cursor =
             readableDatabase.query(

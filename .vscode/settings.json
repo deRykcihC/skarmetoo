@@ -1,3 +1,6 @@
 {
-    "java.configuration.updateBuildConfiguration": "automatic"
+    "java.configuration.updateBuildConfiguration": "automatic",
+    "terminal.integrated.env.windows": {
+        "JAVA_HOME": "C:\\Program Files\\Android\\Android Studio\\jbr"
+    }
 }

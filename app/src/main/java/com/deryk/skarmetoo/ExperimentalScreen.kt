@@ -9,6 +9,8 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -34,7 +37,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
+import coil.size.Scale
+import coil.size.Size
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -51,9 +61,16 @@ fun ExperimentalScreen(
     val albumThumbnails by viewModel.albumThumbnails.collectAsState()
     val entries by viewModel.entries.collectAsState()
     val gridColumns by viewModel.experimentalGridColumns.collectAsState()
-    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
+    var isPinching by remember { mutableStateOf(false) }
+    var pinchingPreviewColumns by remember { mutableStateOf(gridColumns) }
+    var pendingConfirmColumns by remember { mutableStateOf<Int?>(null) }
+    // Use preview columns during pinch/debounce, committed columns otherwise
+    val effectiveColumns = if (isPinching) pinchingPreviewColumns else gridColumns
+    val selectedAlbumId by viewModel.selectedExperimentalAlbumId.collectAsState()
     val pinnedAlbumIds by viewModel.pinnedAlbumIds.collectAsState()
     val albumOrder by viewModel.albumOrder.collectAsState()
+    val isExperimentalLoading by viewModel.isExperimentalLoading.collectAsState()
+    val experimentalImageGeneration by viewModel.experimentalImageGeneration.collectAsState()
     val haptic = LocalHapticFeedback.current
 
     // Sort albums: pinned first (right after "All"), then unpinned, respecting custom order
@@ -90,23 +107,12 @@ fun ExperimentalScreen(
         albumThumbnails.sumOf { it.album.count }
     }
 
-    // Remember the most recent 4 images for "All" album thumbnail
-    // Captured only once on initial load to avoid flickering when switching albums
-    var allThumbnailUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-    var hasCapturedAllThumbnails by remember { mutableStateOf(false) }
+    // "All" album thumbnails come from the ViewModel so they persist across navigation
+    val allThumbnailUris by viewModel.allAlbumThumbnailUris.collectAsState()
 
-    // Load album thumbnails and all images on first composition
+    // Load album thumbnails on first composition
     LaunchedEffect(Unit) {
         viewModel.loadAlbumThumbnails()
-        viewModel.loadExperimentalImages()
-    }
-
-    // Capture "All" thumbnails only on initial load (before any album filtering)
-    LaunchedEffect(experimentalImageUris) {
-        if (!hasCapturedAllThumbnails && experimentalImageUris.isNotEmpty()) {
-            allThumbnailUris = experimentalImageUris.take(4)
-            hasCapturedAllThumbnails = true
-        }
     }
 
     // Reload images when album selection changes
@@ -114,11 +120,24 @@ fun ExperimentalScreen(
         viewModel.loadExperimentalImages(selectedAlbumId)
     }
 
+
     // Update display list when sorted albums change (but not during active drag)
     LaunchedEffect(sortedAlbums) {
         if (draggingBucketId == null) {
             displayAlbums = sortedAlbums
         }
+    }
+
+    val scrollState = rememberScrollState()
+
+    // Debounce: commit column change 0.5s after last pinch activity,
+    // allowing further pinching during the window before confirming.
+    LaunchedEffect(pendingConfirmColumns) {
+        val cols = pendingConfirmColumns ?: return@LaunchedEffect
+        delay(500)
+        viewModel.setExperimentalGridColumns(cols)
+        pendingConfirmColumns = null
+        isPinching = false
     }
 
     Column(
@@ -212,7 +231,7 @@ fun ExperimentalScreen(
                         count = allImageCount,
                         thumbnailUris = allThumbnailUris,
                         isSelected = selectedAlbumId == null,
-                        onClick = { selectedAlbumId = null },
+                        onClick = { viewModel.setSelectedExperimentalAlbumId(null) },
                     )
                 }
                 // Album items — long press to pin/unpin, hold + drag to reorder
@@ -323,12 +342,13 @@ fun ExperimentalScreen(
                             isPinned = isPinned,
                             isDragging = isDragging,
                             onClick = {
-                                selectedAlbumId =
+                                viewModel.setSelectedExperimentalAlbumId(
                                     if (selectedAlbumId == albumWithThumbs.album.bucketId) {
                                         null
                                     } else {
                                         albumWithThumbs.album.bucketId
                                     }
+                                )
                             },
                         )
                     }
@@ -336,7 +356,7 @@ fun ExperimentalScreen(
             }
         }
 
-        if (experimentalImageUris.isEmpty()) {
+        if (experimentalImageUris.isEmpty() && !isExperimentalLoading) {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -359,11 +379,9 @@ fun ExperimentalScreen(
                 }
             }
         } else {
-            val scrollState = rememberScrollState()
-
             // Chunk URIs into rows of `gridColumns` items each
-            val rows = remember(experimentalImageUris, gridColumns) {
-                experimentalImageUris.chunked(gridColumns)
+            val rows = remember(experimentalImageUris, effectiveColumns) {
+                experimentalImageUris.chunked(effectiveColumns)
             }
 
             Box(
@@ -371,12 +389,9 @@ fun ExperimentalScreen(
                     .weight(1f)
                     .fillMaxWidth()
                     .pointerInput(gridColumns) {
-                        // Pinch-to-zoom detector that coexists with verticalScroll.
-                        // Uses PointerEventPass.Initial so we see events BEFORE the child
-                        // Column's verticalScroll (which uses Main pass).
-                        // Only consume events when pinching (2+ fingers); otherwise let
-                        // single-finger events pass through to verticalScroll.
-                        var isPinching = false
+                        // Pinch-to-resize: shows grey placeholders during gesture,
+                        // with 0.5s debounce after release for further adjustment before committing.
+                        var localPinching = false
                         var initialPinchDistance = 0f
                         var startColumns = gridColumns
 
@@ -386,17 +401,24 @@ fun ExperimentalScreen(
                                 val activePointers = event.changes.filter { it.pressed }
 
                                 if (activePointers.isEmpty()) {
-                                    isPinching = false
+                                    if (localPinching) {
+                                        localPinching = false
+                                        // Don't commit yet — start 0.5s debounce
+                                        pendingConfirmColumns = pinchingPreviewColumns
+                                    }
                                     continue
                                 }
 
-                                if (!isPinching && activePointers.size >= 2) {
+                                if (!localPinching && activePointers.size >= 2) {
+                                    localPinching = true
                                     isPinching = true
+                                    // Cancel any pending debounce
+                                    pendingConfirmColumns = null
                                     initialPinchDistance = pinchDistance(activePointers)
-                                    startColumns = gridColumns
+                                    startColumns = pinchingPreviewColumns
                                 }
 
-                                if (isPinching) {
+                                if (localPinching) {
                                     // Consume events so verticalScroll doesn't scroll during pinch
                                     event.changes.forEach { it.consume() }
                                     if (activePointers.size >= 2) {
@@ -404,29 +426,32 @@ fun ExperimentalScreen(
                                         val scale = currentDistance / initialPinchDistance
                                         val newColumns =
                                             (startColumns / scale).roundToInt().coerceIn(1, 10)
-                                        viewModel.setExperimentalGridColumns(newColumns)
+                                        pinchingPreviewColumns = newColumns
                                     }
                                     if (activePointers.size < 2) {
-                                        isPinching = false
+                                        localPinching = false
+                                        // Don't commit yet — start 0.5s debounce
+                                        pendingConfirmColumns = pinchingPreviewColumns
                                     }
                                 }
                             }
                         }
                     },
-            ) {
-                Column(
+    ) {
+        Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(scrollState)
                         .padding(2.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    rows.forEach { row ->
+                    rows.forEachIndexed { rowIndex, row ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
-                            row.forEach { uri ->
+                            row.forEachIndexed { colIndex, uri ->
+                                val flatIndex = rowIndex * effectiveColumns + colIndex
                                 val uriString = uri.toString()
                                 val statusPair = experimentalStatuses[uriString]
                                 val entryId = statusPair?.first
@@ -441,6 +466,8 @@ fun ExperimentalScreen(
                                 ExperimentalGalleryItem(
                                     uri = uri,
                                     dotColor = dotColor,
+                                    gridColumns = effectiveColumns,
+                                    showPlaceholder = isPinching,
                                     onClick = {
                                         entryId?.let { onScreenshotClick(it) }
                                     },
@@ -448,13 +475,14 @@ fun ExperimentalScreen(
                                 )
                             }
                             // Fill remaining columns with empty space so items maintain width
-                            if (row.size < gridColumns) {
-                                repeat(gridColumns - row.size) {
+                            if (row.size < effectiveColumns) {
+                                repeat(effectiveColumns - row.size) {
                                     Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
                         }
                     }
+
                 }
 
                 PillScrollbar(
@@ -517,12 +545,12 @@ private fun AlbumThumbnailCard(
                     modifier = Modifier.fillMaxSize().padding(2.dp),
                     verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
-                    repeat(minOf(2, thumbnailUris.size)) { row ->
+                    repeat(2) { row ->
                         Row(
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
-                            repeat(minOf(2, thumbnailUris.size - row * 2)) { col ->
+                            repeat(2) { col ->
                                 val index = row * 2 + col
                                 // Determine corner radii based on position in the 2x2 grid
                                 val cornerShape = RoundedCornerShape(
@@ -596,9 +624,49 @@ private fun AlbumThumbnailCard(
 private fun ExperimentalGalleryItem(
     uri: Uri,
     dotColor: Color?,
+    gridColumns: Int,
+    showPlaceholder: Boolean = false,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+
+    // Use painter directly to have reliable access to state for sequential loading
+    val painter = rememberAsyncImagePainter(
+        model = remember(uri, gridColumns) {
+            // Apply thumbnail compression based on column count.
+            // Smaller thumbnails = less memory usage and faster decoding on weak processors.
+            // Each thumbnail is decoded at a fixed pixel size that scales with column count.
+            // Always set an explicit size to ensure Coil's memory cache uses a unique key
+            // per column count — preventing stale low-res bitmaps when expanding the grid.
+            val thumbnailSizePx = when {
+                gridColumns > 6 -> 80     // Very small: ~80px per thumbnail
+                gridColumns > 4 -> 120    // Small: ~120px per thumbnail
+                gridColumns > 3 -> 180    // Medium: ~180px per thumbnail
+                gridColumns > 2 -> 360    // Large: ~360px per thumbnail
+                gridColumns > 1 -> 540    // XL: ~540px per thumbnail
+                else -> 720               // Full: ~720px per thumbnail
+            }
+
+            ImageRequest.Builder(context)
+                .data(uri)
+                .scale(coil.size.Scale.FILL)
+                .size(coil.size.Size(thumbnailSizePx, thumbnailSizePx))
+                .build()
+        }
+    )
+
+    val state = painter.state
+    val isLoaded = state is AsyncImagePainter.State.Success
+    val isError = state is AsyncImagePainter.State.Error
+
+    val alpha by animateFloatAsState(
+        targetValue = if (isLoaded) 1f else 0f,
+        animationSpec = tween(durationMillis = 400),
+        label = "fade"
+    )
+
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -609,22 +677,34 @@ private fun ExperimentalGalleryItem(
                 if (dotColor != null) Modifier.clickable(onClick = onClick) else Modifier
             ),
     ) {
-        AsyncImage(
-            model = uri,
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-        )
+        if (showPlaceholder) {
+            // Grey placeholder during pinch or staggered reveal — no image decoding
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            )
+        } else {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { this.alpha = alpha },
+                contentScale = ContentScale.Crop,
+            )
+        }
 
         // Dot indicator: grey = in gallery, green = analyzed, no dot = not in gallery
-        if (dotColor != null) {
+        if (dotColor != null && !showPlaceholder) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(4.dp)
                     .size(10.dp)
                     .background(dotColor, RoundedCornerShape(50))
-                    .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(50)),
+                    .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(50))
+                    .graphicsLayer { this.alpha = alpha },
             )
         }
     }

@@ -91,6 +91,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     private val _albumThumbnails = MutableStateFlow<List<AlbumWithThumbnails>>(emptyList())
     val albumThumbnails: StateFlow<List<AlbumWithThumbnails>> = _albumThumbnails.asStateFlow()
 
+    // Thumbnails for the "All" album (latest 4 images across all albums)
+    private val _allAlbumThumbnailUris = MutableStateFlow<List<Uri>>(emptyList())
+    val allAlbumThumbnailUris: StateFlow<List<Uri>> = _allAlbumThumbnailUris.asStateFlow()
+
     // Pinned album IDs — persisted in SharedPreferences
     private val _pinnedAlbumIds = MutableStateFlow<Set<String>>(emptySet())
     val pinnedAlbumIds: StateFlow<Set<String>> = _pinnedAlbumIds.asStateFlow()
@@ -130,6 +134,15 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _isSortDescending = MutableStateFlow(true)
     val isSortDescending: StateFlow<Boolean> = _isSortDescending.asStateFlow()
+
+    // Selected album in experimental screen — persisted so it survives navigation
+    private val _selectedExperimentalAlbumId = MutableStateFlow<String?>(null)
+    val selectedExperimentalAlbumId: StateFlow<String?> = _selectedExperimentalAlbumId.asStateFlow()
+
+    fun setSelectedExperimentalAlbumId(bucketId: String?) {
+        _selectedExperimentalAlbumId.value = bucketId
+        prefs.edit().putString("selected_experimental_album_id", bucketId).apply()
+    }
 
     private val _hasSeenOnboarding = MutableStateFlow(false)
     val hasSeenOnboarding: StateFlow<Boolean> = _hasSeenOnboarding.asStateFlow()
@@ -199,6 +212,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         // Restore custom album order
         val savedOrder = prefs.getString("album_order", null)
         _albumOrder.value = savedOrder?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+        // Restore selected media albums
+        _selectedAlbums.value = prefs.getStringSet("selected_album_ids", emptySet()) ?: emptySet()
 
         // Restore selected model from prefs
         val savedModelType = prefs.getString("selected_model", ModelType.GEMMA_3N.name)
@@ -208,6 +223,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             } catch (e: Exception) {
                 ModelType.GEMMA_3N
             }
+
+        // Restore selected experimental album
+        _selectedExperimentalAlbumId.value = prefs.getString("selected_experimental_album_id", null)
 
         viewModelScope.launch {
             llmManager.uiState.collect { state ->
@@ -264,6 +282,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
         // Auto-refresh images on startup if a folder was selected
         refreshImages()
+
+        // Load images from previously selected media albums
+        if (_selectedAlbums.value.isNotEmpty()) {
+            loadSelectedAlbums()
+        }
     }
 
     fun setSelectedModel(model: ModelType) {
@@ -535,8 +558,87 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         _selectedAlbums.value = current
     }
 
+    fun applySelectedMediaAlbums(selectedBucketIds: Set<String>) {
+        val previousSelected = _selectedAlbums.value
+        _selectedAlbums.value = selectedBucketIds
+        prefs.edit().putStringSet("selected_album_ids", selectedBucketIds).apply()
+
+        val newlyDeselected = previousSelected - selectedBucketIds
+        val newlySelected = selectedBucketIds - previousSelected
+
+        viewModelScope.launch(Dispatchers.IO) {
+            // Remove images from deselected albums
+            if (newlyDeselected.isNotEmpty()) {
+                removeImagesFromAlbums(newlyDeselected)
+            }
+
+            // Add images from newly selected albums
+            if (newlySelected.isNotEmpty()) {
+                loadSelectedAlbums(newlySelected)
+            } else {
+                refreshEntries()
+            }
+        }
+    }
+
+    private suspend fun removeImagesFromAlbums(bucketIds: Set<String>) {
+        val context = getApplication<Application>()
+        val urisToRemove = mutableListOf<String>()
+
+        for (bucketId in bucketIds) {
+            try {
+                val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                val projection = arrayOf(MediaStore.Images.Media._ID)
+                val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
+                val selectionArgs = arrayOf(bucketId)
+
+                context.contentResolver.query(
+                    uri,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    null,
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    while (cursor.moveToNext()) {
+                        val imageId = cursor.getLong(idCol)
+                        val imageUri = ContentUris.withAppendedId(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            imageId,
+                        )
+                        urisToRemove.add(imageUri.toString())
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to query album $bucketId for removal", e)
+            }
+        }
+
+        // Delete entries from database whose imageUri matches
+        val deletedCount = db.deleteEntriesByImageUris(urisToRemove)
+
+        Log.d(TAG, "Removed $deletedCount/${urisToRemove.size} images from ${bucketIds.size} deselected albums")
+        refreshEntries()
+    }
+
+    fun clearSelectedAlbums() {
+        _selectedAlbums.value = emptySet()
+    }
+
+    // Batch loading: store ALL uris separately, expose only loaded subset
+    private val _allExperimentalImageUris = MutableStateFlow<List<Uri>>(emptyList())
     private val _experimentalImageUris = MutableStateFlow<List<Uri>>(emptyList())
     val experimentalImageUris: StateFlow<List<Uri>> = _experimentalImageUris.asStateFlow()
+
+    private val _experimentalLoadedCount = MutableStateFlow(0)
+    val experimentalLoadedCount: StateFlow<Int> = _experimentalLoadedCount.asStateFlow()
+
+    private val _hasMoreExperimentalImages = MutableStateFlow(false)
+    val hasMoreExperimentalImages: StateFlow<Boolean> = _hasMoreExperimentalImages.asStateFlow()
+
+    // Total count of ALL images (including unloaded) — used for accurate scrollbar sizing
+    private val _experimentalTotalCount = MutableStateFlow(0)
+    val experimentalTotalCount: StateFlow<Int> = _experimentalTotalCount.asStateFlow()
 
     // Maps MediaStore URI string → (Entry ID, isAnalyzed)
     private val _experimentalStatuses = MutableStateFlow<Map<String, Pair<Long, Boolean>>>(emptyMap())
@@ -545,7 +647,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     // Maps file relative path → MediaStore URI string (built during loadExperimentalImages)
     private val _experimentalPathMap = MutableStateFlow<Map<String, String>>(emptyMap())
 
-    private val _experimentalGridColumns = MutableStateFlow(prefs.getInt("experimental_grid_columns", 3))
+    // Migrate old default (3) to new default (6) for better performance with many images
+    private val _experimentalGridColumns = MutableStateFlow(
+        run {
+            var cols = prefs.getInt("experimental_grid_columns", 6)
+            if (cols == 3 && !prefs.contains("experimental_grid_columns_migrated")) {
+                cols = 6
+                prefs.edit()
+                    .putInt("experimental_grid_columns", 6)
+                    .putBoolean("experimental_grid_columns_migrated", true)
+                    .apply()
+            }
+            cols
+        }
+    )
     val experimentalGridColumns: StateFlow<Int> = _experimentalGridColumns.asStateFlow()
 
     fun setExperimentalGridColumns(columns: Int) {
@@ -553,10 +668,48 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         prefs.edit().putInt("experimental_grid_columns", columns).apply()
     }
 
+    /** Adaptive batch size: fewer columns = larger images = smaller batches to reduce memory pressure */
+    private fun getAdaptiveBatchSize(): Int {
+        val cols = _experimentalGridColumns.value
+        return when {
+            cols <= 2 -> 200
+            cols <= 3 -> 400
+            cols <= 5 -> 700
+            else -> EXPERIMENTAL_BATCH_SIZE
+        }
+    }
+
+    companion object {
+        private const val EXPERIMENTAL_BATCH_SIZE = 1000
+    }
+
+    // Loading state so UI can show a spinner instead of "no screenshots yet"
+    // when switching albums (old thumbnails stay visible during the transition).
+    private val _isExperimentalLoading = MutableStateFlow(false)
+    val isExperimentalLoading: StateFlow<Boolean> = _isExperimentalLoading.asStateFlow()
+
+    // Guard against concurrent loads: cancel the previous job and use a generation
+    // counter so that stale results from an older coroutine are discarded.
+    private var loadExperimentalJob: kotlinx.coroutines.Job? = null
+    private var loadExperimentalGeneration = 0L
+
+    // Exposed so the UI can reset staggered-reveal when a new album's images arrive
+    private val _experimentalImageGeneration = MutableStateFlow(0L)
+    val experimentalImageGeneration: StateFlow<Long> = _experimentalImageGeneration.asStateFlow()
+
     @Suppress("DEPRECATION")
     fun loadExperimentalImages(bucketId: String? = null) {
         val context = getApplication<Application>()
-        viewModelScope.launch(Dispatchers.IO) {
+        val generation = ++loadExperimentalGeneration
+
+        // Cancel any in-flight load so its results can't overwrite ours
+        loadExperimentalJob?.cancel()
+
+        // Mark as loading — keep old thumbnails visible during the transition
+        // so the UI never flashes "no screenshots yet" between album switches.
+        _isExperimentalLoading.value = true
+
+        loadExperimentalJob = viewModelScope.launch(Dispatchers.IO) {
             val uris = mutableListOf<Uri>()
             val pathToUri = mutableMapOf<String, String>() // relativePath → mediaStoreUriString
             val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
@@ -596,13 +749,37 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "Failed to load experimental images", e)
             }
 
+            // Discard results if a newer load has been started since this one
+            if (generation != loadExperimentalGeneration) return@launch
+
+            // Store ALL uris and expose them all at once (no batch loading)
+            _allExperimentalImageUris.value = uris
+            _experimentalTotalCount.value = uris.size
+            _experimentalLoadedCount.value = uris.size
             _experimentalImageUris.value = uris
+            _hasMoreExperimentalImages.value = false
             _experimentalPathMap.value = pathToUri
             rebuildExperimentalStatuses()
+            _isExperimentalLoading.value = false
+            _experimentalImageGeneration.value += 1
         }
+    }
+
+    /** Load the next batch of experimental images. Called when user scrolls near the end. */
+    fun loadMoreExperimentalImages() {
+        if (!_hasMoreExperimentalImages.value) return
+        val allUris = _allExperimentalImageUris.value
+        val currentCount = _experimentalLoadedCount.value
+        val nextCount = minOf(currentCount + getAdaptiveBatchSize(), allUris.size)
+        if (nextCount == currentCount) return
+
+        _experimentalLoadedCount.value = nextCount
+        _experimentalImageUris.value = allUris.take(nextCount)
+        _hasMoreExperimentalImages.value = nextCount < allUris.size
     }
 
     /**
@@ -614,19 +791,25 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         val pathToMediaUri = _experimentalPathMap.value
         if (pathToMediaUri.isEmpty()) return
 
-        // Build a map of relativePath → entry from gallery entries
+        // Build a map of relativePath → entry from gallery entries (for SAF URIs)
+        // and a map of mediaStore URI → entry (for MediaStore URIs from album selection)
         val entryByPath = mutableMapOf<String, ScreenshotEntry>()
+        val entryByMediaUri = mutableMapOf<String, ScreenshotEntry>()
         for (entry in entries) {
             val relativePath = extractRelativePathFromSafUri(entry.imageUri)
             if (relativePath != null) {
                 entryByPath[relativePath] = entry
+            }
+            // Also index entries that already have MediaStore URIs (from album selection)
+            if (entry.imageUri.startsWith("content://media/")) {
+                entryByMediaUri[entry.imageUri] = entry
             }
         }
 
         // Match: for each experimental image path, check if there's a gallery entry
         val statuses = mutableMapOf<String, Pair<Long, Boolean>>()
         for ((relativePath, mediaUriString) in pathToMediaUri) {
-            val entry = entryByPath[relativePath]
+            val entry = entryByPath[relativePath] ?: entryByMediaUri[mediaUriString]
             if (entry != null) {
                 statuses[mediaUriString] = entry.id to (entry.analyzedAt > 0L)
             }
@@ -655,10 +838,37 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     fun loadAlbumThumbnails() {
         val context = getApplication<Application>()
         viewModelScope.launch(Dispatchers.IO) {
-            val albums = _availableAlbums.value
+            // Query albums directly from MediaStore instead of relying on
+            // _availableAlbums which may not be populated yet (race condition).
+            val albums = mutableMapOf<String, AlbumInfo>()
+            try {
+                val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                val projection = arrayOf(
+                    MediaStore.Images.Media.BUCKET_ID,
+                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+                )
+                context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                    val bucketIdCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
+                    val bucketNameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+                    while (cursor.moveToNext()) {
+                        val bucketId = cursor.getString(bucketIdCol) ?: continue
+                        val bucketName = cursor.getString(bucketNameCol) ?: "Unknown"
+                        val existing = albums[bucketId]
+                        if (existing != null) {
+                            albums[bucketId] = existing.copy(count = existing.count + 1)
+                        } else {
+                            albums[bucketId] = AlbumInfo(bucketName, bucketId, 1)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load albums for thumbnails", e)
+            }
+
+            val sortedAlbums = albums.values.sortedByDescending { it.count }
             val result = mutableListOf<AlbumWithThumbnails>()
 
-            for (album in albums) {
+            for (album in sortedAlbums) {
                 val thumbnailUris = mutableListOf<Uri>()
                 try {
                     val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
@@ -689,56 +899,86 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 result.add(AlbumWithThumbnails(album, thumbnailUris))
             }
 
+            // Capture "All" album thumbnails: latest 4 images across all albums
+            val allThumbnailUris = mutableListOf<Uri>()
+            try {
+                val projection = arrayOf(MediaStore.Images.Media._ID)
+                context.contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    null,
+                    null,
+                    "${MediaStore.Images.Media.DATE_ADDED} DESC",
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    while (cursor.moveToNext() && allThumbnailUris.size < 4) {
+                        val imageId = cursor.getLong(idCol)
+                        allThumbnailUris.add(
+                            ContentUris.withAppendedId(
+                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                imageId,
+                            ),
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load All album thumbnails", e)
+            }
+            _allAlbumThumbnailUris.value = allThumbnailUris
+
+            // Also update availableAlbums so the rest of the UI stays in sync
+            _availableAlbums.value = sortedAlbums
             _albumThumbnails.value = result
         }
     }
 
     fun loadSelectedAlbums() {
-        val selected = _selectedAlbums.value
-        if (selected.isEmpty()) {
-            return
+        viewModelScope.launch(Dispatchers.IO) {
+            loadSelectedAlbums(_selectedAlbums.value)
         }
+    }
+
+    private suspend fun loadSelectedAlbums(bucketIds: Set<String>) {
+        if (bucketIds.isEmpty()) return
 
         val context = getApplication<Application>()
-        viewModelScope.launch(Dispatchers.IO) {
-            val uris = mutableListOf<Uri>()
-            val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            val projection = arrayOf(MediaStore.Images.Media._ID)
+        val uris = mutableListOf<Uri>()
+        val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(MediaStore.Images.Media._ID)
 
-            for (bucketId in selected) {
-                try {
-                    val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
-                    val selectionArgs = arrayOf(bucketId)
+        for (bucketId in bucketIds) {
+            try {
+                val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
+                val selectionArgs = arrayOf(bucketId)
 
-                    context.contentResolver.query(
-                        uri,
-                        projection,
-                        selection,
-                        selectionArgs,
-                        "${MediaStore.Images.Media.DATE_MODIFIED} DESC",
-                    )?.use { cursor ->
-                        val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                        while (cursor.moveToNext()) {
-                            val imageId = cursor.getLong(idCol)
-                            val imageUri =
-                                ContentUris.withAppendedId(
-                                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                    imageId,
-                                )
-                            uris.add(imageUri)
-                        }
+                context.contentResolver.query(
+                    uri,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    "${MediaStore.Images.Media.DATE_MODIFIED} DESC",
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    while (cursor.moveToNext()) {
+                        val imageId = cursor.getLong(idCol)
+                        val imageUri =
+                            ContentUris.withAppendedId(
+                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                imageId,
+                            )
+                        uris.add(imageUri)
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load album $bucketId", e)
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load album $bucketId", e)
             }
+        }
 
-            Log.d(TAG, "Loading ${uris.size} images from ${selected.size} albums")
+        Log.d(TAG, "Loading ${uris.size} images from ${bucketIds.size} albums")
 
-            // Use existing addScreenshots logic (handles dedup, hash, etc.)
-            withContext(Dispatchers.Main) {
-                addScreenshots(uris)
-            }
+        // Use existing addScreenshots logic (handles dedup, hash, etc.)
+        withContext(Dispatchers.Main) {
+            addScreenshots(uris)
         }
     }
 

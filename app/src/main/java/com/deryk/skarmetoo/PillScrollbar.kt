@@ -49,7 +49,7 @@ import kotlinx.coroutines.launch
  * - Fades in when scrolling, fades out after ~1.5s of inactivity
  * - Expands horizontally when touched for easier dragging
  * - Touch the track → thumb expands → drag to scroll (single gesture)
- * - Large touch target (48dp) so thin scrollbar is easy to grab
+ * - Touch target (20dp) so thin scrollbar is easy to grab without blocking content
  * - Light grey border on thumb for visibility against images
  */
 @Composable
@@ -95,8 +95,9 @@ fun PillScrollbar(
 
     val maxValue = scrollState.maxValue
 
-    // Don't render if content fits in the viewport
-    if (maxValue <= 0 && !isDragging) return
+    // Don't render if content fits in the viewport or scrollbar is hidden
+    // Hidden scrollbar should not be draggable — only interactive after user scrolls
+    if ((maxValue <= 0 && !isDragging) || (!isVisible && !isDragging)) return
 
     // === Pixel-perfect position from ScrollState ===
     val rawNormalizedPosition = if (maxValue > 0) {
@@ -111,55 +112,60 @@ fun PillScrollbar(
         (trackHeightPx.toFloat() / (trackHeightPx + maxValue)).coerceIn(0.05f, 0.4f)
     } else 0.15f
 
+    // Only enable touch handling when the scrollbar is visible or being dragged
+    val touchModifier = if (isVisible || isDragging) {
+        Modifier.pointerInput(scrollState, maxValue, trackHeightPx) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                if (trackHeightPx <= 0 || maxValue <= 0) return@awaitEachGesture
+
+                down.consume()
+                isDragging = true
+                isVisible = true
+                hideJob?.cancel()
+
+                // Calculate where the thumb center is vs where the finger landed
+                val thumbCenterPx = normalizedPosition * trackHeightPx
+                val offsetFromCenter = down.position.y - thumbCenterPx
+
+                var totalDragPx = 0f
+
+                // Handle drag — scroll follows finger movement
+                val dragResult = drag(down.id) { change ->
+                    change.consume()
+                    totalDragPx += (change.position.y - change.previousPosition.y)
+
+                    // Compute target position from cumulative drag + initial offset
+                    val effectiveY = totalDragPx + offsetFromCenter + thumbCenterPx
+                    val scrollableTrack = trackHeightPx - trackHeightPx * thumbHeightFraction
+                    val targetPosition = if (scrollableTrack > 0) {
+                        (effectiveY / scrollableTrack).coerceIn(0f, 1f)
+                    } else 0f
+
+                    // Apply scroll immediately using pixel position
+                    val targetScrollPx = (targetPosition * maxValue).toInt()
+                    val delta = (targetScrollPx - scrollState.value).toFloat()
+                    scrollState.dispatchRawDelta(delta)
+                }
+
+                // Drag ended
+                isDragging = false
+                hideJob?.cancel()
+                hideJob = coroutineScope.launch {
+                    delay(1500)
+                    if (!isDragging) isVisible = false
+                }
+            }
+        }
+    } else Modifier
+
     Box(
         modifier = modifier
             .fillMaxHeight()
             .padding(bottom = bottomPadding)
-            .width(48.dp) // Large touch target so thin scrollbar is easy to grab
+            .width(20.dp) // Reduced touch target width to avoid blocking taps on nearby content
             .onSizeChanged { trackHeightPx = it.height }
-            .pointerInput(scrollState, maxValue, trackHeightPx) {
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    if (trackHeightPx <= 0 || maxValue <= 0) return@awaitEachGesture
-
-                    down.consume()
-                    isDragging = true
-                    isVisible = true
-                    hideJob?.cancel()
-
-                    // Calculate where the thumb center is vs where the finger landed
-                    val thumbCenterPx = normalizedPosition * trackHeightPx
-                    val offsetFromCenter = down.position.y - thumbCenterPx
-
-                    var totalDragPx = 0f
-
-                    // Handle drag — scroll follows finger movement
-                    val dragResult = drag(down.id) { change ->
-                        change.consume()
-                        totalDragPx += (change.position.y - change.previousPosition.y)
-
-                        // Compute target position from cumulative drag + initial offset
-                        val effectiveY = totalDragPx + offsetFromCenter + thumbCenterPx
-                        val scrollableTrack = trackHeightPx - trackHeightPx * thumbHeightFraction
-                        val targetPosition = if (scrollableTrack > 0) {
-                            (effectiveY / scrollableTrack).coerceIn(0f, 1f)
-                        } else 0f
-
-                        // Apply scroll immediately using pixel position
-                        val targetScrollPx = (targetPosition * maxValue).toInt()
-                        val delta = (targetScrollPx - scrollState.value).toFloat()
-                        scrollState.dispatchRawDelta(delta)
-                    }
-
-                    // Drag ended
-                    isDragging = false
-                    hideJob?.cancel()
-                    hideJob = coroutineScope.launch {
-                        delay(1500)
-                        if (!isDragging) isVisible = false
-                    }
-                }
-            },
+            .then(touchModifier),
         contentAlignment = Alignment.TopEnd,
     ) {
         // Render the thumb only when we have a valid track size and some visibility

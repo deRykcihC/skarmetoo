@@ -4,6 +4,10 @@
     <string name="settings">設定</string>
     <string name="gallery">圖庫</string>
     <string name="manage_folders">管理資料夾</string>
+    <string name="add_media_folder">新增媒體資料夾</string>
+    <string name="select_media_folders">選擇媒體資料夾</string>
+    <string name="deselect_all">取消全選</string>
+    <string name="no_media_folders_found">未找到媒體資料夾</string>
     <string name="app_settings">應用程式設定</string>
     <string name="source_folders">來源資料夾</string>
     <string name="buy_me_a_coffee">請我喝杯咖啡</string>
@@ -25,7 +29,7 @@
     <string name="privacy_policy">隱私權政策</string>
     <string name="search_placeholder">搜尋...</string>
     <string name="search_hint">例如：找出此圖片中的所有名字</string>
-    <string name="no_screenshots_yet">暫無截圖</string>
+    <string name="no_screenshots_yet">暫無圖片</string>
     <string name="select_albums_in_settings_to_get_started">在設定中選擇相簿以開始</string>
     <string name="details">詳情</string>
     <string name="analysis_detail">分析詳情</string>
@@ -123,6 +127,9 @@
     <string name="onboarding_page8_desc">點擊建議的篩選標籤，快速查看包含特定主題（如人物、寵物或食物）的圖片。</string>
     <string name="onboarding_page9_title">重新分析</string>
     <string name="onboarding_page9_desc">如果您想讓 AI 重新分析圖片，只需在圖庫或詳情畫面雙擊其狀態按鈕即可。</string>
+    <string name="feedback">回饋</string>
+    <string name="feedback_desc">回報錯誤、請求功能或分享建議</string>
+    <string name="submit_feedback">提交回饋</string>
     <string name="experimental">實驗</string>
     <string name="all">全部</string>
 </resources>

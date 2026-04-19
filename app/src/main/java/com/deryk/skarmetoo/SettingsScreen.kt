@@ -1,24 +1,26 @@
 package com.deryk.skarmetoo
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -63,13 +65,24 @@ fun SettingsScreen(
 
     var showHfLogin by remember { mutableStateOf(false) }
     var hfLoginModelType by remember { mutableStateOf(ModelType.GEMMA_3N) }
-    var showManageFoldersDialog by remember { mutableStateOf(false) }
+    var showMediaFolderDialog by remember { mutableStateOf(false) }
     var isHfLoggedIn by remember { mutableStateOf(false) }
 
     val isModelFound by viewModel.isModelFound.collectAsState()
     val sourceFolders by viewModel.sourceFolders.collectAsState()
+    val availableAlbums by viewModel.availableAlbums.collectAsState()
+    val selectedAlbums by viewModel.selectedAlbums.collectAsState()
     val folderImageCounts by viewModel.folderImageCounts.collectAsState()
 
+    // Media permission launcher
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            viewModel.loadAlbums()
+            showMediaFolderDialog = true
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.checkModelExists()
@@ -80,13 +93,6 @@ fun SettingsScreen(
     val totalImages = entries.size
     val analyzedImages = entries.count { it.summary.isNotBlank() }
 
-    // Native folder picker — opens Android file explorer to pick a folder
-    val folderPickerLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocumentTree(),
-        ) { treeUri ->
-            treeUri?.let { viewModel.loadImagesFromFolder(it) }
-        }
 
     Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -233,7 +239,7 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            stringResource(R.string.folders_selected, sourceFolders.size.toString()),
+                            stringResource(R.string.folders_selected, selectedAlbums.size.toString()),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -242,7 +248,8 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                if (folderImageCounts.isNotEmpty()) {
+                if (selectedAlbums.isNotEmpty()) {
+                    val albumCounts = availableAlbums.filter { it.bucketId in selectedAlbums }
                     val chartColors =
                         listOf(
                             Color(0xFF5E35B1),
@@ -262,7 +269,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .padding(bottom = 16.dp, top = 4.dp),
                     ) {
-                        val totalInMap = folderImageCounts.values.sum().coerceAtLeast(1)
+                        val totalInMap = albumCounts.sumOf { it.count }.coerceAtLeast(1)
                         Row(
                             modifier =
                                 Modifier
@@ -270,8 +277,8 @@ fun SettingsScreen(
                                     .height(16.dp)
                                     .clip(RoundedCornerShape(8.dp)),
                         ) {
-                            folderImageCounts.entries.forEachIndexed { index, entry ->
-                                val weight = entry.value.toFloat()
+                            albumCounts.forEachIndexed { index, album ->
+                                val weight = album.count.toFloat()
                                 if (weight > 0) {
                                     Box(
                                         modifier =
@@ -287,16 +294,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            folderImageCounts.entries.forEachIndexed { index, entry ->
-                                val folderName =
-                                    try {
-                                        android.net.Uri.decode(
-                                            android.net.Uri.parse(entry.key).lastPathSegment?.substringAfterLast(":") ?: "Folder",
-                                        )
-                                    } catch (_: Exception) {
-                                        "Folder"
-                                    }
-                                val percentage = (entry.value.toFloat() / totalInMap * 100).toInt()
+                            albumCounts.forEachIndexed { index, album ->
+                                val percentage = (album.count.toFloat() / totalInMap * 100).toInt()
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Box(
                                         modifier =
@@ -307,7 +306,7 @@ fun SettingsScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "$folderName ($percentage%)",
+                                        text = "${album.name} ($percentage%)",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -319,49 +318,35 @@ fun SettingsScreen(
                     }
                 }
 
-                Row(
+                FilledTonalButton(
+                    onClick = {
+                        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            Manifest.permission.READ_MEDIA_IMAGES
+                        } else {
+                            @Suppress("DEPRECATION")
+                            Manifest.permission.READ_EXTERNAL_STORAGE
+                        }
+                        if (android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                            ContextCompat.checkSelfPermission(context, permission)
+                        ) {
+                            viewModel.loadAlbums()
+                            showMediaFolderDialog = true
+                        } else {
+                            mediaPermissionLauncher.launch(permission)
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(vertical = 12.dp),
+                    colors =
+                        ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        ),
                 ) {
-                    OutlinedButton(
-                        onClick = { showManageFoldersDialog = true },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(vertical = 12.dp),
-                        enabled = sourceFolders.isNotEmpty(),
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.FormatListBulleted, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(stringResource(R.string.manage_folders), fontWeight = FontWeight.Medium)
-                    }
-
-                    FilledTonalButton(
-                        onClick = {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                                if (!android.os.Environment.isExternalStorageManager()) {
-                                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                                    intent.data = android.net.Uri.parse("package:${context.packageName}")
-                                    context.startActivity(intent)
-                                } else {
-                                    folderPickerLauncher.launch(null)
-                                }
-                            } else {
-                                folderPickerLauncher.launch(null)
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(vertical = 12.dp),
-                        colors =
-                            ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            ),
-                    ) {
-                        Icon(Icons.Rounded.CreateNewFolder, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(stringResource(R.string.add_folder), fontWeight = FontWeight.Medium)
-                    }
+                    Icon(Icons.Rounded.CreateNewFolder, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.add_media_folder), fontWeight = FontWeight.Medium)
                 }
             }
         }
@@ -951,10 +936,63 @@ fun SettingsScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ===== Feedback Card =====
+        val uriHandler = LocalUriHandler.current
+        Card(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    ,
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFFCE4EC),
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(Icons.Rounded.Feedback, null, tint = Color(0xFFC62828), modifier = Modifier.size(22.dp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            stringResource(R.string.feedback),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            stringResource(R.string.feedback_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+
+                FilledTonalButton(
+                    onClick = { uriHandler.openUri("https://forms.gle/KR2AsC5VifMP2WkQ9") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                ) {
+                    Icon(Icons.Rounded.OpenInNew, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.submit_feedback), fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         // Buy Me a Coffee
-        val uriHandler = LocalUriHandler.current
         Surface(
             onClick = { uriHandler.openUri("https://buymeacoffee.com/derykcihc") },
             modifier =
@@ -1054,16 +1092,19 @@ fun SettingsScreen(
 
     } // End of Box wrapper
 
-    if (showManageFoldersDialog) {
-        val dlgTitle = stringResource(R.string.manage_source_folders)
-        val dlgNoFolders = stringResource(R.string.no_folders_selected)
-        val dlgFallback = stringResource(R.string.meta_file)
-        val dlgRemove = stringResource(R.string.remove)
-        val dlgClearAll = stringResource(R.string.clear_all)
+    if (showMediaFolderDialog) {
+        val dlgTitle = stringResource(R.string.select_media_folders)
+        val dlgNoFolders = stringResource(R.string.no_media_folders_found)
+        val dlgDeselectAll = stringResource(R.string.deselect_all)
         val dlgDone = stringResource(R.string.done)
 
+        // Temporary selection state - only applies when Done is clicked
+        var tempSelectedAlbums by remember(availableAlbums) {
+            mutableStateOf(selectedAlbums.toMutableSet())
+        }
+
         AlertDialog(
-            onDismissRequest = { showManageFoldersDialog = false },
+            onDismissRequest = { showMediaFolderDialog = false },
             title = {
                 Text(
                     text = dlgTitle,
@@ -1072,46 +1113,59 @@ fun SettingsScreen(
                 )
             },
             text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    if (sourceFolders.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    if (availableAlbums.isEmpty()) {
                         Text(
                             text = dlgNoFolders,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
-                        sourceFolders.forEach { uriStr ->
-                            val folderName =
-                                try {
-                                    android.net.Uri.decode(
-                                        android.net.Uri.parse(uriStr).lastPathSegment?.substringAfterLast(":") ?: dlgFallback,
-                                    )
-                                } catch (_: Exception) {
-                                    dlgFallback
-                                }
+                        availableAlbums.forEach { album ->
+                            val isSelected = album.bucketId in tempSelectedAlbums
                             Surface(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 3.dp),
                                 shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                onClick = {
+                                    tempSelectedAlbums = tempSelectedAlbums.toMutableSet().apply {
+                                        if (album.bucketId in this) remove(album.bucketId) else add(album.bucketId)
+                                    }
+                                },
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = folderName,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).padding(end = 8.dp),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = { _ ->
+                                            tempSelectedAlbums = tempSelectedAlbums.toMutableSet().apply {
+                                                if (album.bucketId in this) remove(album.bucketId) else add(album.bucketId)
+                                            }
+                                        },
                                     )
-                                    IconButton(onClick = {
-                                        viewModel.removeSourceFolder(uriStr)
-                                        if (sourceFolders.size <= 1) showManageFoldersDialog = false
-                                    }) {
-                                        Icon(Icons.Rounded.Close, contentDescription = dlgRemove, tint = MaterialTheme.colorScheme.error)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = album.name,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                        Text(
+                                            text = "${album.count} images",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
                                 }
                             }
@@ -1121,27 +1175,24 @@ fun SettingsScreen(
             },
             confirmButton = {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    if (sourceFolders.isNotEmpty()) {
-                        FilledTonalButton(
-                            onClick = {
-                                viewModel.clearSourceFolders()
-                                showManageFoldersDialog = false
-                            },
-                            colors =
-                                ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                                ),
-                        ) {
-                            Text(dlgClearAll)
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.weight(1f))
+                    FilledTonalButton(
+                        onClick = {
+                            tempSelectedAlbums = mutableSetOf()
+                        },
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                    ) {
+                        Text(dlgDeselectAll)
                     }
-                    Button(onClick = { showManageFoldersDialog = false }) {
+                    Button(onClick = {
+                        viewModel.applySelectedMediaAlbums(tempSelectedAlbums)
+                        showMediaFolderDialog = false
+                    }) {
                         Text(dlgDone)
                     }
                 }
