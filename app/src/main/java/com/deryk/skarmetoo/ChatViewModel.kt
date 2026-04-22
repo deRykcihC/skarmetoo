@@ -17,89 +17,92 @@ data class ChatMessage(
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
-    private val llmManager = LlmManager.getInstance(application)
+  private val llmManager = LlmManager.getInstance(application)
+  private val prefs =
+      application.getSharedPreferences("skarmetoo_prefs", android.content.Context.MODE_PRIVATE)
 
-    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
-    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+  private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
+  val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
-    private val _isModelReady = MutableStateFlow(false)
-    val isModelReady: StateFlow<Boolean> = _isModelReady.asStateFlow()
+  private val _isModelReady = MutableStateFlow(false)
+  val isModelReady: StateFlow<Boolean> = _isModelReady.asStateFlow()
 
-    private val _modelStatus = MutableStateFlow("Uninitialized")
-    val modelStatus: StateFlow<String> = _modelStatus.asStateFlow()
+  private val _modelStatus = MutableStateFlow("Uninitialized")
+  val modelStatus: StateFlow<String> = _modelStatus.asStateFlow()
 
-    init {
-        viewModelScope.launch {
-            llmManager.uiState.collect { state ->
-                when (state) {
-                    is LlmManager.LlmState.Initial -> _modelStatus.value = "Please load a model"
-                    is LlmManager.LlmState.Loading -> {
-                        _modelStatus.value = "Loading model..."
-                        _isModelReady.value = false
-                    }
-                    is LlmManager.LlmState.Ready -> {
-                        _modelStatus.value = "Ready"
-                        _isModelReady.value = true
-                    }
-                    is LlmManager.LlmState.Generating -> _modelStatus.value = "Generating..."
-                    is LlmManager.LlmState.Error -> {
-                        _modelStatus.value = "Error: ${state.message}"
-                        _isModelReady.value = false
-                    }
-                }
-            }
+  init {
+    viewModelScope.launch {
+      llmManager.uiState.collect { state ->
+        when (state) {
+          is LlmManager.LlmState.Initial -> _modelStatus.value = "Please load a model"
+          is LlmManager.LlmState.Loading -> {
+            _modelStatus.value = "Loading model..."
+            _isModelReady.value = false
+          }
+          is LlmManager.LlmState.Ready -> {
+            _modelStatus.value = "Ready"
+            _isModelReady.value = true
+          }
+          is LlmManager.LlmState.Generating -> _modelStatus.value = "Generating..."
+          is LlmManager.LlmState.Error -> {
+            _modelStatus.value = "Error: ${state.message}"
+            _isModelReady.value = false
+          }
         }
+      }
+    }
 
-        viewModelScope.launch {
-            llmManager.partialResults.collect { (partialResult, done) ->
-                val currentMessages = _messages.value.toMutableList()
-                if (currentMessages.isNotEmpty() && !currentMessages.last().isUser) {
-                    val lastMessage = currentMessages.last()
-                    currentMessages[currentMessages.size - 1] =
-                        lastMessage.copy(
-                            text = lastMessage.text + partialResult,
-                            isGenerating = !done,
-                        )
-                    _messages.value = currentMessages
-                }
-            }
+    viewModelScope.launch {
+      llmManager.partialResults.collect { (partialResult, done) ->
+        val currentMessages = _messages.value.toMutableList()
+        if (currentMessages.isNotEmpty() && !currentMessages.last().isUser) {
+          val lastMessage = currentMessages.last()
+          currentMessages[currentMessages.size - 1] =
+              lastMessage.copy(
+                  text = lastMessage.text + partialResult,
+                  isGenerating = !done,
+              )
+          _messages.value = currentMessages
         }
+      }
     }
+  }
 
-    fun initializeModel(
-        path: String,
-        useGpu: Boolean = false,
-    ) {
-        llmManager.initializeModel(path, useGpu = useGpu)
-    }
+  fun initializeModel(
+      path: String,
+      useGpu: Boolean = false,
+  ) {
+    llmManager.initializeModel(path, useGpu = useGpu)
+  }
 
-    fun sendMessage(text: String) {
-        if (text.isBlank()) return
+  fun sendMessage(text: String) {
+    if (text.isBlank()) return
 
-        val newMessages = _messages.value.toMutableList()
-        newMessages.add(ChatMessage(text = text, isUser = true))
-        newMessages.add(ChatMessage(text = "", isUser = false, isGenerating = true))
-        _messages.value = newMessages
+    val newMessages = _messages.value.toMutableList()
+    newMessages.add(ChatMessage(text = text, isUser = true))
+    newMessages.add(ChatMessage(text = "", isUser = false, isGenerating = true))
+    _messages.value = newMessages
 
-        llmManager.generateResponse(text)
-    }
+    llmManager.generateResponse(text)
+  }
 
-    fun sendImageMessage(
-        bitmap: Bitmap,
-        prompt: String,
-    ) {
-        val displayPrompt = prompt.ifBlank { "Describe this image in detail." }
+  fun sendImageMessage(
+      bitmap: Bitmap,
+      prompt: String,
+  ) {
+    val displayPrompt = prompt.ifBlank { "Describe this image in detail." }
 
-        val newMessages = _messages.value.toMutableList()
-        newMessages.add(ChatMessage(text = displayPrompt, isUser = true, image = bitmap))
-        newMessages.add(ChatMessage(text = "", isUser = false, isGenerating = true))
-        _messages.value = newMessages
+    val newMessages = _messages.value.toMutableList()
+    newMessages.add(ChatMessage(text = displayPrompt, isUser = true, image = bitmap))
+    newMessages.add(ChatMessage(text = "", isUser = false, isGenerating = true))
+    _messages.value = newMessages
 
-        llmManager.analyzeImage(bitmap, displayPrompt)
-    }
+    llmManager.analyzeImage(
+        bitmap, displayPrompt, imageResolution = prefs.getInt("image_resolution", 1024))
+  }
 
-    override fun onCleared() {
-        super.onCleared()
-        llmManager.close()
-    }
+  override fun onCleared() {
+    super.onCleared()
+    llmManager.close()
+  }
 }

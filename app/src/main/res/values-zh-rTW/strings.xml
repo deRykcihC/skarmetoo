@@ -132,4 +132,10 @@
     <string name="submit_feedback">提交回饋</string>
     <string name="experimental">實驗</string>
     <string name="all">全部</string>
+    <string name="advanced_settings">進階設定</string>
+    <string name="advanced_settings_desc">微調應用程式行為與效能</string>
+    <string name="image_resolution">圖像解析度</string>
+    <string name="image_resolution_desc">較低的值較快但細節較少</string>
+    <string name="analysis_instance_count">並行分析數量</string>
+    <string name="analysis_instance_count_desc">同時分析的圖片數量</string>
 </resources>

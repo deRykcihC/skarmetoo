@@ -11,11 +11,17 @@ data class ScreenshotEntry(
     val note: String = "",
     val modelUsed: String = "",
 ) {
-    fun getTagList(): List<String> {
-        return if (tags.isBlank()) {
-            emptyList()
-        } else {
-            tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
-        }
+  val sortKey: Long
+    get() {
+      val mediaStoreId = imageUri.substringAfterLast("/").toLongOrNull()
+      return if (mediaStoreId != null && mediaStoreId > 0) mediaStoreId else id
     }
+
+  fun getTagList(): List<String> {
+    return if (tags.isBlank()) {
+      emptyList()
+    } else {
+      tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
+    }
+  }
 }

@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Skarmetoo</string>
+    <string name="app_name">skarmetoo</string>
     <string name="settings">Settings</string>
     <string name="gallery">Gallery</string>
     <string name="manage_folders">Manage Folders</string>
@@ -132,4 +132,10 @@
     <string name="submit_feedback">Submit Feedback</string>
     <string name="experimental">Experimental</string>
     <string name="all">All</string>
+    <string name="advanced_settings">Advanced Settings</string>
+    <string name="advanced_settings_desc">Fine-tune app behavior and performance</string>
+    <string name="image_resolution">Image Resolution</string>
+    <string name="image_resolution_desc">Lower values are faster but less detailed</string>
+    <string name="analysis_instance_count">Concurrent Analysis Instances</string>
+    <string name="analysis_instance_count_desc">Number of images to analyze at once</string>
 </resources>
