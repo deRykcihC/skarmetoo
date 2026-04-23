@@ -38,6 +38,7 @@ fun GalleryScreen(
     scrollToTopKey: Int = 0,
     refreshKey: Int = 0,
     logoRes: Int = R.drawable.app_logo,
+    scrollState: androidx.compose.foundation.ScrollState = rememberScrollState(),
 ) {
   val entries by viewModel.entries.collectAsState()
   val isModelReady by viewModel.isModelReady.collectAsState()
@@ -48,7 +49,6 @@ fun GalleryScreen(
   val entryProgressMap by viewModel.entryProgressMap.collectAsState()
   var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
   val isSortDescending by viewModel.isSortDescending.collectAsState()
-  val scrollState = rememberScrollState()
 
   LaunchedEffect(scrollToTopKey) {
     if (scrollToTopKey > 0) {

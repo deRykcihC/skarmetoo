@@ -114,7 +114,7 @@
     <string name="onboarding_next">下一步</string>
     <string name="onboarding_get_started">開始體驗</string>
     <string name="onboarding_page0_desc">首先在設定中下載本地 AI 模型，以啟用裝置端圖片分析。</string>
-    <string name="onboarding_page1_desc">使用設定畫面右上角的地球按鈕，更改應用程式介面的語言。</string>
+    <string name="onboarding_page1_desc">使用設定畫面頂部的按鈕來重新查看教學、切換深色或淺色模式、啟動螢幕保護程式以在分析期間保持手機喚醒，或切換介面語言。</string>
     <string name="onboarding_page2_desc">選擇您希望 AI 輸出的分析結果語言。</string>
     <string name="onboarding_page3_desc">選擇您希望 AI 描述圖片的詳細程度，從簡短到完整，或設定自訂提示詞。</string>
     <string name="onboarding_page4_desc">從您的裝置新增資料夾以自動進行分析。Skarmetoo 將對其中的項目進行排序和索引。</string>
@@ -138,4 +138,13 @@
     <string name="image_resolution_desc">較低的值較快但細節較少</string>
     <string name="analysis_instance_count">並行分析數量</string>
     <string name="analysis_instance_count_desc">同時分析的圖片數量</string>
+    <string name="apply">套用</string>
+    <string name="play_pause_toggle_title">播放/暫停開關</string>
+    <string name="play_pause_toggle_desc">在設定頁面上顯示暫停分析的按鈕</string>
+    <string name="confirm_changes">確認變更</string>
+    <string name="advanced_settings_warning">若設備硬體效能不足，修改圖像解析度或增加並行分析數量可能導致應用程式不穩定。\n\n請自行承擔風險，並進行逐步調整，以找出最適合您設備的最佳配置。</string>
+    <string name="confirm_btn">確認</string>
+    <string name="cancel_btn">取消</string>
+    <string name="onboarding_page10_title">進階設定</string>
+    <string name="onboarding_page10_desc">微調圖像解析度、並行分析數量，並啟用播放/暫停開關。這些選項屬於實驗性功能，請自行承擔風險，因為它們可能在效能較弱的硬體上造成不穩定。</string>
 </resources>

@@ -35,6 +35,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +95,7 @@ fun SettingsScreen(
 
   val totalImages = entries.size
   val analyzedImages = entries.count { it.summary.isNotBlank() }
+  val isDark = LocalIsDarkMode.current
 
   Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -121,21 +123,53 @@ fun SettingsScreen(
 
         val currentLanguage by viewModel.appLanguage.collectAsState()
 
-        IconButton(onClick = onRevisitTutorial) {
-          Icon(Icons.Rounded.MenuBook, contentDescription = "Tutorial")
-        }
-        IconButton(
-            modifier = Modifier,
-            onClick = {
-              val nextLang =
-                  when (currentLanguage) {
-                    "en" -> "zh-rTW"
-                    else -> "en"
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+          Surface(
+              color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+              shape = RoundedCornerShape(14.dp),
+          ) {
+            Row(
+                modifier = Modifier.padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                  IconButton(onClick = onRevisitTutorial, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        Icons.Rounded.MenuBook,
+                        contentDescription = "Tutorial",
+                        modifier = Modifier.size(20.dp))
                   }
-              viewModel.setAppLanguage(nextLang)
-            }) {
-              Icon(Icons.Rounded.Language, contentDescription = "Language")
-            }
+                  IconButton(
+                      onClick = { viewModel.setDarkMode(!isDark) },
+                      modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                            contentDescription = "Toggle Dark Mode",
+                            modifier = Modifier.size(20.dp))
+                      }
+                  IconButton(onClick = onStartScreenSaver, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        Icons.Rounded.Monitor,
+                        contentDescription = "Screen Saver",
+                        modifier = Modifier.size(20.dp))
+                  }
+                  IconButton(
+                      onClick = {
+                        val nextLang =
+                            when (currentLanguage) {
+                              "en" -> "zh-rTW"
+                              else -> "en"
+                            }
+                        viewModel.setAppLanguage(nextLang)
+                      },
+                      modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            Icons.Rounded.Language,
+                            contentDescription = "Language",
+                            modifier = Modifier.size(20.dp))
+                      }
+                }
+          }
+        }
       }
 
       // ===== Stats cards row =====
@@ -146,36 +180,69 @@ fun SettingsScreen(
         Card(
             modifier = Modifier.weight(1f),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD)),
+            colors =
+                CardDefaults.cardColors(
+                    containerColor = if (isDark) Color(0xFF1A2E42) else Color(0xFFE3F2FD)),
         ) {
-          Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                stringResource(R.string.analyzed),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1565C0),
-                letterSpacing = 1.sp,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                "$analyzedImages",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1565C0),
-            )
-          }
+          Row(
+              modifier = Modifier.padding(16.dp).fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically) {
+                val blueText = if (isDark) Color(0xFF90CAF9) else Color(0xFF1565C0)
+                Column {
+                  Text(
+                      stringResource(R.string.analyzed),
+                      style = MaterialTheme.typography.labelSmall,
+                      fontWeight = FontWeight.Bold,
+                      color = blueText,
+                      letterSpacing = 1.sp,
+                  )
+                  Spacer(modifier = Modifier.height(4.dp))
+                  Text(
+                      "$analyzedImages",
+                      style = MaterialTheme.typography.headlineMedium,
+                      fontWeight = FontWeight.Bold,
+                      color = blueText,
+                  )
+                }
+                val showPlayPause by viewModel.showPlayPauseToggle.collectAsState()
+                val isAnalysisPaused by viewModel.isAnalysisPaused.collectAsState()
+                if (showPlayPause) {
+                  Surface(
+                      shape = CircleShape,
+                      color = if (isDark) Color(0xFF1E3A5F) else Color(0xFFBBDEFB),
+                      modifier =
+                          Modifier.size(40.dp).clip(CircleShape).clickable {
+                            viewModel.toggleAnalysisPause()
+                          }) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center) {
+                              Icon(
+                                  imageVector =
+                                      if (isAnalysisPaused) Icons.Rounded.PlayArrow
+                                      else Icons.Rounded.Pause,
+                                  contentDescription = if (isAnalysisPaused) "Play" else "Pause",
+                                  tint = blueText)
+                            }
+                      }
+                }
+              }
         }
         Card(
             modifier = Modifier.weight(1f),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1)),
+            colors =
+                CardDefaults.cardColors(
+                    containerColor = if (isDark) Color(0xFF3E3115) else Color(0xFFFFF8E1)),
         ) {
+          val amberText = if (isDark) Color(0xFFFFD54F) else Color(0xFFF57F17)
           Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 stringResource(R.string.total_images),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFFF57F17),
+                color = amberText,
                 letterSpacing = 1.sp,
             )
             Spacer(modifier = Modifier.height(4.dp))
@@ -183,7 +250,7 @@ fun SettingsScreen(
                 "$totalImages",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFFF57F17),
+                color = amberText,
             )
           }
         }
@@ -214,14 +281,14 @@ fun SettingsScreen(
           Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
-                color = Color(0xFFFFF3E0),
+                color = if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0),
                 modifier = Modifier.size(40.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.FolderOpen,
                     null,
-                    tint = Color(0xFFE65100),
+                    tint = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
                     modifier = Modifier.size(22.dp))
               }
             }
@@ -348,14 +415,18 @@ fun SettingsScreen(
           Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
-                color = if (isModelReady) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
+                color =
+                    if (isModelReady) (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                    else (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)),
                 modifier = Modifier.size(40.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.Psychology,
                     null,
-                    tint = if (isModelReady) Color(0xFF2E7D32) else Color(0xFFE65100),
+                    tint =
+                        if (isModelReady) (if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32))
+                        else (if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)),
                     modifier = Modifier.size(22.dp),
                 )
               }
@@ -385,17 +456,17 @@ fun SettingsScreen(
                 }
             val statusBg =
                 when {
-                  isModelReady -> Color(0xFFE8F5E9)
+                  isModelReady -> if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
                   modelStatus.contains("Loading") || modelStatus.contains("Downloading") ->
-                      Color(0xFFFFF3E0)
+                      if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)
                   !isModelFound && !isDownloadingModel -> MaterialTheme.colorScheme.errorContainer
                   else -> MaterialTheme.colorScheme.surfaceContainerHighest
                 }
             val statusColor =
                 when {
-                  isModelReady -> Color(0xFF2E7D32)
+                  isModelReady -> if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
                   modelStatus.contains("Loading") || modelStatus.contains("Downloading") ->
-                      Color(0xFFE65100)
+                      if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)
                   !isModelFound && !isDownloadingModel -> MaterialTheme.colorScheme.onErrorContainer
                   else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
@@ -469,8 +540,10 @@ fun SettingsScreen(
               Surface(
                   shape = RoundedCornerShape(8.dp),
                   color =
-                      if (isDownloadingGemma3n) Color(0xFFFFF3E0)
-                      else if (isGemma3nDownloaded) Color(0xFFE8F5E9)
+                      if (isDownloadingGemma3n)
+                          (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                      else if (isGemma3nDownloaded)
+                          (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
                       else MaterialTheme.colorScheme.surfaceContainerHighest,
                   modifier = Modifier.size(32.dp)) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
@@ -479,13 +552,13 @@ fun SettingsScreen(
                             text = "${(downloadProgress * 100).toInt()}%",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFE65100),
+                            color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
                         )
                       } else if (isGemma3nDownloaded) {
                         Icon(
                             imageVector = Icons.Rounded.Check,
                             contentDescription = "Downloaded",
-                            tint = Color(0xFF2E7D32),
+                            tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
                             modifier = Modifier.size(20.dp))
                       } else {
                         Icon(
@@ -545,8 +618,10 @@ fun SettingsScreen(
               Surface(
                   shape = RoundedCornerShape(8.dp),
                   color =
-                      if (isDownloadingGemma4) Color(0xFFFFF3E0)
-                      else if (isGemma4Downloaded) Color(0xFFE8F5E9)
+                      if (isDownloadingGemma4)
+                          (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                      else if (isGemma4Downloaded)
+                          (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
                       else MaterialTheme.colorScheme.surfaceContainerHighest,
                   modifier = Modifier.size(32.dp)) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
@@ -555,13 +630,13 @@ fun SettingsScreen(
                             text = "${(downloadProgress * 100).toInt()}%",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFE65100),
+                            color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
                         )
                       } else if (isGemma4Downloaded) {
                         Icon(
                             imageVector = Icons.Rounded.Check,
                             contentDescription = "Downloaded",
-                            tint = Color(0xFF2E7D32),
+                            tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
                             modifier = Modifier.size(20.dp))
                       } else {
                         Icon(
@@ -758,22 +833,32 @@ fun SettingsScreen(
               lineHeight = 18.sp,
           )
 
-          if (currentDetailLevel == LlmManager.DetailLevel.CUSTOM) {
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedTextField(
-                value = customPrompt,
-                onValueChange = { viewModel.setCustomPrompt(it) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.custom_prompt_inst)) },
-                placeholder = { Text(stringResource(R.string.search_hint)) },
-                shape = RoundedCornerShape(12.dp),
-                minLines = 3,
-                colors =
-                    OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    ),
-            )
+          androidx.compose.animation.AnimatedVisibility(
+              visible = currentDetailLevel == LlmManager.DetailLevel.CUSTOM,
+              enter =
+                  androidx.compose.animation.expandVertically() +
+                      androidx.compose.animation.fadeIn(),
+              exit =
+                  androidx.compose.animation.shrinkVertically() +
+                      androidx.compose.animation.fadeOut(),
+          ) {
+            Column {
+              Spacer(modifier = Modifier.height(12.dp))
+              OutlinedTextField(
+                  value = customPrompt,
+                  onValueChange = { viewModel.setCustomPrompt(it) },
+                  modifier = Modifier.fillMaxWidth(),
+                  label = { Text(stringResource(R.string.custom_prompt_inst)) },
+                  placeholder = { Text(stringResource(R.string.search_hint)) },
+                  shape = RoundedCornerShape(12.dp),
+                  minLines = 3,
+                  colors =
+                      OutlinedTextFieldDefaults.colors(
+                          focusedBorderColor = MaterialTheme.colorScheme.primary,
+                          unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                      ),
+              )
+            }
           }
         }
       }
@@ -859,62 +944,18 @@ fun SettingsScreen(
       }
       Spacer(modifier = Modifier.height(16.dp))
 
-      // ===== Screen Saver Card =====
-      Card(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-          shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-          elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-      ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                shape = CircleShape,
-                color = Color(0xFFE8EAF6),
-                modifier = Modifier.size(40.dp),
-            ) {
-              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                Icon(
-                    Icons.Rounded.Monitor,
-                    null,
-                    tint = Color(0xFF3F51B5),
-                    modifier = Modifier.size(22.dp))
-              }
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-              Text(
-                  stringResource(R.string.screen_saver),
-                  style = MaterialTheme.typography.titleMedium,
-                  fontWeight = FontWeight.Medium,
-              )
-              Text(
-                  stringResource(R.string.to_save_battery_while_analyzing),
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-              )
-            }
-          }
-          Spacer(modifier = Modifier.height(16.dp))
-
-          FilledTonalButton(
-              onClick = onStartScreenSaver,
-              modifier = Modifier.fillMaxWidth(),
-              shape = RoundedCornerShape(14.dp),
-              contentPadding = PaddingValues(vertical = 14.dp),
-          ) {
-            Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(stringResource(R.string.launch_screen_saver))
-          }
-        }
-      }
-      Spacer(modifier = Modifier.height(16.dp))
-
       // ===== Advanced Settings Card =====
       var isAdvancedExpanded by remember { mutableStateOf(false) }
-      val imageResolution by viewModel.imageResolution.collectAsState()
-      val instanceCount by viewModel.analysisInstanceCount.collectAsState()
+      val savedResolution by viewModel.imageResolution.collectAsState()
+      val savedInstanceCount by viewModel.analysisInstanceCount.collectAsState()
+      val savedShowPlayPause by viewModel.showPlayPauseToggle.collectAsState()
+
+      var localResolution by remember(savedResolution) { mutableIntStateOf(savedResolution) }
+      var localInstanceCount by
+          remember(savedInstanceCount) { mutableIntStateOf(savedInstanceCount) }
+      var localShowPlayPause by remember(savedShowPlayPause) { mutableStateOf(savedShowPlayPause) }
+
+      var showAdvancedConfirmDialog by remember { mutableStateOf(false) }
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
           shape = RoundedCornerShape(20.dp),
@@ -936,14 +977,14 @@ fun SettingsScreen(
           ) {
             Surface(
                 shape = CircleShape,
-                color = Color(0xFFF3E5F5),
+                color = if (isDark) Color(0xFF2D1F3D) else Color(0xFFF3E5F5),
                 modifier = Modifier.size(40.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.Tune,
                     null,
-                    tint = Color(0xFF7B1FA2),
+                    tint = if (isDark) Color(0xFFCE93D8) else Color(0xFF7B1FA2),
                     modifier = Modifier.size(22.dp))
               }
             }
@@ -1010,7 +1051,7 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer) {
                                   Text(
-                                      "${imageResolution}px",
+                                      "${localResolution}px",
                                       style = MaterialTheme.typography.labelMedium,
                                       fontWeight = FontWeight.Bold,
                                       color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1022,8 +1063,8 @@ fun SettingsScreen(
                       Spacer(modifier = Modifier.height(8.dp))
 
                       Slider(
-                          value = imageResolution.toFloat(),
-                          onValueChange = { viewModel.setImageResolution(it.toInt()) },
+                          value = localResolution.toFloat(),
+                          onValueChange = { localResolution = it.toInt() },
                           valueRange = 256f..2048f,
                           steps = 3,
                           modifier = Modifier.fillMaxWidth(),
@@ -1088,7 +1129,7 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.secondaryContainer) {
                                   Text(
-                                      "${instanceCount}x",
+                                      "${localInstanceCount}x",
                                       style = MaterialTheme.typography.labelMedium,
                                       fontWeight = FontWeight.Bold,
                                       color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -1100,17 +1141,110 @@ fun SettingsScreen(
                       Spacer(modifier = Modifier.height(8.dp))
 
                       Slider(
-                          value = instanceCount.toFloat(),
-                          onValueChange = { viewModel.setAnalysisInstanceCount(it.toInt()) },
+                          value = localInstanceCount.toFloat(),
+                          onValueChange = { localInstanceCount = it.toInt() },
                           valueRange = 1f..5f,
                           steps = 3,
                           modifier = Modifier.fillMaxWidth(),
                       )
                     }
                   }
+
+              Spacer(modifier = Modifier.height(16.dp))
+
+              // Play/Pause button toggle
+              Surface(
+                  shape = RoundedCornerShape(16.dp),
+                  color = MaterialTheme.colorScheme.surfaceContainerLow,
+                  modifier =
+                      Modifier.fillMaxWidth().clickable {
+                        localShowPlayPause = !localShowPlayPause
+                      }) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                      Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.play_pause_toggle_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            stringResource(R.string.play_pause_toggle_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 16.sp,
+                        )
+                      }
+                      Spacer(modifier = Modifier.width(12.dp))
+                      Switch(
+                          checked = localShowPlayPause,
+                          onCheckedChange = { localShowPlayPause = it })
+                    }
+                  }
+
+              Spacer(modifier = Modifier.height(16.dp))
+
+              Button(
+                  onClick = { showAdvancedConfirmDialog = true },
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(12.dp),
+              ) {
+                Text(stringResource(R.string.apply))
+              }
             }
           }
         }
+      }
+
+      if (showAdvancedConfirmDialog) {
+        val dialogTitle = stringResource(R.string.confirm_changes)
+        val dialogText = stringResource(R.string.advanced_settings_warning)
+        val confirmBtnText = stringResource(R.string.confirm_btn)
+        val cancelBtnText = stringResource(R.string.cancel_btn)
+
+        var countdown by remember { mutableIntStateOf(5) }
+        LaunchedEffect(showAdvancedConfirmDialog) {
+          countdown = 5
+          while (countdown > 0) {
+            kotlinx.coroutines.delay(1000)
+            countdown--
+          }
+        }
+        AlertDialog(
+            onDismissRequest = { showAdvancedConfirmDialog = false },
+            title = { Text(dialogTitle) },
+            text = {
+              Text(text = dialogText, textAlign = androidx.compose.ui.text.style.TextAlign.Justify)
+            },
+            confirmButton = {
+              Button(
+                  onClick = {
+                    viewModel.setImageResolution(localResolution)
+                    viewModel.setAnalysisInstanceCount(localInstanceCount)
+                    viewModel.setShowPlayPauseToggle(localShowPlayPause)
+                    viewModel.applyAdvancedSettings()
+                    showAdvancedConfirmDialog = false
+                  },
+                  enabled = countdown == 0) {
+                    Text(if (countdown > 0) "$confirmBtnText ($countdown)" else confirmBtnText)
+                  }
+            },
+            dismissButton = {
+              TextButton(
+                  onClick = {
+                    localResolution = savedResolution
+                    localInstanceCount = savedInstanceCount
+                    localShowPlayPause = savedShowPlayPause
+                    showAdvancedConfirmDialog = false
+                  }) {
+                    Text(cancelBtnText)
+                  }
+            })
       }
 
       Spacer(modifier = Modifier.height(16.dp))
@@ -1126,14 +1260,14 @@ fun SettingsScreen(
           Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
-                color = Color(0xFFE0F7FA),
+                color = if (isDark) Color(0xFF1A3333) else Color(0xFFE0F7FA),
                 modifier = Modifier.size(40.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.SwapHoriz,
                     null,
-                    tint = Color(0xFF00695C),
+                    tint = if (isDark) Color(0xFF80CBC4) else Color(0xFF00695C),
                     modifier = Modifier.size(22.dp))
               }
             }
@@ -1206,14 +1340,14 @@ fun SettingsScreen(
           Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
-                color = Color(0xFFFCE4EC),
+                color = if (isDark) Color(0xFF3B1929) else Color(0xFFFCE4EC),
                 modifier = Modifier.size(40.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.Feedback,
                     null,
-                    tint = Color(0xFFC62828),
+                    tint = if (isDark) Color(0xFFEF9A9A) else Color(0xFFC62828),
                     modifier = Modifier.size(22.dp))
               }
             }

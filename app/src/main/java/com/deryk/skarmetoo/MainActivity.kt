@@ -7,7 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -76,6 +76,8 @@ class MainActivity : ComponentActivity() {
             }
           }
 
+      val isDarkMode by viewModel.isDarkMode.collectAsState()
+
       CompositionLocalProvider(
           LocalContext provides localeContext,
           androidx.compose.ui.platform.LocalConfiguration provides
@@ -83,7 +85,12 @@ class MainActivity : ComponentActivity() {
           androidx.activity.compose.LocalActivityResultRegistryOwner provides
               (context as androidx.activity.result.ActivityResultRegistryOwner),
       ) {
-        SkarmetooTheme { MainApp(viewModel = viewModel) }
+        SkarmetooTheme(darkTheme = isDarkMode) {
+          CompositionLocalProvider(
+              com.deryk.skarmetoo.ui.theme.LocalIsDarkMode provides isDarkMode) {
+                MainApp(viewModel = viewModel)
+              }
+        }
       }
     }
   }
@@ -115,6 +122,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
 
   var galleryScrollKey by remember { mutableIntStateOf(0) }
   var galleryRefreshKey by remember { mutableIntStateOf(0) }
+  val galleryScrollState = androidx.compose.foundation.rememberScrollState()
   var isScreenSaverActive by remember { mutableStateOf(false) }
   var lastGalleryClickTime by remember { mutableLongStateOf(0L) }
   val isEasterEgg = remember { kotlin.random.Random.nextFloat() < 0.069f }
@@ -284,6 +292,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
     ) {
       composable(Routes.ONBOARDING) {
         OnboardingScreen(
+            viewModel = viewModel,
             onFinish = {
               viewModel.setHasSeenOnboarding(true)
               navController.navigate(Routes.GALLERY) {
@@ -298,6 +307,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             scrollToTopKey = galleryScrollKey,
             refreshKey = galleryRefreshKey,
             logoRes = logoRes,
+            scrollState = galleryScrollState,
         )
       }
       composable(Routes.SETTINGS) {

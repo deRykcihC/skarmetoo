@@ -114,7 +114,7 @@
     <string name="onboarding_next">Next</string>
     <string name="onboarding_get_started">Get Started</string>
     <string name="onboarding_page0_desc">Start by downloading a local AI model in the Settings to enable on-device image analysis.</string>
-    <string name="onboarding_page1_desc">Change the language of the application interface using the globe button at the top right of the Settings screen.</string>
+    <string name="onboarding_page1_desc">Use the buttons at the top of the Settings screen to revisit this tutorial, toggle dark or light mode, activate the screen saver to keep your phone awake during analysis, or switch the interface language.</string>
     <string name="onboarding_page2_desc">Select your preferred language for the AI to output its analysis results.</string>
     <string name="onboarding_page3_desc">Choose how detailed you want the AI to describe your images, from brief to comprehensive, or set a custom prompt.</string>
     <string name="onboarding_page4_desc">Add folders from your device to be analyzed automatically. Skarmetoo will sort and index the items inside.</string>
@@ -138,4 +138,13 @@
     <string name="image_resolution_desc">Lower values are faster but less detailed</string>
     <string name="analysis_instance_count">Concurrent Analysis Instances</string>
     <string name="analysis_instance_count_desc">Number of images to analyze at once</string>
+    <string name="apply">Apply</string>
+    <string name="play_pause_toggle_title">Play/Pause toggle</string>
+    <string name="play_pause_toggle_desc">Show a button to pause analysis on the settings page</string>
+    <string name="confirm_changes">Confirm Changes</string>
+    <string name="advanced_settings_warning">Modifying the image resolution or the number of concurrent analysis instances may lead to application instability if your device hardware is not sufficiently capable.\n\nPlease proceed at your own risk and make incremental adjustments to determine the optimal configuration for your device.</string>
+    <string name="confirm_btn">Confirm</string>
+    <string name="cancel_btn">Cancel</string>
+    <string name="onboarding_page10_title">Advanced Settings</string>
+    <string name="onboarding_page10_desc">Fine-tune image resolution, concurrent analysis instances, and enable a Play/Pause toggle. These options are experimental, use at your own risk, as they may cause instability on less capable hardware.</string>
 </resources>

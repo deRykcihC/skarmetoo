@@ -3,10 +3,12 @@ package com.deryk.skarmetoo
 import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -16,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.*
@@ -38,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
@@ -50,6 +54,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExperimentalScreen(
     viewModel: ScreenshotViewModel,
@@ -141,16 +146,17 @@ fun ExperimentalScreen(
     ) {
       Image(
           painter = painterResource(id = logoRes),
-          contentDescription = null,
+          contentDescription = stringResource(R.string.logo),
           modifier = Modifier.size(36.dp),
       )
       Spacer(modifier = Modifier.width(10.dp))
       Text(
-          stringResource(R.string.experimental),
+          "Skarmetoo",
           style = MaterialTheme.typography.headlineSmall,
           fontWeight = FontWeight.Bold,
       )
       Spacer(modifier = Modifier.weight(1f))
+
       if (pendingCount > 0 || analyzingCount > 0) {
         Surface(
             shape = RoundedCornerShape(16.dp),
@@ -164,7 +170,22 @@ fun ExperimentalScreen(
               modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
               verticalAlignment = Alignment.CenterVertically,
           ) {
-            if (analyzingCount > 0) {
+            if (analyzingCount > 1) {
+              Box(
+                  modifier =
+                      Modifier.size(16.dp)
+                          .background(
+                              MaterialTheme.colorScheme.error,
+                              androidx.compose.foundation.shape.CircleShape),
+                  contentAlignment = Alignment.Center) {
+                    Text(
+                        text = analyzingCount.toString(),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        fontWeight = FontWeight.Bold,
+                    )
+                  }
+            } else if (analyzingCount == 1) {
               CircularProgressIndicator(
                   progress = { currentImageProgress },
                   modifier = Modifier.size(14.dp),
@@ -193,14 +214,33 @@ fun ExperimentalScreen(
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier =
+                Modifier.clip(RoundedCornerShape(16.dp))
+                    .combinedClickable(
+                        onDoubleClick = { if (isModelReady) viewModel.forceAnalyzeUnprocessed() },
+                        onClick = {
+                          // Single tap does nothing or maybe toast
+                        },
+                    ),
         ) {
-          Text(
-              "${entries.size}",
+          Row(
               modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.onSecondaryContainer,
-          )
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Icon(
+                Icons.Rounded.CheckCircle,
+                null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                stringResource(R.string.done),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+          }
         }
       }
     }

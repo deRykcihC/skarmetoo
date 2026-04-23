@@ -21,6 +21,7 @@ import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -137,9 +138,39 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   val folderImageCounts: StateFlow<Map<String, Int>> = _folderImageCounts.asStateFlow()
 
   private val isAnalyzing = java.util.concurrent.atomic.AtomicBoolean(false)
+  private var analysisJob: kotlinx.coroutines.Job? = null
+
+  private fun launchAnalysisQueue() {
+    if (isAnalyzing.get() || _isAnalysisPaused.value) return
+    analysisJob = viewModelScope.launch(Dispatchers.IO) { startAnalysisQueue() }
+  }
 
   private val _imageResolution = MutableStateFlow(prefs.getInt("image_resolution", 1024))
   val imageResolution: StateFlow<Int> = _imageResolution.asStateFlow()
+
+  private val _showPlayPauseToggle = MutableStateFlow(prefs.getBoolean("show_play_pause", false))
+  val showPlayPauseToggle: StateFlow<Boolean> = _showPlayPauseToggle.asStateFlow()
+
+  fun setShowPlayPauseToggle(show: Boolean) {
+    _showPlayPauseToggle.value = show
+    prefs.edit().putBoolean("show_play_pause", show).apply()
+  }
+
+  private val _isAnalysisPaused = MutableStateFlow(false)
+  val isAnalysisPaused: StateFlow<Boolean> = _isAnalysisPaused.asStateFlow()
+
+  fun toggleAnalysisPause() {
+    val newPaused = !_isAnalysisPaused.value
+    _isAnalysisPaused.value = newPaused
+    if (newPaused) {
+      viewModelScope.launch(Dispatchers.IO) {
+        isAnalyzing.set(false)
+        analysisJob?.join()
+      }
+    } else {
+      launchAnalysisQueue()
+    }
+  }
 
   fun setImageResolution(value: Int) {
     _imageResolution.value = value
@@ -154,8 +185,33 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     prefs.edit().putInt("analysis_instance_count", value).apply()
   }
 
+  /**
+   * Force apply advanced settings (image resolution / concurrency) by cancelling any running
+   * analysis and restarting the queue so that new values take effect immediately.
+   */
+  fun applyAdvancedSettings() {
+    viewModelScope.launch {
+      // Halt any in-progress analysis
+      isAnalyzing.set(false)
+      // Wait for existing workers to completely finish their current image and exit
+      analysisJob?.join()
+      refreshEntries()
+      withContext(Dispatchers.Main) {}
+      // Restart with the newly persisted values
+      launchAnalysisQueue()
+    }
+  }
+
   private val _appLanguage = MutableStateFlow("en")
   val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
+
+  private val _isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", false))
+  val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
+
+  fun setDarkMode(enabled: Boolean) {
+    _isDarkMode.value = enabled
+    prefs.edit().putBoolean("is_dark_mode", enabled).apply()
+  }
 
   private val _analysisLanguage = MutableStateFlow("en")
   val analysisLanguage: StateFlow<String> = _analysisLanguage.asStateFlow()
@@ -266,7 +322,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           is LlmManager.LlmState.Ready -> {
             _modelStatus.value = "Ready"
             _isModelReady.value = true
-            viewModelScope.launch(Dispatchers.IO) { startAnalysisQueue() }
+            launchAnalysisQueue()
           }
           is LlmManager.LlmState.Generating -> _modelStatus.value = "Analyzing..."
           is LlmManager.LlmState.Error -> {
@@ -1094,7 +1150,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
       // Auto-analyze if model is ready
       if (_isModelReady.value) {
-        startAnalysisQueue()
+        launchAnalysisQueue()
       }
     }
   }
@@ -1257,7 +1313,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     if (!_isModelReady.value || isAnalyzing.get()) {
       return
     }
-    viewModelScope.launch(Dispatchers.IO) { startAnalysisQueue() }
+    _isAnalysisPaused.value = false
+    launchAnalysisQueue()
   }
 
   fun forceAnalyzeUnprocessed() {
@@ -1265,6 +1322,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       return
     }
     viewModelScope.launch(Dispatchers.IO) {
+      isAnalyzing.set(false)
+      analysisJob?.join()
       val all = db.getAllEntries()
       var fixed = 0
       for (entry in all) {
@@ -1276,11 +1335,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       if (fixed > 0) {
         Log.d(TAG, "Force reset isAnalyzing flag for $fixed entries")
       }
-      isAnalyzing.set(false)
       refreshEntries()
 
       withContext(Dispatchers.Main) {}
-      startAnalysisQueue()
+      _isAnalysisPaused.value = false
+      launchAnalysisQueue()
     }
   }
 
@@ -1308,6 +1367,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         var counts = 0
 
         while (counts < total) {
+          if (!isAnalyzing.get()) break
           // Fetch the latest unanalyzed image from DB again to handle new inserts dynamically
           val currentUnprocessed =
               db.getAllEntries()

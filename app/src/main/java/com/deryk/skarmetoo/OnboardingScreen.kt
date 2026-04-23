@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -50,7 +52,8 @@ data class OnboardingPage(
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun OnboardingScreen(onFinish: () -> Unit) {
+fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
+  val isDark = LocalIsDarkMode.current
   val pages =
       listOf(
           // ── Page 0: Download AI Model ──
@@ -150,11 +153,11 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                 }
               },
 
-          // ── Page 1: App Language ──
+          // ── Page 1: Settings Toolbar ──
           OnboardingPage(
               title = stringResource(R.string.settings),
               description = stringResource(R.string.onboarding_page1_desc)) {
-                // Exact header row from SettingsScreen
+                // Exact header row from SettingsScreen with CompositionLocalProvider
                 Row(
                     modifier =
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -167,12 +170,44 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                       fontWeight = FontWeight.Bold,
                   )
                   Spacer(modifier = Modifier.weight(1f))
-                  IconButton(onClick = {}) {
-                    Icon(Icons.Rounded.MenuBook, contentDescription = "Tutorial")
-                  }
-                  // The language button — exactly as in the real app
-                  IconButton(modifier = Modifier, onClick = {}) {
-                    Icon(Icons.Rounded.Language, contentDescription = "Language")
+                  CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                      Row(
+                          modifier = Modifier.padding(4.dp),
+                          horizontalArrangement = Arrangement.spacedBy(4.dp),
+                          verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = {}, modifier = Modifier.size(34.dp)) {
+                              Icon(
+                                  Icons.Rounded.MenuBook,
+                                  contentDescription = "Tutorial",
+                                  modifier = Modifier.size(20.dp))
+                            }
+                            IconButton(
+                                onClick = { viewModel.setDarkMode(!isDark) },
+                                modifier = Modifier.size(34.dp)) {
+                                  Icon(
+                                      if (isDark) Icons.Rounded.LightMode
+                                      else Icons.Rounded.DarkMode,
+                                      contentDescription = "Toggle Dark Mode",
+                                      modifier = Modifier.size(20.dp))
+                                }
+                            IconButton(onClick = {}, modifier = Modifier.size(34.dp)) {
+                              Icon(
+                                  Icons.Rounded.Monitor,
+                                  contentDescription = "Screen Saver",
+                                  modifier = Modifier.size(20.dp))
+                            }
+                            IconButton(onClick = {}, modifier = Modifier.size(34.dp)) {
+                              Icon(
+                                  Icons.Rounded.Language,
+                                  contentDescription = "Language",
+                                  modifier = Modifier.size(20.dp))
+                            }
+                          }
+                    }
                   }
                 }
               },
@@ -379,64 +414,6 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                 }
               },
 
-          // ── Page 5: Screen Saver ──
-          OnboardingPage(
-              title = stringResource(R.string.screen_saver),
-              description = stringResource(R.string.onboarding_page5_desc)) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                    shape = RoundedCornerShape(20.dp),
-                    colors =
-                        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                ) {
-                  Column(modifier = Modifier.padding(20.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                      Surface(
-                          shape = CircleShape,
-                          color = Color(0xFFE8EAF6),
-                          modifier = Modifier.size(40.dp),
-                      ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()) {
-                              Icon(
-                                  Icons.Rounded.Monitor,
-                                  null,
-                                  tint = Color(0xFF3F51B5),
-                                  modifier = Modifier.size(22.dp))
-                            }
-                      }
-                      Spacer(modifier = Modifier.width(12.dp))
-                      Column {
-                        Text(
-                            stringResource(R.string.screen_saver),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Text(
-                            stringResource(R.string.to_save_battery_while_analyzing),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                      }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    FilledTonalButton(
-                        onClick = {},
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(vertical = 14.dp),
-                    ) {
-                      Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(18.dp))
-                      Spacer(modifier = Modifier.width(6.dp))
-                      Text(stringResource(R.string.launch_screen_saver))
-                    }
-                  }
-                }
-              },
-
           // ── Page 6: Share Output ──
           OnboardingPage(
               title = stringResource(R.string.onboarding_page6_title),
@@ -639,7 +616,96 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                     }
               })
 
-  val pagerState = rememberPagerState(pageCount = { pages.size })
+  // ── Page 10: Advanced Settings ──
+  val advancedSettingsPage =
+      OnboardingPage(
+          title = stringResource(R.string.onboarding_page10_title),
+          description = stringResource(R.string.onboarding_page10_desc)) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors =
+                    CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+            ) {
+              Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Surface(
+                      shape = CircleShape,
+                      color = if (isDark) Color(0xFF2D1F3D) else Color(0xFFF3E5F5),
+                      modifier = Modifier.size(40.dp),
+                  ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                      Icon(
+                          Icons.Rounded.Tune,
+                          null,
+                          tint = if (isDark) Color(0xFFCE93D8) else Color(0xFF7B1FA2),
+                          modifier = Modifier.size(22.dp))
+                    }
+                  }
+                  Spacer(modifier = Modifier.width(12.dp))
+                  Column {
+                    Text(
+                        stringResource(R.string.advanced_settings),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        stringResource(R.string.advanced_settings_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Image Resolution mock
+                Column {
+                  Text(
+                      stringResource(R.string.image_resolution),
+                      style = MaterialTheme.typography.labelLarge,
+                      fontWeight = FontWeight.Bold,
+                  )
+                  Text(
+                      stringResource(R.string.image_resolution_desc),
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                  Spacer(modifier = Modifier.height(8.dp))
+                  Slider(
+                      value = 0.5f,
+                      onValueChange = {},
+                      enabled = false,
+                  )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Play/Pause toggle mock
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                      Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.play_pause_toggle_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            stringResource(R.string.play_pause_toggle_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                      }
+                      Switch(checked = false, onCheckedChange = {}, enabled = false)
+                    }
+              }
+            }
+          }
+
+  val allPages = pages + advancedSettingsPage
+
+  val pagerState = rememberPagerState(pageCount = { allPages.size })
   val coroutineScope = rememberCoroutineScope()
   val context = LocalContext.current
 
@@ -669,7 +735,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
               Row(
                   horizontalArrangement = Arrangement.spacedBy(8.dp),
                   modifier = Modifier.padding(start = 16.dp)) {
-                    repeat(pages.size) { iteration ->
+                    repeat(allPages.size) { iteration ->
                       val color =
                           if (pagerState.currentPage == iteration) MaterialTheme.colorScheme.primary
                           else MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
@@ -683,7 +749,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                   }
 
               Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AnimatedVisibility(visible = pagerState.currentPage < pages.size - 1) {
+                AnimatedVisibility(visible = pagerState.currentPage < allPages.size - 1) {
                   TextButton(onClick = onFinish) {
                     Text(
                         stringResource(R.string.onboarding_skip),
@@ -693,7 +759,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
 
                 Button(
                     onClick = {
-                      if (pagerState.currentPage < pages.size - 1) {
+                      if (pagerState.currentPage < allPages.size - 1) {
                         coroutineScope.launch {
                           pagerState.animateScrollToPage(pagerState.currentPage + 1)
                         }
@@ -701,13 +767,26 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                         onFinish()
                       }
                     },
-                    shape = RoundedCornerShape(20.dp)) {
-                      Text(
-                          text =
-                              if (pagerState.currentPage == pages.size - 1)
-                                  stringResource(R.string.onboarding_get_started)
-                              else stringResource(R.string.onboarding_next),
-                          fontWeight = FontWeight.Bold)
+                    shape =
+                        if (pagerState.currentPage == allPages.size - 1) RoundedCornerShape(20.dp)
+                        else CircleShape,
+                    modifier =
+                        if (pagerState.currentPage == allPages.size - 1) Modifier.height(48.dp)
+                        else Modifier.size(48.dp),
+                    contentPadding =
+                        if (pagerState.currentPage == allPages.size - 1)
+                            ButtonDefaults.ContentPadding
+                        else PaddingValues(0.dp)) {
+                      if (pagerState.currentPage == allPages.size - 1) {
+                        Text(
+                            text = stringResource(R.string.onboarding_get_started),
+                            fontWeight = FontWeight.Bold)
+                      } else {
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = "Next",
+                            modifier = Modifier.size(28.dp))
+                      }
                     }
               }
             }
@@ -715,7 +794,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
         HorizontalPager(
             state = pagerState, modifier = Modifier.fillMaxSize().padding(innerPadding)) { pageIndex
               ->
-              val page = pages[pageIndex]
+              val page = allPages[pageIndex]
 
               Column(
                   modifier = Modifier.fillMaxSize().padding(vertical = 32.dp),
