@@ -949,11 +949,13 @@ fun SettingsScreen(
       val savedResolution by viewModel.imageResolution.collectAsState()
       val savedInstanceCount by viewModel.analysisInstanceCount.collectAsState()
       val savedShowPlayPause by viewModel.showPlayPauseToggle.collectAsState()
+      val savedMaxTokens by viewModel.maxTokens.collectAsState()
 
       var localResolution by remember(savedResolution) { mutableIntStateOf(savedResolution) }
       var localInstanceCount by
           remember(savedInstanceCount) { mutableIntStateOf(savedInstanceCount) }
       var localShowPlayPause by remember(savedShowPlayPause) { mutableStateOf(savedShowPlayPause) }
+      var localMaxTokens by remember(savedMaxTokens) { mutableIntStateOf(savedMaxTokens) }
 
       var showAdvancedConfirmDialog by remember { mutableStateOf(false) }
       Card(
@@ -1062,10 +1064,11 @@ fun SettingsScreen(
 
                       Spacer(modifier = Modifier.height(8.dp))
 
+                      val resOptions = remember { listOf(256, 512, 1024, 1536, 2048) }
                       Slider(
-                          value = localResolution.toFloat(),
-                          onValueChange = { localResolution = it.toInt() },
-                          valueRange = 256f..2048f,
+                          value = resOptions.indexOf(localResolution).coerceAtLeast(0).toFloat(),
+                          onValueChange = { localResolution = resOptions[it.toInt()] },
+                          valueRange = 0f..4f,
                           steps = 3,
                           modifier = Modifier.fillMaxWidth(),
                       )
@@ -1073,26 +1076,12 @@ fun SettingsScreen(
                           modifier = Modifier.fillMaxWidth(),
                           horizontalArrangement = Arrangement.SpaceBetween,
                       ) {
-                        Text(
-                            "256",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline)
-                        Text(
-                            "512",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline)
-                        Text(
-                            "1024",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline)
-                        Text(
-                            "1536",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline)
-                        Text(
-                            "2048",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline)
+                        resOptions.forEach { res ->
+                          Text(
+                              res.toString(),
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.outline)
+                        }
                       }
                     }
                   }
@@ -1127,12 +1116,12 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer) {
+                                color = MaterialTheme.colorScheme.primaryContainer) {
                                   Text(
                                       "${localInstanceCount}x",
                                       style = MaterialTheme.typography.labelMedium,
                                       fontWeight = FontWeight.Bold,
-                                      color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                      color = MaterialTheme.colorScheme.onPrimaryContainer,
                                       modifier =
                                           Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
                                 }
@@ -1147,6 +1136,71 @@ fun SettingsScreen(
                           steps = 3,
                           modifier = Modifier.fillMaxWidth(),
                       )
+                    }
+                  }
+
+              Spacer(modifier = Modifier.height(12.dp))
+
+              // Token Length Setting Block
+              Surface(
+                  shape = RoundedCornerShape(16.dp),
+                  color = MaterialTheme.colorScheme.surfaceContainerLow,
+                  modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          horizontalArrangement = Arrangement.SpaceBetween,
+                          verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                              Text(
+                                  stringResource(R.string.token_length),
+                                  style = MaterialTheme.typography.labelLarge,
+                                  fontWeight = FontWeight.Bold,
+                                  color = MaterialTheme.colorScheme.onSurface,
+                              )
+                              Spacer(modifier = Modifier.height(4.dp))
+                              Text(
+                                  stringResource(R.string.token_length_desc),
+                                  style = MaterialTheme.typography.bodySmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  lineHeight = 16.sp,
+                              )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.tertiaryContainer) {
+                                  Text(
+                                      "$localMaxTokens",
+                                      style = MaterialTheme.typography.labelMedium,
+                                      fontWeight = FontWeight.Bold,
+                                      color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                      modifier =
+                                          Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                                }
+                          }
+
+                      Spacer(modifier = Modifier.height(8.dp))
+
+                      val tokenOptions = remember { listOf(2048, 3072, 4096) }
+                      Slider(
+                          value = tokenOptions.indexOf(localMaxTokens).coerceAtLeast(0).toFloat(),
+                          onValueChange = { localMaxTokens = tokenOptions[it.toInt()] },
+                          valueRange = 0f..2f,
+                          steps = 1,
+                          modifier = Modifier.fillMaxWidth(),
+                      )
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          horizontalArrangement = Arrangement.SpaceBetween,
+                      ) {
+                        tokenOptions.forEach { tokens ->
+                          Text(
+                              tokens.toString(),
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.outline)
+                        }
+                      }
                     }
                   }
 
@@ -1227,6 +1281,7 @@ fun SettingsScreen(
                     viewModel.setImageResolution(localResolution)
                     viewModel.setAnalysisInstanceCount(localInstanceCount)
                     viewModel.setShowPlayPauseToggle(localShowPlayPause)
+                    viewModel.setMaxTokens(localMaxTokens)
                     viewModel.applyAdvancedSettings()
                     showAdvancedConfirmDialog = false
                   },
@@ -1240,6 +1295,7 @@ fun SettingsScreen(
                     localResolution = savedResolution
                     localInstanceCount = savedInstanceCount
                     localShowPlayPause = savedShowPlayPause
+                    localMaxTokens = savedMaxTokens
                     showAdvancedConfirmDialog = false
                   }) {
                     Text(cancelBtnText)

@@ -185,6 +185,14 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     prefs.edit().putInt("analysis_instance_count", value).apply()
   }
 
+  private val _maxTokens = MutableStateFlow(prefs.getInt("max_tokens", 4096))
+  val maxTokens: StateFlow<Int> = _maxTokens.asStateFlow()
+
+  fun setMaxTokens(value: Int) {
+    _maxTokens.value = value
+    prefs.edit().putInt("max_tokens", value).apply()
+  }
+
   /**
    * Force apply advanced settings (image resolution / concurrency) by cancelling any running
    * analysis and restarting the queue so that new values take effect immediately.
@@ -421,7 +429,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     val requestedFile = java.io.File(path)
     if (!requestedFile.exists()) return
 
-    llmManager.initializeModel(path, useGpu = useGpu, isGemma4 = isGemma4)
+    llmManager.initializeModel(
+        path, useGpu = useGpu, maxTokens = _maxTokens.value, isGemma4 = isGemma4)
   }
 
   fun refreshEntries() {

@@ -138,6 +138,8 @@
     <string name="image_resolution_desc">Lower values are faster but less detailed</string>
     <string name="analysis_instance_count">Concurrent Analysis Instances</string>
     <string name="analysis_instance_count_desc">Number of images to analyze at once</string>
+    <string name="token_length">Token Length</string>
+    <string name="token_length_desc">Maximum number of tokens for LLM output</string>
     <string name="apply">Apply</string>
     <string name="play_pause_toggle_title">Play/Pause toggle</string>
     <string name="play_pause_toggle_desc">Show a button to pause analysis on the settings page</string>

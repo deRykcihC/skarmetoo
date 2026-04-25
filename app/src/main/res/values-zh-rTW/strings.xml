@@ -138,6 +138,8 @@
     <string name="image_resolution_desc">較低的值較快但細節較少</string>
     <string name="analysis_instance_count">並行分析數量</string>
     <string name="analysis_instance_count_desc">同時分析的圖片數量</string>
+    <string name="token_length">Token 長度</string>
+    <string name="token_length_desc">LLM 輸出的最大 Token 數量</string>
     <string name="apply">套用</string>
     <string name="play_pause_toggle_title">播放/暫停開關</string>
     <string name="play_pause_toggle_desc">在設定頁面上顯示暫停分析的按鈕</string>

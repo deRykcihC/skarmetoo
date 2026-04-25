@@ -67,6 +67,7 @@ fun DetailScreen(
 
   val isAnalyzed = entry.summary.isNotBlank() && !entry.isAnalyzing
   val isPending = entry.summary.isBlank() && !entry.isAnalyzing
+  val analyzingCount = remember(entries) { entries.count { it.isAnalyzing } }
 
   // Double-tap detection for status button
   var lastTapTime by remember { mutableStateOf(0L) }
@@ -194,13 +195,30 @@ fun DetailScreen(
               modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
               verticalAlignment = Alignment.CenterVertically,
           ) {
-            CircularProgressIndicator(
-                progress = currentImageProgress,
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.error,
-                trackColor = MaterialTheme.colorScheme.errorContainer,
-            )
+            if (analyzingCount > 1) {
+              Box(
+                  modifier =
+                      Modifier.size(16.dp)
+                          .background(
+                              MaterialTheme.colorScheme.error,
+                              androidx.compose.foundation.shape.CircleShape),
+                  contentAlignment = Alignment.Center) {
+                    Text(
+                        text = analyzingCount.toString(),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        fontWeight = FontWeight.Bold,
+                    )
+                  }
+            } else {
+              CircularProgressIndicator(
+                  progress = { currentImageProgress },
+                  modifier = Modifier.size(14.dp),
+                  strokeWidth = 2.dp,
+                  color = MaterialTheme.colorScheme.error,
+                  trackColor = MaterialTheme.colorScheme.errorContainer,
+              )
+            }
             Spacer(modifier = Modifier.width(4.dp))
             Text(
                 stringResource(R.string.analyzing),
