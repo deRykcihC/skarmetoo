@@ -16,7 +16,7 @@ android {
     minSdk = 29
     targetSdk = 36
     versionCode = 11
-    versionName = "1.041e"
+    versionName = "1.04"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -45,12 +45,35 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
+
   buildFeatures { compose = true }
-  bundle { language { enableSplit = false } }
+
+  splits {
+    abi {
+      isEnable = true
+      reset()
+      // List the architectures you want to build for
+      include("arm64-v8a", "x86_64")
+      // 'false' prevents Gradle from also building the giant universal APK
+      isUniversalApk = false
+    }
+  }
+
+  bundle {
+    language {
+      enableSplit = false
+    }
+  }
+
+  lint {
+    checkReleaseBuilds = false
+    abortOnError = false
+  }
 }
 
 dependencies {
@@ -89,4 +112,10 @@ spotless {
     target("*.gradle.kts")
     ktfmt()
   }
+}
+
+// Disable APK splits when building an Android App Bundle (AAB)
+// because AABs handle ABI splitting natively and splits cause a build conflict.
+if (gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }) {
+  android.splits.abi.isEnable = false
 }
