@@ -47,6 +47,8 @@ fun GalleryScreen(
   val isRefreshing by viewModel.isRefreshing.collectAsState()
   val currentImageProgress by viewModel.currentImageProgress.collectAsState()
   val entryProgressMap by viewModel.entryProgressMap.collectAsState()
+  val activeAnalysisIds by viewModel.activeAnalysisIds.collectAsState()
+  val isAnalysisRunning by viewModel.isAnalysisRunning.collectAsState()
   var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
   val isSortDescending by viewModel.isSortDescending.collectAsState()
 
@@ -133,7 +135,7 @@ fun GalleryScreen(
         )
         Spacer(modifier = Modifier.weight(1f))
 
-        if (pendingCount > 0 || analyzingCount > 0) {
+        if (isAnalysisRunning || pendingCount > 0 || analyzingCount > 0) {
           Surface(
               shape = RoundedCornerShape(16.dp),
               color = MaterialTheme.colorScheme.errorContainer,
@@ -146,7 +148,15 @@ fun GalleryScreen(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-              if (analyzingCount > 1) {
+              if (analyzingCount == 1 || isAnalysisRunning) {
+                CircularProgressIndicator(
+                    progress = { currentImageProgress },
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.error,
+                    trackColor = MaterialTheme.colorScheme.errorContainer,
+                )
+              } else if (analyzingCount > 1) {
                 Box(
                     modifier =
                         Modifier.size(16.dp)
@@ -161,14 +171,6 @@ fun GalleryScreen(
                           fontWeight = FontWeight.Bold,
                       )
                     }
-              } else if (analyzingCount == 1) {
-                CircularProgressIndicator(
-                    progress = { currentImageProgress },
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.error,
-                    trackColor = MaterialTheme.colorScheme.errorContainer,
-                )
               } else {
                 Icon(
                     Icons.Rounded.Schedule,
@@ -349,11 +351,17 @@ fun GalleryScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
               leftColumnEntries.forEach { entry ->
+                val isActivelyAnalyzing =
+                    activeAnalysisIds.contains(entry.id) ||
+                        entry.isAnalyzing ||
+                        entryProgressMap.containsKey(entry.id)
                 ScreenshotGridItem(
                     entry = entry,
                     currentImageProgress =
                         entryProgressMap[entry.id]
-                            ?: if (entry.isAnalyzing) currentImageProgress else 0f,
+                            ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
+                    isActivelyAnalyzing = isActivelyAnalyzing,
+                    isQueueRunning = isAnalysisRunning,
                     onClick = { onScreenshotClick(entry.id) },
                 )
               }
@@ -365,11 +373,17 @@ fun GalleryScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
               rightColumnEntries.forEach { entry ->
+                val isActivelyAnalyzing =
+                    activeAnalysisIds.contains(entry.id) ||
+                        entry.isAnalyzing ||
+                        entryProgressMap.containsKey(entry.id)
                 ScreenshotGridItem(
                     entry = entry,
                     currentImageProgress =
                         entryProgressMap[entry.id]
-                            ?: if (entry.isAnalyzing) currentImageProgress else 0f,
+                            ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
+                    isActivelyAnalyzing = isActivelyAnalyzing,
+                    isQueueRunning = isAnalysisRunning,
                     onClick = { onScreenshotClick(entry.id) },
                 )
               }
@@ -386,6 +400,8 @@ fun GalleryScreen(
 fun ScreenshotGridItem(
     entry: ScreenshotEntry,
     currentImageProgress: Float = 0f,
+    isActivelyAnalyzing: Boolean = false,
+    isQueueRunning: Boolean = false,
     onClick: () -> Unit,
 ) {
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -432,7 +448,7 @@ fun ScreenshotGridItem(
         }
       }
 
-      if (entry.isAnalyzing) {
+      if (isActivelyAnalyzing) {
         LinearProgressIndicator(
             progress = { currentImageProgress },
             modifier = Modifier.fillMaxWidth(),
@@ -452,7 +468,7 @@ fun ScreenshotGridItem(
               color = MaterialTheme.colorScheme.onSurface,
               lineHeight = 18.sp,
           )
-        } else if (entry.isAnalyzing) {
+        } else if (isActivelyAnalyzing) {
           Text(
               stringResource(R.string.analyzing) + "...",
               style = MaterialTheme.typography.bodySmall,

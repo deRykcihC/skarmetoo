@@ -1,8 +1,12 @@
 package com.deryk.skarmetoo
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Build
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -23,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +44,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import kotlinx.coroutines.delay
@@ -54,6 +60,23 @@ data class OnboardingPage(
 @Composable
 fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   val isDark = LocalIsDarkMode.current
+  val context = LocalContext.current
+
+  val selectedModel by viewModel.selectedModel.collectAsState()
+  val isDownloadingModel by viewModel.isDownloadingModel.collectAsState()
+  val downloadingModelType by viewModel.downloadingModelType.collectAsState()
+  val downloadProgress by viewModel.downloadProgress.collectAsState()
+  val isGemma3nDownloaded by viewModel.isGemma3nDownloaded.collectAsState()
+  val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
+
+  var showHfLogin by remember { mutableStateOf(false) }
+  var hfLoginModelType by remember { mutableStateOf(ModelType.GEMMA_3N) }
+
+  val gemma3nUrl =
+      "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm"
+  val gemma4Url =
+      "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+
   val pages =
       listOf(
           // ── Page 0: Download AI Model ──
@@ -61,45 +84,113 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
               title = stringResource(R.string.select_model),
               description = stringResource(R.string.onboarding_page0_desc)) {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-                  // Gemma 3n card (not selected state)
+                  val isGemma4Selected = selectedModel == ModelType.GEMMA_4
+                  val isDownloadingGemma4 =
+                      isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
                   OutlinedCard(
-                      onClick = {},
+                      onClick = {
+                        viewModel.setSelectedModel(ModelType.GEMMA_4)
+                        if (isGemma4Downloaded) {
+                          val path =
+                              context.filesDir.absolutePath + "/" + ModelType.GEMMA_4.fileName
+                          viewModel.initializeModel(path, isGemma4 = true)
+                        } else if (!isDownloadingModel) {
+                          hfLoginModelType = ModelType.GEMMA_4
+                          showHfLogin = true
+                        }
+                      },
                       modifier = Modifier.fillMaxWidth(),
                       shape = RoundedCornerShape(14.dp),
                       colors =
                           CardDefaults.outlinedCardColors(
-                              containerColor = Color.Transparent,
+                              containerColor =
+                                  if (isGemma4Selected) MaterialTheme.colorScheme.secondaryContainer
+                                  else Color.Transparent,
                           ),
-                      border = CardDefaults.outlinedCardBorder(),
+                      border =
+                          if (isGemma4Selected)
+                              BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                          else CardDefaults.outlinedCardBorder(),
                   ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                       Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(
+                              stringResource(R.string.model_gemma4),
+                              style = MaterialTheme.typography.titleSmall,
+                              fontWeight =
+                                  if (isGemma4Selected) FontWeight.Bold else FontWeight.Medium,
+                          )
+                          Spacer(modifier = Modifier.width(8.dp))
+                          Surface(
+                              color = (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)),
+                              shape = RoundedCornerShape(4.dp)) {
+                                Text(
+                                    text = stringResource(R.string.recommended_tag),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = (if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)),
+                                )
+                              }
+                          Spacer(modifier = Modifier.width(4.dp))
+                          Surface(
+                              color = MaterialTheme.colorScheme.surfaceVariant,
+                              shape = RoundedCornerShape(4.dp)) {
+                                Text(
+                                    text = stringResource(R.string.tags_tag),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                              }
+                        }
                         Text(
-                            stringResource(R.string.model_gemma3n),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Text(
-                            stringResource(R.string.model_gemma3n_desc),
+                            stringResource(R.string.model_gemma4_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                       }
+                      Spacer(modifier = Modifier.width(12.dp))
                       Surface(
                           shape = RoundedCornerShape(8.dp),
-                          color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                          color =
+                              if (isDownloadingGemma4)
+                                  (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                              else if (isGemma4Downloaded)
+                                  (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                              else MaterialTheme.colorScheme.surfaceContainerHighest,
                           modifier = Modifier.size(32.dp)) {
                             Box(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier.fillMaxSize()) {
-                                  Icon(
-                                      imageVector = Icons.Rounded.Download,
-                                      contentDescription = "Download Model",
-                                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                      modifier = Modifier.size(20.dp))
+                                  if (isDownloadingGemma4) {
+                                    Text(
+                                        text = "${(downloadProgress * 100).toInt()}%",
+                                        style =
+                                            MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 11.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color =
+                                            if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                                    )
+                                  } else if (isGemma4Downloaded) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Downloaded",
+                                        tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                        modifier = Modifier.size(20.dp))
+                                  } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = "Download Model",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp))
+                                  }
                                 }
                           }
                     }
@@ -107,45 +198,102 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
 
                   Spacer(modifier = Modifier.height(8.dp))
 
-                  // Gemma 4 card (selected state)
+                  val isGemma3nSelected = selectedModel == ModelType.GEMMA_3N
+                  val isDownloadingGemma3n =
+                      isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
                   OutlinedCard(
-                      onClick = {},
+                      onClick = {
+                        viewModel.setSelectedModel(ModelType.GEMMA_3N)
+                        if (isGemma3nDownloaded) {
+                          val path =
+                              context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
+                          viewModel.initializeModel(path, isGemma4 = false)
+                        } else if (!isDownloadingModel) {
+                          hfLoginModelType = ModelType.GEMMA_3N
+                          showHfLogin = true
+                        }
+                      },
                       modifier = Modifier.fillMaxWidth(),
                       shape = RoundedCornerShape(14.dp),
                       colors =
                           CardDefaults.outlinedCardColors(
-                              containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                              containerColor =
+                                  if (isGemma3nSelected)
+                                      MaterialTheme.colorScheme.secondaryContainer
+                                  else Color.Transparent,
                           ),
-                      border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                      border =
+                          if (isGemma3nSelected)
+                              BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                          else CardDefaults.outlinedCardBorder(),
                   ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                       Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(
+                              stringResource(R.string.model_gemma3n),
+                              style = MaterialTheme.typography.titleSmall,
+                              fontWeight =
+                                  if (isGemma3nSelected) FontWeight.Bold else FontWeight.Medium,
+                          )
+                          Spacer(modifier = Modifier.width(8.dp))
+                          Surface(
+                              color = MaterialTheme.colorScheme.surfaceVariant,
+                              shape = RoundedCornerShape(4.dp)) {
+                                Text(
+                                    text = stringResource(R.string.tags_tag),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                              }
+                        }
                         Text(
-                            stringResource(R.string.model_gemma4),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            stringResource(R.string.model_gemma4_desc),
+                            stringResource(R.string.model_gemma3n_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                       }
+                      Spacer(modifier = Modifier.width(12.dp))
                       Surface(
                           shape = RoundedCornerShape(8.dp),
-                          color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                          color =
+                              if (isDownloadingGemma3n)
+                                  (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                              else if (isGemma3nDownloaded)
+                                  (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                              else MaterialTheme.colorScheme.surfaceContainerHighest,
                           modifier = Modifier.size(32.dp)) {
                             Box(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier.fillMaxSize()) {
-                                  Icon(
-                                      imageVector = Icons.Rounded.Download,
-                                      contentDescription = "Download Model",
-                                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                      modifier = Modifier.size(20.dp))
+                                  if (isDownloadingGemma3n) {
+                                    Text(
+                                        text = "${(downloadProgress * 100).toInt()}%",
+                                        style =
+                                            MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 11.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color =
+                                            if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                                    )
+                                  } else if (isGemma3nDownloaded) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Downloaded",
+                                        tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                        modifier = Modifier.size(20.dp))
+                                  } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = "Download Model",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp))
+                                  }
                                 }
                           }
                     }
@@ -707,7 +855,6 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
 
   val pagerState = rememberPagerState(pageCount = { allPages.size })
   val coroutineScope = rememberCoroutineScope()
-  val context = LocalContext.current
 
   val mediaPermissionLauncher =
       rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
@@ -834,4 +981,77 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                   }
             }
       }
+
+  if (showHfLogin) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = {
+          showHfLogin = false
+          val cookies = CookieManager.getInstance().getCookie("https://huggingface.co")
+          if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
+            val url = if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
+            viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+          }
+        },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+      Surface(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize()) {
+          Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                  text = "Hugging Face Authorization",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontWeight = FontWeight.Bold,
+              )
+              IconButton(
+                  onClick = {
+                    showHfLogin = false
+                    val cookies = CookieManager.getInstance().getCookie("https://huggingface.co")
+                    if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
+                      val url =
+                          if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
+                      viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+                    }
+                  }) {
+                    Icon(Icons.Rounded.Close, "Close")
+                  }
+            }
+
+            Text(
+                text =
+                    "Please log in and optionally accept the model's license agreement. Once done, close this window to begin downloading.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            HorizontalDivider()
+
+            @SuppressLint("SetJavaScriptEnabled")
+            AndroidView(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                factory = { context ->
+                  WebView(context).apply {
+                    webViewClient = WebViewClient()
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    val loginRepoUrl =
+                        when (hfLoginModelType) {
+                          ModelType.GEMMA_3N ->
+                              "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm"
+                          ModelType.GEMMA_4 ->
+                              "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
+                          ModelType.GGUF -> ""
+                        }
+                    loadUrl(loginRepoUrl)
+                  }
+                })
+          }
+        }
+      }
+    }
+  }
 }

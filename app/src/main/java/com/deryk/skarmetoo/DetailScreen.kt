@@ -55,6 +55,7 @@ fun DetailScreen(
   val entry = entries.find { it.id == entryId }
   val isModelReady by viewModel.isModelReady.collectAsState()
   val currentImageProgress by viewModel.currentImageProgress.collectAsState()
+  val entryProgressMap by viewModel.entryProgressMap.collectAsState()
   val context = LocalContext.current
 
   if (entry == null) {
@@ -65,9 +66,11 @@ fun DetailScreen(
   var noteText by remember(entry.note) { mutableStateOf(entry.note) }
   var showFullscreenImage by remember { mutableStateOf(false) }
 
-  val isAnalyzed = entry.summary.isNotBlank() && !entry.isAnalyzing
-  val isPending = entry.summary.isBlank() && !entry.isAnalyzing
-  val analyzingCount = remember(entries) { entries.count { it.isAnalyzing } }
+  val isActivelyAnalyzing = entry.isAnalyzing || entryProgressMap.containsKey(entry.id)
+  val isAnalyzed = entry.summary.isNotBlank() && !isActivelyAnalyzing
+  val isPending = entry.summary.isBlank() && !isActivelyAnalyzing
+  val analyzingCount =
+      remember(entries) { entries.count { it.isAnalyzing || entryProgressMap.containsKey(it.id) } }
 
   // Double-tap detection for status button
   var lastTapTime by remember { mutableStateOf(0L) }
@@ -185,7 +188,7 @@ fun DetailScreen(
       Spacer(modifier = Modifier.width(4.dp))
 
       // Status pill — exact copy of home page style
-      if (entry.isAnalyzing) {
+      if (isActivelyAnalyzing) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.errorContainer,
@@ -212,7 +215,7 @@ fun DetailScreen(
                   }
             } else {
               CircularProgressIndicator(
-                  progress = { currentImageProgress },
+                  progress = { entryProgressMap[entry.id] ?: currentImageProgress },
                   modifier = Modifier.size(14.dp),
                   strokeWidth = 2.dp,
                   color = MaterialTheme.colorScheme.error,
@@ -327,9 +330,9 @@ fun DetailScreen(
             )
           }
         }
-        if (entry.isAnalyzing) {
+        if (isActivelyAnalyzing) {
           LinearProgressIndicator(
-              progress = currentImageProgress,
+              progress = { entryProgressMap[entry.id] ?: currentImageProgress },
               modifier = Modifier.fillMaxWidth(),
           )
         }
@@ -354,7 +357,7 @@ fun DetailScreen(
             lineHeight = 26.sp,
             textAlign = TextAlign.Justify,
         )
-      } else if (entry.isAnalyzing) {
+      } else if (isActivelyAnalyzing) {
         Text(
             "Analyzing screenshot...",
             style = MaterialTheme.typography.bodyLarge,

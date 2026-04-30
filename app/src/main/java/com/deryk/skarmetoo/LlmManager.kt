@@ -200,8 +200,14 @@ class LlmManager(private val context: Context) {
               resized
             }
 
+        val jpegBytes = argbBitmap.toJpegByteArray()
+
+        // Recycle intermediate bitmaps to prevent OOM
+        if (argbBitmap != bitmap) argbBitmap.recycle()
+        if (resized != bitmap && resized != argbBitmap) resized.recycle()
+
         val contents = mutableListOf<Content>()
-        contents.add(Content.ImageBytes(argbBitmap.toJpegByteArray()))
+        contents.add(Content.ImageBytes(jpegBytes))
         contents.add(Content.Text(prompt))
 
         conversation?.sendMessageAsync(
@@ -320,8 +326,14 @@ TAGS: [extracted tag1, tag2, tag3]"""
                 DetailLevel.CUSTOM -> 300f
               }
 
+          val jpegBytes = argbBitmap.toJpegByteArray()
+
+          // Recycle intermediate bitmaps to prevent OOM
+          if (argbBitmap != bitmap) argbBitmap.recycle()
+          if (resized != bitmap && resized != argbBitmap) resized.recycle()
+
           val contents = mutableListOf<Content>()
-          contents.add(Content.ImageBytes(argbBitmap.toJpegByteArray()))
+          contents.add(Content.ImageBytes(jpegBytes))
           contents.add(Content.Text(prompt))
 
           val fullResponse = StringBuilder()
@@ -614,8 +626,14 @@ TAGS: [extracted tag1, tag2, tag3]"""
               DetailLevel.CUSTOM -> 300f
             }
 
+        val jpegBytes = argbBitmap.toJpegByteArray()
+
+        // Recycle intermediate bitmaps to prevent OOM
+        if (argbBitmap != bitmap) argbBitmap.recycle()
+        if (resized != bitmap && resized != argbBitmap) resized.recycle()
+
         val contents = mutableListOf<Content>()
-        contents.add(Content.ImageBytes(argbBitmap.toJpegByteArray()))
+        contents.add(Content.ImageBytes(jpegBytes))
         contents.add(Content.Text(prompt))
 
         val fullResponse = StringBuilder()

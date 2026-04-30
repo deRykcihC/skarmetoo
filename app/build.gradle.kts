@@ -12,11 +12,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.deryk.skarmetoo.alt"
+    applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 12
-    versionName = "1.04"
+    versionCode = 14
+    versionName = "1.05"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -64,11 +64,7 @@ android {
     }
   }
 
-  bundle {
-    language {
-      enableSplit = false
-    }
-  }
+  bundle { language { enableSplit = false } }
 
   lint {
     checkReleaseBuilds = false
@@ -94,6 +90,7 @@ dependencies {
   implementation("androidx.documentfile:documentfile:1.0.1")
   implementation("io.coil-kt:coil-compose:2.5.0")
   implementation(libs.androidx.palette)
+  implementation(libs.llamatik.library)
   testImplementation(libs.junit)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.espresso.core)

@@ -60,7 +60,9 @@
     <string name="model_gemma3n">Gemma 3n</string>
     <string name="model_gemma4">Gemma 4</string>
     <string name="model_gemma3n_desc">上一代模型。需要授權與登入。</string>
-    <string name="model_gemma4_desc">分析速度更快、更詳細且檔案更小。推薦使用。</string>
+    <string name="model_gemma4_desc">更快速、更詳細、檔案更小。</string>
+    <string name="recommended_tag">推薦</string>
+    <string name="tags_tag">標籤</string>
     <string name="download_gemma3n">下載 Gemma 3n</string>
     <string name="download_gemma4">下載 Gemma 4</string>
     <string name="model_downloaded">已下載</string>
@@ -143,10 +145,18 @@
     <string name="apply">套用</string>
     <string name="play_pause_toggle_title">播放/暫停開關</string>
     <string name="play_pause_toggle_desc">在設定頁面上顯示暫停分析的按鈕</string>
+    <string name="background_process_title">背景處理</string>
+    <string name="background_process_desc">應用程式在背景時繼續進行分析。將顯示包含剩餘數量的通知。</string>
+    <string name="notification_title">正在分析圖像</string>
+    <string name="notification_remaining">剩餘 %d 張圖像</string>
     <string name="confirm_changes">確認變更</string>
-    <string name="advanced_settings_warning">若設備硬體效能不足，修改圖像解析度或增加並行分析數量可能導致應用程式不穩定。\n\n請自行承擔風險，並進行逐步調整，以找出最適合您設備的最佳配置。</string>
+    <string name="advanced_settings_warning">請自行承擔風險。修改這些設定可能導致應用程式在設備硬體效能不足時不穩定。</string>
     <string name="confirm_btn">確認</string>
     <string name="cancel_btn">取消</string>
     <string name="onboarding_page10_title">進階設定</string>
     <string name="onboarding_page10_desc">微調圖像解析度、並行分析數量，並啟用播放/暫停開關。這些選項屬於實驗性功能，請自行承擔風險，因為它們可能在效能較弱的硬體上造成不穩定。</string>
+    <string name="more_models">更多模型</string>
+    <string name="model_lfm_desc">專為速度與低發熱優化的超高效視覺模型</string>
+    <string name="beta">測試版</string>
+    <string name="no_tags">不支援標籤</string>
 </resources>

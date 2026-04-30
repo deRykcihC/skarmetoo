@@ -45,11 +45,13 @@ data class AlbumWithThumbnails(
 enum class ModelType(val fileName: String, val displayName: String) {
   GEMMA_3N("gemma-3n-E2B-it-int4.litertlm", "Gemma 3n"),
   GEMMA_4("gemma-4-E2B-it.litertlm", "Gemma 4"),
+  GGUF("", "GGUF Model"),
 }
 
 class ScreenshotViewModel(application: Application) : AndroidViewModel(application) {
   private val db = ScreenshotDatabase(application)
   val llmManager = LlmManager.getInstance(application)
+  private val ggufManager = GgufLlmManager.getInstance(application)
 
   private val _entries = MutableStateFlow<List<ScreenshotEntry>>(emptyList())
   val entries: StateFlow<List<ScreenshotEntry>> = _entries.asStateFlow()
@@ -84,9 +86,18 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val _currentImageProgress = MutableStateFlow(0f)
   val currentImageProgress: StateFlow<Float> = _currentImageProgress.asStateFlow()
 
+  // Stays true for the whole batch queue, not per-entry
+  private val _isAnalysisRunning = MutableStateFlow(false)
+  val isAnalysisRunning: StateFlow<Boolean> = _isAnalysisRunning.asStateFlow()
+
   // Per-entry progress for concurrent analysis — maps entry ID to progress float
   private val _entryProgressMap = MutableStateFlow<Map<Long, Float>>(emptyMap())
   val entryProgressMap: StateFlow<Map<Long, Float>> = _entryProgressMap.asStateFlow()
+
+  // Dedicated set of entry IDs that are actively being analyzed. Updated synchronously
+  // at the start/end of each entry's analysis so the UI never flickers the progress bar.
+  private val _activeAnalysisIds = MutableStateFlow<Set<Long>>(emptySet())
+  val activeAnalysisIds: StateFlow<Set<Long>> = _activeAnalysisIds.asStateFlow()
 
   // Debounce refreshEntries to avoid UI jank from rapid calls during concurrent analysis
   private val _refreshRequest = MutableStateFlow(System.currentTimeMillis())
@@ -156,6 +167,18 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     prefs.edit().putBoolean("show_play_pause", show).apply()
   }
 
+  private val _backgroundProcessEnabled =
+      MutableStateFlow(prefs.getBoolean("background_process_enabled", false))
+  val backgroundProcessEnabled: StateFlow<Boolean> = _backgroundProcessEnabled.asStateFlow()
+
+  fun setBackgroundProcessEnabled(enabled: Boolean) {
+    _backgroundProcessEnabled.value = enabled
+    prefs.edit().putBoolean("background_process_enabled", enabled).apply()
+    if (!enabled) {
+      stopAnalysisService()
+    }
+  }
+
   private val _isAnalysisPaused = MutableStateFlow(false)
   val isAnalysisPaused: StateFlow<Boolean> = _isAnalysisPaused.asStateFlow()
 
@@ -165,6 +188,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     if (newPaused) {
       viewModelScope.launch(Dispatchers.IO) {
         isAnalyzing.set(false)
+        _activeAnalysisIds.value = emptySet()
+        _entryProgressMap.value = emptyMap()
         analysisJob?.join()
       }
     } else {
@@ -201,6 +226,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     viewModelScope.launch {
       // Halt any in-progress analysis
       isAnalyzing.set(false)
+      _activeAnalysisIds.value = emptySet()
+      _entryProgressMap.value = emptyMap()
       // Wait for existing workers to completely finish their current image and exit
       analysisJob?.join()
       refreshEntries()
@@ -320,25 +347,69 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     _selectedExperimentalAlbumId.value = prefs.getString("selected_experimental_album_id", null)
 
     viewModelScope.launch {
-      llmManager.uiState.collect { state ->
-        when (state) {
-          is LlmManager.LlmState.Initial -> _modelStatus.value = "Please load a model"
-          is LlmManager.LlmState.Loading -> {
-            _modelStatus.value = "Loading model..."
-            _isModelReady.value = false
+      kotlinx.coroutines.flow
+          .combine(_selectedModel, llmManager.uiState, ggufManager.uiState) {
+              selected,
+              llmState,
+              ggufState ->
+            if (selected == ModelType.GGUF) {
+              when (ggufState) {
+                is GgufLlmManager.LlmState.Initial -> {
+                  if (_modelStatus.value != "Ready") {
+                    _modelStatus.value = "Please load a model"
+                  }
+                  _isModelReady.value = false
+                }
+                is GgufLlmManager.LlmState.Loading -> {
+                  _modelStatus.value = "Loading model..."
+                  _isModelReady.value = false
+                }
+                is GgufLlmManager.LlmState.Ready -> {
+                  _modelStatus.value = "Ready (GGUF)"
+                  _isModelReady.value = true
+                  launchAnalysisQueue()
+                }
+                is GgufLlmManager.LlmState.Generating -> {
+                  _modelStatus.value = "Analyzing..."
+                  _isModelReady.value = true
+                }
+                is GgufLlmManager.LlmState.Error -> {
+                  _modelStatus.value =
+                      "Error: ${(ggufState as GgufLlmManager.LlmState.Error).message}"
+                  _isModelReady.value = false
+                }
+              }
+            } else {
+              when (llmState) {
+                is LlmManager.LlmState.Initial -> {
+                  if (_modelStatus.value != "Ready") {
+                    _modelStatus.value = "Please load a model"
+                  }
+                  _isModelReady.value = false
+                }
+                is LlmManager.LlmState.Loading -> {
+                  _modelStatus.value = "Loading model..."
+                  _isModelReady.value = false
+                }
+                is LlmManager.LlmState.Ready -> {
+                  _modelStatus.value = "Ready (Gemma)"
+                  _isModelReady.value = true
+                  launchAnalysisQueue()
+                }
+                is LlmManager.LlmState.Generating -> {
+                  _modelStatus.value = "Analyzing..."
+                  _isModelReady.value = true
+                }
+                is LlmManager.LlmState.Error -> {
+                  _modelStatus.value = "Error: ${(llmState as LlmManager.LlmState.Error).message}"
+                  _isModelReady.value = false
+                }
+              }
+            }
           }
-          is LlmManager.LlmState.Ready -> {
-            _modelStatus.value = "Ready"
-            _isModelReady.value = true
-            launchAnalysisQueue()
+          .collect {
+            // Flow emission processed in the block
           }
-          is LlmManager.LlmState.Generating -> _modelStatus.value = "Analyzing..."
-          is LlmManager.LlmState.Error -> {
-            _modelStatus.value = "Error: ${state.message}"
-            _isModelReady.value = false
-          }
-        }
-      }
     }
     viewModelScope.launch(Dispatchers.IO) {
       try {
@@ -353,17 +424,29 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         refreshModelDownloadStatus()
 
         val selected = _selectedModel.value
-        val selectedModelFile = java.io.File(application.filesDir, selected.fileName)
-        if (selectedModelFile.exists()) {
-          initializeModel(selectedModelFile.absolutePath, isGemma4 = selected == ModelType.GEMMA_4)
+        if (selected == ModelType.GGUF) {
+          val lastGgufFile = prefs.getString("last_gguf_model", null)
+          if (lastGgufFile != null) {
+            val allModels = LFM2_5_VARIANTS + PRESET_GGUF_MODELS
+            val modelInfo = allModels.find { it.fileName == lastGgufFile }
+            if (modelInfo != null) {
+              ggufManager.loadModel(modelInfo)
+            }
+          }
         } else {
-          val fallback =
-              if (selected == ModelType.GEMMA_3N) ModelType.GEMMA_4 else ModelType.GEMMA_3N
-          val fallbackFile = java.io.File(application.filesDir, fallback.fileName)
-          if (fallbackFile.exists()) {
-            _selectedModel.value = fallback
-            prefs.edit().putString("selected_model", fallback.name).apply()
-            initializeModel(fallbackFile.absolutePath, isGemma4 = fallback == ModelType.GEMMA_4)
+          val selectedModelFile = java.io.File(application.filesDir, selected.fileName)
+          if (selectedModelFile.exists()) {
+            initializeModel(
+                selectedModelFile.absolutePath, isGemma4 = selected == ModelType.GEMMA_4)
+          } else {
+            val fallback =
+                if (selected == ModelType.GEMMA_3N) ModelType.GEMMA_4 else ModelType.GEMMA_3N
+            val fallbackFile = java.io.File(application.filesDir, fallback.fileName)
+            if (fallbackFile.exists()) {
+              _selectedModel.value = fallback
+              prefs.edit().putString("selected_model", fallback.name).apply()
+              initializeModel(fallbackFile.absolutePath, isGemma4 = fallback == ModelType.GEMMA_4)
+            }
           }
         }
       } catch (e: Exception) {
@@ -383,7 +466,15 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   fun setSelectedModel(model: ModelType) {
     _selectedModel.value = model
     prefs.edit().putString("selected_model", model.name).apply()
-    checkModelExists()
+    if (model != ModelType.GGUF) {
+      checkModelExists()
+    }
+  }
+
+  fun setGgufModelAsActive(modelInfo: GgufModelInfo) {
+    setSelectedModel(ModelType.GGUF)
+    prefs.edit().putString("last_gguf_model", modelInfo.fileName).apply()
+    ggufManager.loadModel(modelInfo)
   }
 
   private fun refreshModelDownloadStatus() {
@@ -1318,6 +1409,56 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
   }
 
+  /**
+   * Called when the app returns to the foreground. If analysis was running but got stalled (e.g.,
+   * LiteRT callbacks blocked by paused main looper), this resets the stuck state and restarts the
+   * queue.
+   */
+  fun resumeAnalysisIfNeeded() {
+    if (_isAnalysisPaused.value || !_isModelReady.value) return
+
+    viewModelScope.launch(Dispatchers.IO) {
+      val hasUnprocessed =
+          db.getAllEntries().any { it.analyzedAt == 0L && it.imageUri.isNotBlank() }
+      if (!hasUnprocessed) return@launch
+
+      if (isAnalyzing.get()) {
+        // Analysis was supposedly running but may be stalled — check if the job is still active
+        val job = analysisJob
+        if (job == null || !job.isActive) {
+          // Job died silently; reset and restart
+          Log.d(TAG, "resumeAnalysisIfNeeded: analysis job died, restarting")
+          isAnalyzing.set(false)
+          _isAnalysisRunning.value = false
+          // Reset any stuck isAnalyzing flags in DB
+          val all = db.getAllEntries()
+          for (entry in all) {
+            if (entry.isAnalyzing) {
+              db.setAnalyzing(entry.id, false)
+            }
+          }
+          _activeAnalysisIds.value = emptySet()
+          _entryProgressMap.value = emptyMap()
+          refreshEntries()
+          launchAnalysisQueue()
+        }
+        // else: job is still active, analysis is genuinely running — do nothing
+      } else {
+        // Not analyzing but there are unprocessed items — start the queue
+        Log.d(TAG, "resumeAnalysisIfNeeded: starting analysis for unprocessed items")
+        // Reset any stuck isAnalyzing flags
+        val all = db.getAllEntries()
+        for (entry in all) {
+          if (entry.isAnalyzing) {
+            db.setAnalyzing(entry.id, false)
+          }
+        }
+        refreshEntries()
+        launchAnalysisQueue()
+      }
+    }
+  }
+
   fun analyzeUnprocessed() {
     if (!_isModelReady.value || isAnalyzing.get()) {
       return
@@ -1332,6 +1473,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
     viewModelScope.launch(Dispatchers.IO) {
       isAnalyzing.set(false)
+      _activeAnalysisIds.value = emptySet()
+      _entryProgressMap.value = emptyMap()
       analysisJob?.join()
       val all = db.getAllEntries()
       var fixed = 0
@@ -1366,16 +1509,16 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       if (allUnprocessed.isEmpty()) {
         return
       }
+      _isAnalysisRunning.value = true
 
       val total = allUnprocessed.size
       val concurrency = _analysisInstanceCount.value.coerceIn(1, 5)
       Log.d(TAG, "Starting analysis queue: $total entries, concurrency=$concurrency")
+      updateAnalysisService(total)
 
       if (concurrency <= 1) {
         // Sequential mode (original behavior)
-        var counts = 0
-
-        while (counts < total) {
+        while (true) {
           if (!isAnalyzing.get()) break
           // Fetch the latest unanalyzed image from DB again to handle new inserts dynamically
           val currentUnprocessed =
@@ -1389,21 +1532,21 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           if (currentUnprocessed.isEmpty()) break
 
           val entry = currentUnprocessed.first()
-          val remaining = total - counts
+          val remaining = currentUnprocessed.size
           _analysisProgress.value = remaining to total
+          updateAnalysisService(remaining)
           Log.d(TAG, "Analyzing $remaining/$total: id=${entry.id}")
 
           val success = analyzeEntrySuspend(entry)
-
-          counts++
 
           if (!success) {
             Log.w(TAG, "Analysis failed for id=${entry.id}, continuing to next...")
           }
 
-          // Allow underlying C++ LiteRT engine time to gracefully finalize callback threads
+          // Allow underlying C++ engine time to gracefully finalize callback threads
           // naturally before the next iteration rips it away
           Log.d(TAG, "Delaying 2s to allow JNI engine teardown...")
+          _currentImageProgress.value = 0.1f
           kotlinx.coroutines.delay(2000L)
         }
       } else {
@@ -1441,6 +1584,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     val current = processed.incrementAndGet()
                     val remaining = total - current + 1
                     _analysisProgress.value = remaining to total
+                    updateAnalysisService(remaining)
                     Log.d(TAG, "Analyzing $remaining/$total: id=${entry.id} (worker-$workerId)")
 
                     val success = analyzeEntrySuspend(entry, useConcurrent = true)
@@ -1467,6 +1611,55 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       _analysisProgress.value = null
     } finally {
       isAnalyzing.set(false)
+      _isAnalysisRunning.value = false
+      stopAnalysisService()
+    }
+  }
+
+  @Volatile private var isServiceRunning = false
+
+  private fun updateAnalysisService(remaining: Int) {
+    if (!_backgroundProcessEnabled.value) return
+    val context = getApplication<Application>()
+    if (remaining <= 0) {
+      stopAnalysisService()
+      return
+    }
+    val intent =
+        android.content.Intent(context, AnalysisService::class.java).apply {
+          action =
+              if (isServiceRunning) AnalysisService.ACTION_UPDATE else AnalysisService.ACTION_START
+          putExtra(AnalysisService.EXTRA_REMAINING, remaining)
+        }
+    try {
+      if (!isServiceRunning) {
+        isServiceRunning = true
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+          context.startForegroundService(intent)
+        } else {
+          context.startService(intent)
+        }
+      } else {
+        context.startService(intent)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to update AnalysisService", e)
+      isServiceRunning = false
+    }
+  }
+
+  private fun stopAnalysisService() {
+    if (!isServiceRunning) return
+    isServiceRunning = false
+    val context = getApplication<Application>()
+    val intent =
+        android.content.Intent(context, AnalysisService::class.java).apply {
+          action = AnalysisService.ACTION_STOP
+        }
+    try {
+      context.startService(intent)
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to stop AnalysisService", e)
     }
   }
 
@@ -1481,13 +1674,19 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       useConcurrent: Boolean = false
   ): Boolean {
     db.setAnalyzing(entry.id, true)
-    if (useConcurrent) refreshEntriesDebounced() else refreshEntries()
-    _currentImageProgress.value = 0f
-    if (useConcurrent) _entryProgressMap.value = _entryProgressMap.value + (entry.id to 0f)
+    _activeAnalysisIds.value = _activeAnalysisIds.value + entry.id
+    _entryProgressMap.value = _entryProgressMap.value + (entry.id to 0.1f)
+    if (useConcurrent) {
+      refreshEntriesDebounced()
+    } else {
+      refreshEntries()
+    }
 
     val bitmap = loadBitmap(Uri.parse(entry.imageUri))
     if (bitmap == null) {
       db.setAnalyzing(entry.id, false)
+      _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
+      _entryProgressMap.value = _entryProgressMap.value - entry.id
       refreshEntries()
       return false
     }
@@ -1505,16 +1704,23 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
 
     val onProgress: (Float) -> Unit = { progress ->
-      _currentImageProgress.value = progress
-      if (useConcurrent) {
-        _entryProgressMap.value = _entryProgressMap.value + (entry.id to progress)
+      val currentProgress = _entryProgressMap.value[entry.id] ?: 0f
+      val newProgress = maxOf(currentProgress, progress)
+      if (newProgress > 0f) {
+        _currentImageProgress.value = newProgress
+        _entryProgressMap.value = _entryProgressMap.value + (entry.id to newProgress)
       }
     }
     val onResult: (String, String, String) -> Unit = { summary, tags, modelUsed ->
       viewModelScope.launch(Dispatchers.IO) {
         db.updateAnalysis(entry.id, summary, tags, modelUsed)
+
+        // Delay clearing UI state slightly so the 100% progress bar has time to be seen
+        kotlinx.coroutines.delay(600L)
+
+        _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
+        _entryProgressMap.value = _entryProgressMap.value - entry.id
         if (useConcurrent) {
-          _entryProgressMap.value = _entryProgressMap.value - entry.id
           refreshEntriesDebounced()
         } else {
           refreshEntries()
@@ -1525,8 +1731,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     val onError: (String) -> Unit = { error ->
       viewModelScope.launch(Dispatchers.IO) {
         db.setAnalyzing(entry.id, false)
+        _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
+        // Keep progress in map so UI bar doesn't disappear on error/retry
         if (useConcurrent) {
-          _entryProgressMap.value = _entryProgressMap.value - entry.id
           refreshEntriesDebounced()
         } else {
           refreshEntries()
@@ -1536,49 +1743,100 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     val result =
-        kotlinx.coroutines.withTimeoutOrNull(300_000L) {
-          suspendCancellableCoroutine<Boolean> { continuation ->
-            if (useConcurrent) {
-              llmManager.analyzeScreenshotConcurrent(
-                  bitmap = bitmap,
-                  detailLevel = _detailLevel.value,
-                  customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
-                  targetLanguage = targetLang,
-                  imageResolution = _imageResolution.value,
-                  onProgress = onProgress,
-                  onResult = { s, t, m ->
-                    onResult(s, t, m)
-                    if (continuation.isActive) continuation.resume(true)
-                  },
-                  onError = { e ->
-                    onError(e)
-                    if (continuation.isActive) continuation.resume(false)
-                  },
-              )
-            } else {
-              llmManager.analyzeScreenshot(
-                  bitmap = bitmap,
-                  detailLevel = _detailLevel.value,
-                  customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
-                  targetLanguage = targetLang,
-                  imageResolution = _imageResolution.value,
-                  onProgress = onProgress,
-                  onResult = { s, t, m ->
-                    onResult(s, t, m)
-                    if (continuation.isActive) continuation.resume(true)
-                  },
-                  onError = { e ->
-                    onError(e)
-                    if (continuation.isActive) continuation.resume(false)
-                  },
-              )
+        try {
+          kotlinx.coroutines.withTimeoutOrNull(300_000L) {
+            suspendCancellableCoroutine<Boolean> { continuation ->
+              val useGguf =
+                  _selectedModel.value == ModelType.GGUF &&
+                      ggufManager.uiState.value is GgufLlmManager.LlmState.Ready
+
+              if (useGguf) {
+                val detailLevelName =
+                    when (_detailLevel.value) {
+                      LlmManager.DetailLevel.BRIEF -> "brief"
+                      LlmManager.DetailLevel.DETAILED -> "detailed"
+                      LlmManager.DetailLevel.COMPREHENSIVE -> "comprehensive"
+                      LlmManager.DetailLevel.CUSTOM -> "custom"
+                    }
+                ggufManager.analyzeScreenshot(
+                    bitmap = bitmap,
+                    detailLevel = detailLevelName,
+                    customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
+                    targetLanguage = targetLang,
+                    imageResolution = _imageResolution.value,
+                    onProgress = onProgress,
+                    onResult = { s, t, m ->
+                      viewModelScope.launch(Dispatchers.IO) {
+                        db.updateAnalysis(entry.id, s, t, m)
+
+                        // Delay clearing UI state slightly so 100% bar is visible
+                        kotlinx.coroutines.delay(600L)
+
+                        _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
+                        _entryProgressMap.value = _entryProgressMap.value - entry.id
+                        refreshEntries()
+                        Log.d(TAG, "Analysis complete: id=${entry.id}")
+
+                        if (continuation.isActive) continuation.resume(true)
+                      }
+                    },
+                    onError = { e ->
+                      onError(e)
+                      if (continuation.isActive) continuation.resume(false)
+                    },
+                )
+              } else if (useConcurrent) {
+                llmManager.analyzeScreenshotConcurrent(
+                    bitmap = bitmap,
+                    detailLevel = _detailLevel.value,
+                    customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
+                    targetLanguage = targetLang,
+                    imageResolution = _imageResolution.value,
+                    onProgress = onProgress,
+                    onResult = { s, t, m ->
+                      onResult(s, t, m)
+                      viewModelScope.launch(Dispatchers.IO) {
+                        kotlinx.coroutines.delay(600L)
+                        if (continuation.isActive) continuation.resume(true)
+                      }
+                    },
+                    onError = { e ->
+                      onError(e)
+                      if (continuation.isActive) continuation.resume(false)
+                    },
+                )
+              } else {
+                llmManager.analyzeScreenshot(
+                    bitmap = bitmap,
+                    detailLevel = _detailLevel.value,
+                    customPrompt = _customPrompt.value.takeIf { it.isNotBlank() },
+                    targetLanguage = targetLang,
+                    imageResolution = _imageResolution.value,
+                    onProgress = onProgress,
+                    onResult = { s, t, m ->
+                      onResult(s, t, m)
+                      viewModelScope.launch(Dispatchers.IO) {
+                        kotlinx.coroutines.delay(600L)
+                        if (continuation.isActive) continuation.resume(true)
+                      }
+                    },
+                    onError = { e ->
+                      onError(e)
+                      if (continuation.isActive) continuation.resume(false)
+                    },
+                )
+              }
             }
           }
+        } finally {
+          bitmap.recycle()
         }
 
     if (result == null) {
       // Un-hang the database if timeout occurred
       db.setAnalyzing(entry.id, false)
+      _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
+      _entryProgressMap.value = _entryProgressMap.value - entry.id
       refreshEntries()
       Log.e(TAG, "Analysis timed out after 300s for id=${entry.id}")
       return false
@@ -1591,9 +1849,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   fun analyzeEntry(entry: ScreenshotEntry) {
     if (!_isModelReady.value) return
     viewModelScope.launch(Dispatchers.IO) {
+      val wasQueueRunning = isAnalyzing.get()
+      if (wasQueueRunning) {
+        // Pause the background queue to prioritize this specific image
+        isAnalyzing.set(false)
+      }
+
       _analysisProgress.value = 1 to 1
       analyzeEntrySuspend(entry)
       _analysisProgress.value = null
+
+      if (wasQueueRunning) {
+        // Resume the background queue now that the priority image is done
+        launchAnalysisQueue()
+      }
     }
   }
 
@@ -1707,5 +1976,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   override fun onCleared() {
     super.onCleared()
     llmManager.close()
+    ggufManager.close()
   }
 }

@@ -2,6 +2,7 @@ package com.deryk.skarmetoo
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -57,6 +59,16 @@ fun SettingsScreen(
   val selectedModel by viewModel.selectedModel.collectAsState()
   val isGemma3nDownloaded by viewModel.isGemma3nDownloaded.collectAsState()
   val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
+
+  val ggufManager = remember { GgufLlmManager.getInstance(context) }
+  val isGgufDownloading by ggufManager.isDownloading.collectAsState()
+  val ggufDownloadProgress by ggufManager.downloadProgress.collectAsState()
+  val ggufDownloadingModelName by ggufManager.downloadingModelName.collectAsState()
+
+  val isLfmDownloaded by
+      produceState(initialValue = ggufManager.isModelDownloaded(LFM2_5_MODEL), isGgufDownloading) {
+        value = ggufManager.isModelDownloaded(LFM2_5_MODEL)
+      }
   val downloadingModelType by viewModel.downloadingModelType.collectAsState()
 
   val modelPath = context.filesDir.absolutePath + "/" + selectedModel.fileName
@@ -68,6 +80,7 @@ fun SettingsScreen(
 
   var showHfLogin by remember { mutableStateOf(false) }
   var hfLoginModelType by remember { mutableStateOf(ModelType.GEMMA_3N) }
+  var showMoreModels by remember { mutableStateOf(false) }
   var showMediaFolderDialog by remember { mutableStateOf(false) }
   var isHfLoggedIn by remember { mutableStateOf(false) }
 
@@ -87,10 +100,43 @@ fun SettingsScreen(
         }
       }
 
+  val savedResolution by viewModel.imageResolution.collectAsState()
+  val savedInstanceCount by viewModel.analysisInstanceCount.collectAsState()
+  val savedShowPlayPause by viewModel.showPlayPauseToggle.collectAsState()
+  val savedMaxTokens by viewModel.maxTokens.collectAsState()
+  val savedBackgroundProcess by viewModel.backgroundProcessEnabled.collectAsState()
+
+  var localResolution by remember(savedResolution) { mutableIntStateOf(savedResolution) }
+  var localInstanceCount by remember(savedInstanceCount) { mutableIntStateOf(savedInstanceCount) }
+  var localShowPlayPause by remember(savedShowPlayPause) { mutableStateOf(savedShowPlayPause) }
+  var localMaxTokens by remember(savedMaxTokens) { mutableIntStateOf(savedMaxTokens) }
+  var localBackgroundProcess by
+      remember(savedBackgroundProcess) { mutableStateOf(savedBackgroundProcess) }
+
+  // Notification permission launcher
+  val notificationPermissionLauncher =
+      rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (!isGranted) {
+          localBackgroundProcess = false
+        }
+      }
+
+  var showMoreLanguages by remember { mutableStateOf(false) }
+
   LaunchedEffect(Unit) {
     viewModel.checkModelExists()
     val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
     isHfLoggedIn = !cookies.isNullOrEmpty()
+  }
+
+  LaunchedEffect(selectedModel) {
+    if (selectedModel == ModelType.GGUF) {
+      viewModel.setAnalysisLanguage("en")
+      showMoreLanguages = false
+      if (currentDetailLevel == LlmManager.DetailLevel.COMPREHENSIVE) {
+        viewModel.setDetailLevel(LlmManager.DetailLevel.DETAILED)
+      }
+    }
   }
 
   val totalImages = entries.size
@@ -495,85 +541,6 @@ fun SettingsScreen(
           )
           Spacer(modifier = Modifier.height(6.dp))
 
-          val isGemma3nSelected = selectedModel == ModelType.GEMMA_3N
-          val isDownloadingGemma3n =
-              isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
-          OutlinedCard(
-              onClick = {
-                viewModel.setSelectedModel(ModelType.GEMMA_3N)
-                if (isGemma3nDownloaded) {
-                  val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
-                  viewModel.initializeModel(path, isGemma4 = false)
-                } else if (!isDownloadingModel) {
-                  hfLoginModelType = ModelType.GEMMA_3N
-                  showHfLogin = true
-                }
-              },
-              modifier = Modifier.fillMaxWidth(),
-              shape = RoundedCornerShape(14.dp),
-              colors =
-                  CardDefaults.outlinedCardColors(
-                      containerColor =
-                          if (isGemma3nSelected) MaterialTheme.colorScheme.secondaryContainer
-                          else Color.Transparent,
-                  ),
-              border =
-                  if (isGemma3nSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                  else CardDefaults.outlinedCardBorder(),
-          ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.model_gemma3n),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = if (isGemma3nSelected) FontWeight.Bold else FontWeight.Medium,
-                )
-                Text(
-                    stringResource(R.string.model_gemma3n_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-              }
-              Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color =
-                      if (isDownloadingGemma3n)
-                          (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
-                      else if (isGemma3nDownloaded)
-                          (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
-                      else MaterialTheme.colorScheme.surfaceContainerHighest,
-                  modifier = Modifier.size(32.dp)) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                      if (isDownloadingGemma3n) {
-                        Text(
-                            text = "${(downloadProgress * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            fontWeight = FontWeight.Bold,
-                            color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
-                        )
-                      } else if (isGemma3nDownloaded) {
-                        Icon(
-                            imageVector = Icons.Rounded.Check,
-                            contentDescription = "Downloaded",
-                            tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
-                            modifier = Modifier.size(20.dp))
-                      } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Download,
-                            contentDescription = "Download Model",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp))
-                      }
-                    }
-                  }
-            }
-          }
-
-          Spacer(modifier = Modifier.height(8.dp))
-
           val isGemma4Selected = selectedModel == ModelType.GEMMA_4
           val isDownloadingGemma4 = isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
           OutlinedCard(
@@ -604,17 +571,44 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
               Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.model_gemma4),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = if (isGemma4Selected) FontWeight.Bold else FontWeight.Medium,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Text(
+                      stringResource(R.string.model_gemma4),
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight = if (isGemma4Selected) FontWeight.Bold else FontWeight.Medium,
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Surface(
+                      color = (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)),
+                      shape = RoundedCornerShape(4.dp)) {
+                        Text(
+                            text = stringResource(R.string.recommended_tag),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = (if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)),
+                        )
+                      }
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Surface(
+                      color = MaterialTheme.colorScheme.surfaceVariant,
+                      shape = RoundedCornerShape(4.dp)) {
+                        Text(
+                            text = stringResource(R.string.tags_tag),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                      }
+                }
                 Text(
                     stringResource(R.string.model_gemma4_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
               }
+              Spacer(modifier = Modifier.width(12.dp))
               Surface(
                   shape = RoundedCornerShape(8.dp),
                   color =
@@ -650,7 +644,245 @@ fun SettingsScreen(
             }
           }
 
-          Spacer(modifier = Modifier.height(24.dp))
+          Spacer(modifier = Modifier.height(8.dp))
+
+          val isGemma3nSelected = selectedModel == ModelType.GEMMA_3N
+          val isDownloadingGemma3n =
+              isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
+          OutlinedCard(
+              onClick = {
+                viewModel.setSelectedModel(ModelType.GEMMA_3N)
+                if (isGemma3nDownloaded) {
+                  val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
+                  viewModel.initializeModel(path, isGemma4 = false)
+                } else if (!isDownloadingModel) {
+                  hfLoginModelType = ModelType.GEMMA_3N
+                  showHfLogin = true
+                }
+              },
+              modifier = Modifier.fillMaxWidth(),
+              shape = RoundedCornerShape(14.dp),
+              colors =
+                  CardDefaults.outlinedCardColors(
+                      containerColor =
+                          if (isGemma3nSelected) MaterialTheme.colorScheme.secondaryContainer
+                          else Color.Transparent,
+                  ),
+              border =
+                  if (isGemma3nSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                  else CardDefaults.outlinedCardBorder(),
+          ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Text(
+                      stringResource(R.string.model_gemma3n),
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight = if (isGemma3nSelected) FontWeight.Bold else FontWeight.Medium,
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Surface(
+                      color = MaterialTheme.colorScheme.surfaceVariant,
+                      shape = RoundedCornerShape(4.dp)) {
+                        Text(
+                            text = stringResource(R.string.tags_tag),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                      }
+                }
+                Text(
+                    stringResource(R.string.model_gemma3n_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+              Spacer(modifier = Modifier.width(12.dp))
+              Surface(
+                  shape = RoundedCornerShape(8.dp),
+                  color =
+                      if (isDownloadingGemma3n)
+                          (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                      else if (isGemma3nDownloaded)
+                          (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                      else MaterialTheme.colorScheme.surfaceContainerHighest,
+                  modifier = Modifier.size(32.dp)) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                      if (isDownloadingGemma3n) {
+                        Text(
+                            text = "${(downloadProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                        )
+                      } else if (isGemma3nDownloaded) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = "Downloaded",
+                            tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                            modifier = Modifier.size(20.dp))
+                      } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Download,
+                            contentDescription = "Download Model",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp))
+                      }
+                    }
+                  }
+            }
+          }
+
+          Spacer(modifier = Modifier.height(4.dp))
+
+          Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Row(
+                modifier =
+                    Modifier.clip(CircleShape)
+                        .clickable { showMoreModels = !showMoreModels }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically) {
+                  Text(
+                      stringResource(R.string.more_models),
+                      style = MaterialTheme.typography.labelMedium,
+                      color = MaterialTheme.colorScheme.primary,
+                      fontWeight = FontWeight.SemiBold)
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Icon(
+                      imageVector =
+                          if (showMoreModels) Icons.Rounded.KeyboardArrowUp
+                          else Icons.Rounded.KeyboardArrowDown,
+                      contentDescription = "Expand models",
+                      tint = MaterialTheme.colorScheme.primary,
+                      modifier = Modifier.size(16.dp))
+                }
+          }
+
+          androidx.compose.animation.AnimatedVisibility(
+              visible = showMoreModels,
+              enter =
+                  androidx.compose.animation.expandVertically() +
+                      androidx.compose.animation.fadeIn(),
+              exit =
+                  androidx.compose.animation.shrinkVertically() +
+                      androidx.compose.animation.fadeOut()) {
+                Column {
+                  Spacer(modifier = Modifier.height(6.dp))
+                  val isLfmSelected = selectedModel == ModelType.GGUF
+                  val isDownloadingLfm =
+                      isGgufDownloading && ggufDownloadingModelName == LFM2_5_MODEL.displayName
+
+                  OutlinedCard(
+                      onClick = {
+                        if (isLfmDownloaded) {
+                          viewModel.setGgufModelAsActive(LFM2_5_MODEL)
+                        } else if (!isGgufDownloading) {
+                          ggufManager.downloadModel(LFM2_5_MODEL)
+                        }
+                      },
+                      modifier = Modifier.fillMaxWidth(),
+                      shape = RoundedCornerShape(14.dp),
+                      colors =
+                          CardDefaults.outlinedCardColors(
+                              containerColor =
+                                  if (isLfmSelected) MaterialTheme.colorScheme.secondaryContainer
+                                  else Color.Transparent,
+                          ),
+                      border =
+                          if (isLfmSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                          else CardDefaults.outlinedCardBorder(),
+                  ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                      Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(
+                              LFM2_5_MODEL.displayName,
+                              style = MaterialTheme.typography.titleSmall,
+                              fontWeight =
+                                  if (isLfmSelected) FontWeight.Bold else FontWeight.Medium,
+                          )
+                          Spacer(modifier = Modifier.width(6.dp))
+                          Surface(
+                              color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                              shape = RoundedCornerShape(4.dp)) {
+                                Text(
+                                    text = stringResource(R.string.beta),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold)
+                              }
+                          Spacer(modifier = Modifier.width(4.dp))
+                          Surface(
+                              color = Color(0xFFD32F2F).copy(alpha = 0.15f),
+                              shape = RoundedCornerShape(4.dp)) {
+                                Text(
+                                    text = stringResource(R.string.no_tags),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFD32F2F),
+                                    fontWeight = FontWeight.Bold)
+                              }
+                        }
+                        Text(
+                            stringResource(R.string.model_lfm_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                      }
+                      Spacer(modifier = Modifier.width(12.dp))
+                      Surface(
+                          shape = RoundedCornerShape(8.dp),
+                          color =
+                              if (isDownloadingLfm)
+                                  (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                              else if (isLfmDownloaded)
+                                  (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                              else MaterialTheme.colorScheme.surfaceContainerHighest,
+                          modifier = Modifier.size(32.dp)) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.fillMaxSize()) {
+                                  if (isDownloadingLfm) {
+                                    Text(
+                                        text = "${(ggufDownloadProgress * 100).toInt()}%",
+                                        style =
+                                            MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 11.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color =
+                                            if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                                    )
+                                  } else if (isLfmDownloaded) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Downloaded",
+                                        tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                        modifier = Modifier.size(20.dp))
+                                  } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = "Download Model",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp))
+                                  }
+                                }
+                          }
+                    }
+                  }
+                }
+              }
+
+          Spacer(modifier = Modifier.height(8.dp))
 
           // Analysis Language Row
           Text(
@@ -660,7 +892,6 @@ fun SettingsScreen(
           )
           Spacer(modifier = Modifier.height(6.dp))
           val analysisLang by viewModel.analysisLanguage.collectAsState()
-          var showMoreLanguages by remember { mutableStateOf(false) }
 
           Row(
               modifier = Modifier.fillMaxWidth(),
@@ -692,6 +923,7 @@ fun SettingsScreen(
                       stringResource(R.string.language_more)
                     },
                 selected = analysisLang != "en",
+                enabled = selectedModel != ModelType.GGUF,
                 onClick = { showMoreLanguages = !showMoreLanguages },
             )
           }
@@ -794,6 +1026,9 @@ fun SettingsScreen(
                           else -> level.label
                         },
                     selected = currentDetailLevel == level,
+                    enabled =
+                        !(level == LlmManager.DetailLevel.COMPREHENSIVE &&
+                            selectedModel == ModelType.GGUF),
                     onClick = { viewModel.setDetailLevel(level) },
                 )
               }
@@ -814,6 +1049,9 @@ fun SettingsScreen(
                           else -> level.label
                         },
                     selected = currentDetailLevel == level,
+                    enabled =
+                        !(level == LlmManager.DetailLevel.COMPREHENSIVE &&
+                            selectedModel == ModelType.GGUF),
                     onClick = { viewModel.setDetailLevel(level) },
                 )
               }
@@ -846,7 +1084,7 @@ fun SettingsScreen(
               Spacer(modifier = Modifier.height(12.dp))
               OutlinedTextField(
                   value = customPrompt,
-                  onValueChange = { viewModel.setCustomPrompt(it) },
+                  onValueChange = { if (it.length <= 500) viewModel.setCustomPrompt(it) },
                   modifier = Modifier.fillMaxWidth(),
                   label = { Text(stringResource(R.string.custom_prompt_inst)) },
                   placeholder = { Text(stringResource(R.string.search_hint)) },
@@ -857,7 +1095,19 @@ fun SettingsScreen(
                           focusedBorderColor = MaterialTheme.colorScheme.primary,
                           unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
                       ),
-              )
+                  supportingText = {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.CenterEnd) {
+                          Text(
+                              text = "${customPrompt.length}/500",
+                              style = MaterialTheme.typography.labelSmall,
+                              color =
+                                  if (customPrompt.length >= 500) MaterialTheme.colorScheme.error
+                                  else MaterialTheme.colorScheme.onSurfaceVariant,
+                          )
+                        }
+                  })
             }
           }
         }
@@ -869,6 +1119,7 @@ fun SettingsScreen(
               ModelType.GEMMA_3N -> "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm"
               ModelType.GEMMA_4 ->
                   "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
+              ModelType.GGUF -> ""
             }
         androidx.compose.ui.window.Dialog(
             onDismissRequest = {
@@ -946,17 +1197,6 @@ fun SettingsScreen(
 
       // ===== Advanced Settings Card =====
       var isAdvancedExpanded by remember { mutableStateOf(false) }
-      val savedResolution by viewModel.imageResolution.collectAsState()
-      val savedInstanceCount by viewModel.analysisInstanceCount.collectAsState()
-      val savedShowPlayPause by viewModel.showPlayPauseToggle.collectAsState()
-      val savedMaxTokens by viewModel.maxTokens.collectAsState()
-
-      var localResolution by remember(savedResolution) { mutableIntStateOf(savedResolution) }
-      var localInstanceCount by
-          remember(savedInstanceCount) { mutableIntStateOf(savedInstanceCount) }
-      var localShowPlayPause by remember(savedShowPlayPause) { mutableStateOf(savedShowPlayPause) }
-      var localMaxTokens by remember(savedMaxTokens) { mutableIntStateOf(savedMaxTokens) }
-
       var showAdvancedConfirmDialog by remember { mutableStateOf(false) }
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1089,10 +1329,13 @@ fun SettingsScreen(
               Spacer(modifier = Modifier.height(12.dp))
 
               // Instance Count Setting Block
+              val isGgufSelected = selectedModel == ModelType.GGUF
               Surface(
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
-                  modifier = Modifier.fillMaxWidth()) {
+                  modifier =
+                      Modifier.fillMaxWidth()
+                          .then(if (isGgufSelected) Modifier.alpha(0.5f) else Modifier)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                       Row(
                           modifier = Modifier.fillMaxWidth(),
@@ -1118,7 +1361,7 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer) {
                                   Text(
-                                      "${localInstanceCount}x",
+                                      if (isGgufSelected) "1x" else "${localInstanceCount}x",
                                       style = MaterialTheme.typography.labelMedium,
                                       fontWeight = FontWeight.Bold,
                                       color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1135,7 +1378,7 @@ fun SettingsScreen(
                           valueRange = 1f..5f,
                           steps = 3,
                           modifier = Modifier.fillMaxWidth(),
-                      )
+                          enabled = !isGgufSelected)
                     }
                   }
 
@@ -1145,7 +1388,9 @@ fun SettingsScreen(
               Surface(
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
-                  modifier = Modifier.fillMaxWidth()) {
+                  modifier =
+                      Modifier.fillMaxWidth()
+                          .then(if (isGgufSelected) Modifier.alpha(0.5f) else Modifier)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                       Row(
                           modifier = Modifier.fillMaxWidth(),
@@ -1169,12 +1414,12 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.tertiaryContainer) {
+                                color = MaterialTheme.colorScheme.primaryContainer) {
                                   Text(
-                                      "$localMaxTokens",
+                                      if (isGgufSelected) "Auto" else "$localMaxTokens",
                                       style = MaterialTheme.typography.labelMedium,
                                       fontWeight = FontWeight.Bold,
-                                      color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                      color = MaterialTheme.colorScheme.onPrimaryContainer,
                                       modifier =
                                           Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
                                 }
@@ -1189,7 +1434,7 @@ fun SettingsScreen(
                           valueRange = 0f..2f,
                           steps = 1,
                           modifier = Modifier.fillMaxWidth(),
-                      )
+                          enabled = !isGgufSelected)
                       Row(
                           modifier = Modifier.fillMaxWidth(),
                           horizontalArrangement = Arrangement.SpaceBetween,
@@ -1208,12 +1453,10 @@ fun SettingsScreen(
 
               // Play/Pause button toggle
               Surface(
+                  onClick = { localShowPlayPause = !localShowPlayPause },
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
-                  modifier =
-                      Modifier.fillMaxWidth().clickable {
-                        localShowPlayPause = !localShowPlayPause
-                      }) {
+                  modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1238,6 +1481,77 @@ fun SettingsScreen(
                       Switch(
                           checked = localShowPlayPause,
                           onCheckedChange = { localShowPlayPause = it })
+                    }
+                  }
+
+              Spacer(modifier = Modifier.height(16.dp))
+
+              // Background process toggle
+              Surface(
+                  onClick = {
+                    if (!localBackgroundProcess) {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        if (ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.POST_NOTIFICATIONS) !=
+                            PackageManager.PERMISSION_GRANTED) {
+                          notificationPermissionLauncher.launch(
+                              Manifest.permission.POST_NOTIFICATIONS)
+                          localBackgroundProcess = true
+                        } else {
+                          localBackgroundProcess = true
+                        }
+                      } else {
+                        localBackgroundProcess = true
+                      }
+                    } else {
+                      localBackgroundProcess = false
+                    }
+                  },
+                  shape = RoundedCornerShape(16.dp),
+                  color = MaterialTheme.colorScheme.surfaceContainerLow,
+                  modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                      Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.background_process_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            stringResource(R.string.background_process_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 16.sp,
+                        )
+                      }
+                      Spacer(modifier = Modifier.width(12.dp))
+                      Switch(
+                          checked = localBackgroundProcess,
+                          onCheckedChange = { checked ->
+                            if (checked) {
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                if (ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.POST_NOTIFICATIONS) !=
+                                    PackageManager.PERMISSION_GRANTED) {
+                                  notificationPermissionLauncher.launch(
+                                      Manifest.permission.POST_NOTIFICATIONS)
+                                  localBackgroundProcess = true
+                                } else {
+                                  localBackgroundProcess = true
+                                }
+                              } else {
+                                localBackgroundProcess = true
+                              }
+                            } else {
+                              localBackgroundProcess = false
+                            }
+                          })
                     }
                   }
 
@@ -1281,6 +1595,7 @@ fun SettingsScreen(
                     viewModel.setImageResolution(localResolution)
                     viewModel.setAnalysisInstanceCount(localInstanceCount)
                     viewModel.setShowPlayPauseToggle(localShowPlayPause)
+                    viewModel.setBackgroundProcessEnabled(localBackgroundProcess)
                     viewModel.setMaxTokens(localMaxTokens)
                     viewModel.applyAdvancedSettings()
                     showAdvancedConfirmDialog = false
@@ -1295,6 +1610,7 @@ fun SettingsScreen(
                     localResolution = savedResolution
                     localInstanceCount = savedInstanceCount
                     localShowPlayPause = savedShowPlayPause
+                    localBackgroundProcess = savedBackgroundProcess
                     localMaxTokens = savedMaxTokens
                     showAdvancedConfirmDialog = false
                   }) {
@@ -1436,7 +1752,7 @@ fun SettingsScreen(
         }
       }
 
-      Spacer(modifier = Modifier.height(24.dp))
+      Spacer(modifier = Modifier.height(16.dp))
 
       // Buy Me a Coffee
       Surface(
@@ -1659,10 +1975,11 @@ private fun DetailLevelCard(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
   OutlinedCard(
-      onClick = onClick,
-      modifier = modifier.height(52.dp),
+      onClick = { if (enabled) onClick() },
+      modifier = modifier.height(52.dp).then(if (!enabled) Modifier.alpha(0.5f) else Modifier),
       shape = RoundedCornerShape(12.dp),
       colors =
           CardDefaults.outlinedCardColors(
