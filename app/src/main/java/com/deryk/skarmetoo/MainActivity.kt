@@ -1,5 +1,6 @@
 package com.deryk.skarmetoo
 
+import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -8,8 +9,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -18,12 +17,9 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -35,6 +31,16 @@ import com.deryk.skarmetoo.ui.theme.SkarmetooTheme
 
 class MainActivity : ComponentActivity() {
   private val viewModel: ScreenshotViewModel by viewModels()
+
+  private val _newIntentFlow =
+      kotlinx.coroutines.flow.MutableSharedFlow<Intent>(extraBufferCapacity = 1)
+  val newIntentFlow = _newIntentFlow
+
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    _newIntentFlow.tryEmit(intent)
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -107,6 +113,15 @@ object Routes {
   fun detail(id: Long) = "detail/$id"
 }
 
+fun android.content.Context.findComponentActivity(): ComponentActivity? {
+  var context = this
+  while (context is android.content.ContextWrapper) {
+    if (context is ComponentActivity) return context
+    context = context.baseContext
+  }
+  return null
+}
+
 // --- Main App ---
 @Composable
 fun MainApp(viewModel: ScreenshotViewModel) {
@@ -130,6 +145,37 @@ fun MainApp(viewModel: ScreenshotViewModel) {
 
   val startDestination = remember {
     if (viewModel.hasSeenOnboarding.value) Routes.GALLERY else Routes.ONBOARDING
+  }
+
+  val activity = context.findComponentActivity() as? MainActivity
+
+  LaunchedEffect(activity) {
+    activity?.newIntentFlow?.collect { newIntent ->
+      if (newIntent.action == "SHOW_GALLERY") {
+        newIntent.setAction(null) // Clear action so we don't repeatedly navigate on recomposition
+        if (currentRoute != Routes.GALLERY) {
+          navController.navigate(Routes.GALLERY) {
+            popUpTo(navController.graph.startDestinationId) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+          }
+        }
+      }
+    }
+  }
+
+  // Refresh entries and resume analysis when app returns to foreground
+  val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner) {
+    val observer =
+        androidx.lifecycle.LifecycleEventObserver { _, event ->
+          if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+            viewModel.refreshEntries()
+            viewModel.resumeAnalysisIfNeeded()
+          }
+        }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
   Scaffold(
@@ -315,7 +361,8 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             viewModel = viewModel,
             onStartScreenSaver = { isScreenSaverActive = true },
             logoRes = logoRes,
-            onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) })
+            onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
+        )
       }
       composable(Routes.EXPERIMENTAL) {
         ExperimentalScreen(
@@ -324,6 +371,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             logoRes = logoRes,
         )
       }
+
       composable(
           Routes.DETAIL,
           arguments = listOf(navArgument("id") { type = NavType.LongType }),
@@ -345,96 +393,4 @@ fun MainApp(viewModel: ScreenshotViewModel) {
   if (isScreenSaverActive) {
     ScreenSaver(viewModel = viewModel, onClose = { isScreenSaverActive = false })
   }
-}
-
-@Composable
-fun ScreenSaver(
-    viewModel: ScreenshotViewModel,
-    onClose: () -> Unit,
-) {
-  var offsetX by remember { mutableStateOf(0f) }
-  var offsetY by remember { mutableStateOf(0f) }
-  var currentTime by remember { mutableStateOf("") }
-  val analysisProgress by viewModel.analysisProgress.collectAsState()
-  val context = LocalContext.current
-  val activity = context.findActivity()
-
-  DisposableEffect(Unit) {
-    activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-    onDispose {
-      activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-    }
-  }
-
-  LaunchedEffect(Unit) {
-    val locale = java.util.Locale.getDefault()
-    val pattern = if (locale.language == "zh") "HH:mm\nM月d日, yyyy" else "HH:mm\nMMM dd, yyyy"
-    val format = java.text.SimpleDateFormat(pattern, locale)
-    while (true) {
-      currentTime = format.format(java.util.Date())
-      kotlinx.coroutines.delay(1000)
-    }
-  }
-
-  LaunchedEffect(Unit) {
-    while (true) {
-      offsetX = kotlin.random.Random.nextInt(-50, 50).toFloat()
-      offsetY = kotlin.random.Random.nextInt(-100, 100).toFloat()
-      kotlinx.coroutines.delay(60000)
-    }
-  }
-
-  Box(
-      modifier = Modifier.fillMaxSize().background(Color.Black).clickable { onClose() },
-      contentAlignment = Alignment.Center,
-  ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.offset(x = offsetX.dp, y = offsetY.dp),
-    ) {
-      Text(
-          text = currentTime,
-          color = Color.White.copy(alpha = 0.8f),
-          style = MaterialTheme.typography.displayMedium,
-          textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-          fontWeight = FontWeight.Bold,
-      )
-      Spacer(modifier = Modifier.height(32.dp))
-      analysisProgress?.let { (remaining, _) ->
-        Text(
-            text = stringResource(R.string.analyzing_in_background),
-            color = Color.White.copy(alpha = 0.6f),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = stringResource(R.string.items_left, remaining),
-            color = Color.White.copy(alpha = 0.5f),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-      }
-          ?: run {
-            Text(
-                text = stringResource(R.string.all_images_analyzed),
-                color = Color.White.copy(alpha = 0.5f),
-                style = MaterialTheme.typography.titleMedium,
-            )
-          }
-    }
-    Text(
-        text = stringResource(R.string.tap_to_exit),
-        color = Color.White.copy(alpha = 0.3f),
-        modifier = Modifier.align(Alignment.BottomCenter).padding(32.dp),
-        style = MaterialTheme.typography.labelLarge,
-    )
-  }
-}
-
-fun android.content.Context.findActivity(): android.app.Activity? {
-  var context = this
-  while (context is android.content.ContextWrapper) {
-    if (context is android.app.Activity) return context
-    context = context.baseContext
-  }
-  return null
 }

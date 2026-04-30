@@ -15,6 +15,7 @@ navigation = "2.8.9"
 materialIconExtended = "1.7.8"
 palette = "1.0.0"
 spotless = "6.25.0"
+llamatik = "1.1.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -38,6 +39,7 @@ tflite-support = { group = "com.google.android.gms", name = "play-services-tflit
 androidx-compose-navigation = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation" }
 material-icon-extended = { group = "androidx.compose.material", name = "material-icons-extended", version.ref = "materialIconExtended" }
 androidx-palette = { group = "androidx.palette", name = "palette", version.ref = "palette" }
+llamatik-library = { group = "com.llamatik", name = "library", version.ref = "llamatik" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

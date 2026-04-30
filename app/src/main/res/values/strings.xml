@@ -60,7 +60,9 @@
     <string name="model_gemma3n">Gemma 3n</string>
     <string name="model_gemma4">Gemma 4</string>
     <string name="model_gemma3n_desc">Previous generation model. Authorization &amp; Login required.</string>
-    <string name="model_gemma4_desc">Faster, more detailed, smaller file size. Recommended.</string>
+    <string name="model_gemma4_desc">Faster, more detailed, smaller file size.</string>
+    <string name="recommended_tag">Recommended</string>
+    <string name="tags_tag">TAGS</string>
     <string name="download_gemma3n">Download Gemma 3n</string>
     <string name="download_gemma4">Download Gemma 4</string>
     <string name="model_downloaded">Downloaded</string>
@@ -143,10 +145,18 @@
     <string name="apply">Apply</string>
     <string name="play_pause_toggle_title">Play/Pause toggle</string>
     <string name="play_pause_toggle_desc">Show a button to pause analysis on the settings page</string>
+    <string name="background_process_title">Background processing</string>
+    <string name="background_process_desc">Keep analysis running when app is in background. Shows a notification with remaining count.</string>
+    <string name="notification_title">Analyzing Images</string>
+    <string name="notification_remaining">%d images remaining</string>
     <string name="confirm_changes">Confirm Changes</string>
-    <string name="advanced_settings_warning">Modifying the image resolution or the number of concurrent analysis instances may lead to application instability if your device hardware is not sufficiently capable.\n\nPlease proceed at your own risk and make incremental adjustments to determine the optimal configuration for your device.</string>
+    <string name="advanced_settings_warning">Please proceed at your own risk. Modifying these settings may lead to application instability if your device hardware is not sufficiently capable.</string>
     <string name="confirm_btn">Confirm</string>
     <string name="cancel_btn">Cancel</string>
     <string name="onboarding_page10_title">Advanced Settings</string>
     <string name="onboarding_page10_desc">Fine-tune image resolution, concurrent analysis instances, and enable a Play/Pause toggle. These options are experimental, use at your own risk, as they may cause instability on less capable hardware.</string>
+    <string name="more_models">More models</string>
+    <string name="model_lfm_desc">Ultra-efficient vision model optimized for speed and low thermal impact</string>
+    <string name="beta">BETA</string>
+    <string name="no_tags">NO TAGS</string>
 </resources>
