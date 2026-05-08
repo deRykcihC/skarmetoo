@@ -152,6 +152,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private var analysisJob: kotlinx.coroutines.Job? = null
 
   private fun launchAnalysisQueue() {
+    if (_selectedModel.value == ModelType.GGUF && ggufManager.isInferenceRunning.value) {
+      Log.w(TAG, "Skipped queue launch: GGUF instance is already running")
+      return
+    }
     if (isAnalyzing.get() || _isAnalysisPaused.value) return
     analysisJob = viewModelScope.launch(Dispatchers.IO) { startAnalysisQueue() }
   }
@@ -466,9 +470,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   fun setSelectedModel(model: ModelType) {
     _selectedModel.value = model
     prefs.edit().putString("selected_model", model.name).apply()
-    if (model != ModelType.GGUF) {
-      checkModelExists()
-    }
+    checkModelExists()
   }
 
   fun setGgufModelAsActive(modelInfo: GgufModelInfo) {
@@ -499,8 +501,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     viewModelScope.launch(Dispatchers.IO) {
       val context = getApplication<Application>()
       refreshModelDownloadStatus()
-      val selectedFile = java.io.File(context.filesDir, _selectedModel.value.fileName)
-      val exists = selectedFile.exists()
+      val exists =
+          if (_selectedModel.value == ModelType.GGUF) {
+            ggufManager.getDownloadedModels().isNotEmpty()
+          } else {
+            val selectedFile = java.io.File(context.filesDir, _selectedModel.value.fileName)
+            selectedFile.exists()
+          }
       _isModelFound.value = exists
       if (!exists) {
         _modelStatus.value = "Model not found"
@@ -1746,9 +1753,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         try {
           kotlinx.coroutines.withTimeoutOrNull(300_000L) {
             suspendCancellableCoroutine<Boolean> { continuation ->
+              val ggufState = ggufManager.uiState.value
               val useGguf =
                   _selectedModel.value == ModelType.GGUF &&
-                      ggufManager.uiState.value is GgufLlmManager.LlmState.Ready
+                      (ggufState is GgufLlmManager.LlmState.Ready ||
+                          ggufState is GgufLlmManager.LlmState.Generating)
 
               if (useGguf) {
                 val detailLevelName =
@@ -1851,9 +1860,22 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     viewModelScope.launch(Dispatchers.IO) {
       val wasQueueRunning = isAnalyzing.get()
       if (wasQueueRunning) {
-        // Pause the background queue to prioritize this specific image
+        // Stop the background queue and wait for it to fully drain so the GGUF
+        // inferMutex is released before we attempt the priority analysis.
         isAnalyzing.set(false)
+        _activeAnalysisIds.value = emptySet()
+        _entryProgressMap.value = emptyMap()
+        analysisJob?.join()
       }
+
+      // Reset any stuck isAnalyzing flags from the interrupted queue
+      val all = db.getAllEntries()
+      for (e in all) {
+        if (e.isAnalyzing) {
+          db.setAnalyzing(e.id, false)
+        }
+      }
+      refreshEntries()
 
       _analysisProgress.value = 1 to 1
       analyzeEntrySuspend(entry)

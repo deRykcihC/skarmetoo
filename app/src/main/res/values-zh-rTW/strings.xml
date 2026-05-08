@@ -45,6 +45,8 @@
     <string name="pending">等待中</string>
     <string name="items_left">剩餘 %1$s 個</string>
     <string name="folders_selected">已選取 %1$s 個資料夾</string>
+    <string name="show_more">展開更多</string>
+    <string name="show_less">收起</string>
     <string name="brief">簡短</string>
     <string name="detailed">詳細</string>
     <string name="full">完整</string>
@@ -156,7 +158,9 @@
     <string name="onboarding_page10_title">進階設定</string>
     <string name="onboarding_page10_desc">微調圖像解析度、並行分析數量，並啟用播放/暫停開關。這些選項屬於實驗性功能，請自行承擔風險，因為它們可能在效能較弱的硬體上造成不穩定。</string>
     <string name="more_models">更多模型</string>
-    <string name="model_lfm_desc">專為速度與低發熱優化的超高效視覺模型</string>
+    <string name="model_lfm_desc">專為速度與低發熱優化的超高效視覺模型。</string>
     <string name="beta">測試版</string>
     <string name="no_tags">不支援標籤</string>
+    <string name="no_results_found">未找到圖片</string>
+    <string name="no_results_desc">嘗試調整您的搜尋或篩選條件</string>
 </resources>
