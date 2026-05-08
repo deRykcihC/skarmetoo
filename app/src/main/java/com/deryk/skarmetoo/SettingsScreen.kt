@@ -32,11 +32,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import kotlin.math.roundToInt
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -447,53 +449,86 @@ fun SettingsScreen(
               if (selectedAlbums.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column {
                   val totalInMap = albumCounts.sumOf { it.count }.coerceAtLeast(1)
-                  val visibleAlbums = if (showMoreFolders) albumCounts else albumCounts.take(3)
-                  visibleAlbums.forEachIndexed { index, album ->
-                    val percentage = (album.count.toFloat() / totalInMap * 100).toInt()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                      Box(
-                          modifier =
-                              Modifier.size(10.dp)
-                                  .clip(CircleShape)
-                                  .background(chartColors[index % chartColors.size]),
-                      )
-                      Spacer(modifier = Modifier.width(8.dp))
-                      Text(
-                          text = "${album.name} ($percentage%)",
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          maxLines = 1,
-                          overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                      )
+                  
+                  // Show all albums with slide down animation
+                  androidx.compose.animation.AnimatedVisibility(
+                      visible = showMoreFolders,
+                      enter =
+                          androidx.compose.animation.expandVertically() +
+                              androidx.compose.animation.fadeIn(),
+                      exit =
+                          androidx.compose.animation.shrinkVertically() +
+                              androidx.compose.animation.fadeOut()) {
+                    Column {
+                      albumCounts.forEachIndexed { index, album ->
+                        if (index > 0) Spacer(modifier = Modifier.height(6.dp))
+                        val rawPercentage = (album.count.toFloat() / totalInMap * 100)
+                        val percentageText = if (rawPercentage < 1f && album.count > 0) "<1" else rawPercentage.roundToInt().toString()
+                        val folderColor = chartColors[index % chartColors.size]
+
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                          Surface(
+                              shape = RoundedCornerShape(6.dp),
+                              color = folderColor,
+                              modifier = Modifier.width(42.dp)
+                          ) {
+                            Text(
+                                text = "$percentageText%",
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                fontWeight = FontWeight.Black,
+                                color = Color.White,
+                                textAlign = TextAlign.Center
+                            )
+                          }
+                          Spacer(modifier = Modifier.width(12.dp))
+                          Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = album.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = { album.count.toFloat() / totalInMap },
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                                color = folderColor,
+                                trackColor = folderColor.copy(alpha = 0.1f),
+                            )
+                          }
+                        }
+                      }
                     }
                   }
-                  if (albumCounts.size > 3) {
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                      Row(
-                          modifier =
-                              Modifier.clip(CircleShape)
-                                  .clickable { showMoreFolders = !showMoreFolders }
-                                  .padding(horizontal = 16.dp, vertical = 8.dp),
-                          horizontalArrangement = Arrangement.Center,
-                          verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                if (showMoreFolders) stringResource(R.string.show_less)
-                                else stringResource(R.string.show_more),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector =
-                                    if (showMoreFolders) Icons.Rounded.KeyboardArrowUp
-                                    else Icons.Rounded.KeyboardArrowDown,
-                                contentDescription = "Expand folders",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp))
-                          }
-                    }
+                  Spacer(modifier = Modifier.height(6.dp))
+                  Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Row(
+                        modifier =
+                            Modifier.clip(CircleShape)
+                                .clickable { showMoreFolders = !showMoreFolders }
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically) {
+                          Text(
+                              if (showMoreFolders) stringResource(R.string.hide_all)
+                              else stringResource(R.string.show_all),
+                              style = MaterialTheme.typography.labelMedium,
+                              color = MaterialTheme.colorScheme.primary,
+                              fontWeight = FontWeight.SemiBold)
+                          Spacer(modifier = Modifier.width(4.dp))
+                          Icon(
+                              imageVector =
+                                  if (showMoreFolders) Icons.Rounded.KeyboardArrowUp
+                                  else Icons.Rounded.KeyboardArrowDown,
+                              contentDescription = "Expand folders",
+                              tint = MaterialTheme.colorScheme.primary,
+                              modifier = Modifier.size(16.dp))
+                        }
                   }
                 }
               }
@@ -1939,12 +1974,13 @@ fun SettingsScreen(
     val dlgDeselectAll = stringResource(R.string.deselect_all)
     val dlgDone = stringResource(R.string.done)
 
-    // Temporary selection state - only applies when Done is clicked
     var tempSelectedAlbums by
         remember(availableAlbums) { mutableStateOf(selectedAlbums.toMutableSet()) }
 
     AlertDialog(
         onDismissRequest = { showMediaFolderDialog = false },
+        shape = RoundedCornerShape(20.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
         title = {
           Text(
               text = dlgTitle,
@@ -1968,11 +2004,11 @@ fun SettingsScreen(
                   availableAlbums.forEach { album ->
                     val isSelected = album.bucketId in tempSelectedAlbums
                     Surface(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         shape = RoundedCornerShape(12.dp),
                         color =
-                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            else Color.Transparent,
                         onClick = {
                           tempSelectedAlbums =
                               tempSelectedAlbums.toMutableSet().apply {
@@ -1982,7 +2018,7 @@ fun SettingsScreen(
                         },
                     ) {
                       Row(
-                          modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                          modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                           verticalAlignment = Alignment.CenterVertically,
                       ) {
                         Checkbox(
@@ -2021,14 +2057,7 @@ fun SettingsScreen(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            FilledTonalButton(
-                onClick = { tempSelectedAlbums = mutableSetOf<String>() },
-                colors =
-                    ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    ),
-            ) {
+            TextButton(onClick = { tempSelectedAlbums = mutableSetOf<String>() }) {
               Text(dlgDeselectAll)
             }
             Button(

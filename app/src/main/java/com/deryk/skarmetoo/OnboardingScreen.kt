@@ -757,93 +757,102 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                 }
               },
 
-          // ── Page 7: Search Images ──
+          // ── Page 7: Search & Filter ──
           OnboardingPage(
               title = stringResource(R.string.onboarding_page7_title),
               description = stringResource(R.string.onboarding_page7_desc)) {
-                // Exact search bar from GalleryScreen
-                OutlinedTextField(
-                    value = "",
-                    onValueChange = {},
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(28.dp),
-                    readOnly = true,
-                    leadingIcon = {
-                      Icon(Icons.Rounded.Search, null, tint = MaterialTheme.colorScheme.outline)
-                    },
-                    colors =
-                        OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.outline,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                            focusedContainerColor =
-                                MaterialTheme.colorScheme.surfaceContainerLowest,
-                            unfocusedContainerColor =
-                                MaterialTheme.colorScheme.surfaceContainerLowest,
-                        ),
-                )
-              },
-
-          // ── Page 8: Filter Pills ──
-          OnboardingPage(
-              title = stringResource(R.string.onboarding_page8_title),
-              description = stringResource(R.string.onboarding_page8_desc)) {
-                // Exact filter chips from GalleryScreen — sort chip cycles automatically
-                var isSortDescending by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) {
-                  while (true) {
-                    delay(800L)
-                    isSortDescending = !isSortDescending
+                Column(modifier = Modifier.fillMaxWidth()) {
+                  // Search pill + sort/filter tags — matching the GalleryScreen layout
+                  var isSortDescending by remember { mutableStateOf(true) }
+                  LaunchedEffect(Unit) {
+                    while (true) {
+                      delay(800L)
+                      isSortDescending = !isSortDescending
+                    }
                   }
-                }
-                LazyRow(
-                    modifier = Modifier.padding(vertical = 12.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                  item {
-                    FilterChip(
-                        selected = true,
-                        onClick = {},
-                        label = {
-                          Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                if (isSortDescending) Icons.Rounded.South else Icons.Rounded.North,
-                                null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                if (isSortDescending) stringResource(R.string.newest_first)
-                                else stringResource(R.string.oldest_first),
-                                fontWeight = FontWeight.Bold,
-                            )
-                          }
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                        colors =
-                            FilterChipDefaults.filterChipColors(
-                                selectedContainerColor =
-                                    MaterialTheme.colorScheme.secondaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                selectedLeadingIconColor =
-                                    MaterialTheme.colorScheme.onSecondaryContainer,
-                            ),
-                    )
-                  }
-                  items(listOf("cat", "indoor", "selfie", "food")) { tag ->
-                    FilterChip(
-                        selected = tag == "cat",
-                        onClick = {},
-                        label = {
-                          Text(
-                              tag,
-                              fontWeight = FontWeight.SemiBold,
+                  LazyRow(
+                      modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                      contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                      horizontalArrangement =
+                          Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    item {
+                      Surface(
+                          shape = RoundedCornerShape(20.dp),
+                          color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                      ) {
+                        Row(
+                            modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                          Icon(
+                              Icons.Rounded.Search,
+                              null,
+                              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                              modifier = Modifier.size(20.dp),
                           )
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                    )
+                          Spacer(modifier = Modifier.width(6.dp))
+                          Text(
+                              stringResource(R.string.search_placeholder),
+                              style =
+                                  MaterialTheme.typography.labelLarge.copy(
+                                      fontWeight = FontWeight.SemiBold,
+                                      color =
+                                          MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                              alpha = 0.6f),
+                                  ),
+                              softWrap = false,
+                              maxLines = 1,
+                          )
+                        }
+                      }
+                    }
+                    item {
+                      FilterChip(
+                          selected = true,
+                          onClick = {},
+                          label = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                              Icon(
+                                  if (isSortDescending) Icons.Rounded.South
+                                  else Icons.Rounded.North,
+                                  null,
+                                  modifier = Modifier.size(16.dp),
+                              )
+                              Spacer(modifier = Modifier.width(4.dp))
+                              Text(
+                                  if (isSortDescending) stringResource(R.string.newest_first)
+                                  else stringResource(R.string.oldest_first),
+                                  fontWeight = FontWeight.Bold,
+                              )
+                            }
+                          },
+                          shape = RoundedCornerShape(20.dp),
+                          colors =
+                              FilterChipDefaults.filterChipColors(
+                                  selectedContainerColor =
+                                      MaterialTheme.colorScheme.secondaryContainer,
+                                  selectedLabelColor =
+                                      MaterialTheme.colorScheme.onSecondaryContainer,
+                                  selectedLeadingIconColor =
+                                      MaterialTheme.colorScheme.onSecondaryContainer,
+                              ),
+                      )
+                    }
+                    items(listOf("cat", "indoor", "selfie", "food")) { tag ->
+                      FilterChip(
+                          selected = tag == "cat",
+                          onClick = {},
+                          label = {
+                            Text(
+                                tag,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                          },
+                          shape = RoundedCornerShape(20.dp),
+                      )
+                    }
                   }
                 }
               },

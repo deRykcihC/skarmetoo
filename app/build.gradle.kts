@@ -15,7 +15,7 @@ android {
     applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 14
+    versionCode = 15
     versionName = "1.06"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

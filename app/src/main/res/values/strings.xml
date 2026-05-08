@@ -45,8 +45,8 @@
     <string name="pending">Pending</string>
     <string name="items_left">%1$s left</string>
     <string name="folders_selected">%1$s folder(s) selected</string>
-    <string name="show_more">Show more</string>
-    <string name="show_less">Show less</string>
+    <string name="show_all">Show all</string>
+    <string name="hide_all">Hide all</string>
     <string name="brief">Brief</string>
     <string name="detailed">Detailed</string>
     <string name="full">Full</string>
@@ -125,10 +125,8 @@
     <string name="onboarding_page5_desc">Activate the screen saver to keep your phone awake while the AI analyzes your images in the background.</string>
     <string name="onboarding_page6_title">Share Output</string>
     <string name="onboarding_page6_desc">You can share the AI-generated text and the image directly from the detail screen using the share button.</string>
-    <string name="onboarding_page7_title">Search Images</string>
-    <string name="onboarding_page7_desc">Looking for something specific? Use the search bar to find images based on what the AI discovered in them.</string>
-    <string name="onboarding_page8_title">Filter Pills</string>
-    <string name="onboarding_page8_desc">Quickly view images containing specific subjects like people, pets, or food by tapping the suggested filter pills.</string>
+    <string name="onboarding_page7_title">Search &amp; Filter</string>
+    <string name="onboarding_page7_desc">Use the search pill to find images by keyword, or tap the filter tags to quickly browse by subject like pets, food, or selfies.</string>
     <string name="onboarding_page9_title">Reanalyze</string>
     <string name="onboarding_page9_desc">If you want the AI to analyze an image again, simply double-click its status button in the gallery or the detail screen.</string>
     <string name="feedback">Feedback</string>
