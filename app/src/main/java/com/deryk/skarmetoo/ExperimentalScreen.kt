@@ -100,10 +100,11 @@ fun ExperimentalScreen(
   var displayAlbums by remember { mutableStateOf(sortedAlbums) }
 
   val isModelReady by viewModel.isModelReady.collectAsState()
+  val isAnalysisRunning by viewModel.isAnalysisRunning.collectAsState()
   val currentImageProgress by viewModel.currentImageProgress.collectAsState()
 
-  val pendingCount = remember(entries) { entries.count { it.summary.isBlank() && !it.isAnalyzing } }
-  val analyzingCount = remember(entries) { entries.count { it.isAnalyzing } }
+  val pendingCount by viewModel.pendingImageCount.collectAsState()
+  val analyzingCount by viewModel.analyzingImageCount.collectAsState()
 
   // Compute "All" count as the sum of all individual album counts — always accurate
   val allImageCount = remember(albumThumbnails) { albumThumbnails.sumOf { it.album.count } }
@@ -141,7 +142,8 @@ fun ExperimentalScreen(
   ) {
     // Header
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier =
+            Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
       Image(
@@ -157,7 +159,7 @@ fun ExperimentalScreen(
       )
       Spacer(modifier = Modifier.weight(1f))
 
-      if (pendingCount > 0 || analyzingCount > 0) {
+      if (isAnalysisRunning || pendingCount > 0 || analyzingCount > 0) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.errorContainer,
@@ -170,7 +172,15 @@ fun ExperimentalScreen(
               modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
               verticalAlignment = Alignment.CenterVertically,
           ) {
-            if (analyzingCount > 1) {
+            if (analyzingCount == 1 || isAnalysisRunning) {
+              CircularProgressIndicator(
+                  progress = { currentImageProgress },
+                  modifier = Modifier.size(14.dp),
+                  strokeWidth = 2.dp,
+                  color = MaterialTheme.colorScheme.error,
+                  trackColor = MaterialTheme.colorScheme.errorContainer,
+              )
+            } else if (analyzingCount > 1) {
               Box(
                   modifier =
                       Modifier.size(16.dp)
@@ -185,14 +195,6 @@ fun ExperimentalScreen(
                         fontWeight = FontWeight.Bold,
                     )
                   }
-            } else if (analyzingCount == 1) {
-              CircularProgressIndicator(
-                  progress = { currentImageProgress },
-                  modifier = Modifier.size(14.dp),
-                  strokeWidth = 2.dp,
-                  color = MaterialTheme.colorScheme.error,
-                  trackColor = MaterialTheme.colorScheme.errorContainer,
-              )
             } else {
               Icon(
                   Icons.Rounded.Schedule,
@@ -218,9 +220,7 @@ fun ExperimentalScreen(
                 Modifier.clip(RoundedCornerShape(16.dp))
                     .combinedClickable(
                         onDoubleClick = { if (isModelReady) viewModel.forceAnalyzeUnprocessed() },
-                        onClick = {
-                          // Single tap does nothing or maybe toast
-                        },
+                        onClick = {},
                     ),
         ) {
           Row(

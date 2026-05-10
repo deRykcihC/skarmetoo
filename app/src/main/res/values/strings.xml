@@ -142,6 +142,8 @@
     <string name="analysis_instance_count_desc">Number of images to analyze at once</string>
     <string name="token_length">Token Length</string>
     <string name="token_length_desc">Maximum number of tokens for LLM output</string>
+    <string name="gallery_page_size">Gallery Page Size</string>
+    <string name="gallery_page_size_desc">Number of images to load per scroll batch in gallery view</string>
     <string name="apply">Apply</string>
     <string name="play_pause_toggle_title">Play/Pause toggle</string>
     <string name="play_pause_toggle_desc">Show a button to pause analysis on the settings page</string>
@@ -161,4 +163,5 @@
     <string name="no_tags">NO TAGS</string>
     <string name="no_results_found">No images found</string>
     <string name="no_results_desc">Try adjusting your search or filters</string>
+    <string name="results_count">%d results</string>
 </resources>

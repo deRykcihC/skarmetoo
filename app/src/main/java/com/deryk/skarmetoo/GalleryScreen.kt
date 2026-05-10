@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.imageLoader
 import com.deryk.skarmetoo.data.ScreenshotEntry
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -88,6 +90,12 @@ fun GalleryScreen(
             .take(20)
       }
 
+  LaunchedEffect(allTags.toSet()) {
+    if (selectedTag != null && allTags.none { it.equals(selectedTag, ignoreCase = true) }) {
+      selectedTag = null
+    }
+  }
+
   val filteredEntries =
       remember(entries, selectedTag, isSortDescending) {
         val filtered =
@@ -106,17 +114,42 @@ fun GalleryScreen(
         }
       }
 
-  val pendingCount = remember(entries) { entries.count { it.summary.isBlank() && !it.isAnalyzing } }
-  val analyzingCount = remember(entries) { entries.count { it.isAnalyzing } }
+  val pendingCount by viewModel.pendingImageCount.collectAsState()
+  val analyzingCount by viewModel.analyzingImageCount.collectAsState()
 
+  val pageSize by viewModel.galleryPageSize.collectAsState()
   var visibleItemCount by
-      rememberSaveable(selectedTag, isSortDescending, searchQuery) { mutableIntStateOf(5) }
+      rememberSaveable(selectedTag, isSortDescending, searchQuery) { mutableIntStateOf(pageSize) }
+
+  LaunchedEffect(pageSize) {
+    if (visibleItemCount < pageSize) {
+      visibleItemCount = pageSize
+    }
+  }
 
   LaunchedEffect(scrollState.value, scrollState.maxValue, filteredEntries.size, visibleItemCount) {
-    if (visibleItemCount < filteredEntries.size) {
-      if (scrollState.maxValue <= 0 || scrollState.value >= scrollState.maxValue - 800) {
+    if (visibleItemCount < filteredEntries.size && scrollState.maxValue > 0) {
+      val progress = scrollState.value.toFloat() / scrollState.maxValue.toFloat()
+      val estimatedTopItem = (progress * visibleItemCount).toInt()
+      if (estimatedTopItem >= visibleItemCount - pageSize / 2) {
         kotlinx.coroutines.delay(50)
-        visibleItemCount += 5
+        visibleItemCount = (visibleItemCount + pageSize).coerceAtMost(filteredEntries.size)
+      }
+    }
+  }
+
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val imageLoader = context.imageLoader
+  LaunchedEffect(visibleItemCount, filteredEntries) {
+    val preloadEnd = (visibleItemCount + pageSize).coerceAtMost(filteredEntries.size)
+    val preloadStart = visibleItemCount
+    if (preloadStart < preloadEnd) {
+      val requestFactory = { coil.request.ImageRequest.Builder(context).size(512).crossfade(true) }
+      for (i in preloadStart until preloadEnd) {
+        val entry = filteredEntries[i]
+        if (entry.imageUri.isNotBlank()) {
+          imageLoader.enqueue(requestFactory().data(entry.imageUri).build())
+        }
       }
     }
   }
@@ -155,89 +188,114 @@ fun GalleryScreen(
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.width(12.dp))
 
-        if (isAnalysisRunning || pendingCount > 0 || analyzingCount > 0) {
-          Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = MaterialTheme.colorScheme.errorContainer,
-              modifier =
-                  Modifier.clip(RoundedCornerShape(16.dp)).clickable {
-                    if (isModelReady) viewModel.analyzeUnprocessed()
-                  },
-          ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        Row(
+            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Spacer(modifier = Modifier.weight(1f))
+
+          if (entries.isNotEmpty() && (!searchQuery.isBlank() || selectedTag != null)) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
             ) {
-              if (analyzingCount == 1 || isAnalysisRunning) {
-                CircularProgressIndicator(
-                    progress = { currentImageProgress },
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.error,
-                    trackColor = MaterialTheme.colorScheme.errorContainer,
-                )
-              } else if (analyzingCount > 1) {
-                Box(
-                    modifier =
-                        Modifier.size(16.dp)
-                            .background(
-                                MaterialTheme.colorScheme.error,
-                                androidx.compose.foundation.shape.CircleShape),
-                    contentAlignment = Alignment.Center) {
-                      Text(
-                          text = analyzingCount.toString(),
-                          color = MaterialTheme.colorScheme.errorContainer,
-                          style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                          fontWeight = FontWeight.Bold,
-                      )
-                    }
-              } else {
-                Icon(
-                    Icons.Rounded.Schedule,
-                    null,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.error,
-                )
-              }
-              Spacer(modifier = Modifier.width(4.dp))
               Text(
-                  stringResource(R.string.items_left, (pendingCount + analyzingCount).toString()),
+                  filteredEntries.size.toString(),
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                   style = MaterialTheme.typography.labelMedium,
                   fontWeight = FontWeight.Bold,
-                  color = MaterialTheme.colorScheme.error,
+                  color = MaterialTheme.colorScheme.onPrimaryContainer,
               )
             }
+            Spacer(modifier = Modifier.width(8.dp))
           }
-        } else {
-          Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = MaterialTheme.colorScheme.secondaryContainer,
-              modifier =
-                  Modifier.clip(RoundedCornerShape(16.dp))
-                      .combinedClickable(
-                          onDoubleClick = { if (isModelReady) viewModel.forceAnalyzeUnprocessed() },
-                          onClick = {},
-                      ),
-          ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+
+          if (isAnalysisRunning || pendingCount > 0 || analyzingCount > 0) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier =
+                    Modifier.clip(RoundedCornerShape(16.dp)).clickable {
+                      if (isModelReady) viewModel.analyzeUnprocessed()
+                    },
             ) {
-              Icon(
-                  Icons.Rounded.CheckCircle,
-                  null,
-                  modifier = Modifier.size(14.dp),
-                  tint = MaterialTheme.colorScheme.onSecondaryContainer,
-              )
-              Spacer(modifier = Modifier.width(4.dp))
-              Text(
-                  stringResource(R.string.done),
-                  style = MaterialTheme.typography.labelMedium,
-                  fontWeight = FontWeight.Bold,
-                  color = MaterialTheme.colorScheme.onSecondaryContainer,
-              )
+              Row(
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                if (analyzingCount == 1 || isAnalysisRunning) {
+                  CircularProgressIndicator(
+                      progress = { currentImageProgress },
+                      modifier = Modifier.size(14.dp),
+                      strokeWidth = 2.dp,
+                      color = MaterialTheme.colorScheme.error,
+                      trackColor = MaterialTheme.colorScheme.errorContainer,
+                  )
+                } else if (analyzingCount > 1) {
+                  Box(
+                      modifier =
+                          Modifier.size(16.dp)
+                              .background(
+                                  MaterialTheme.colorScheme.error,
+                                  androidx.compose.foundation.shape.CircleShape),
+                      contentAlignment = Alignment.Center) {
+                        Text(
+                            text = analyzingCount.toString(),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            fontWeight = FontWeight.Bold,
+                        )
+                      }
+                } else {
+                  Icon(
+                      Icons.Rounded.Schedule,
+                      null,
+                      modifier = Modifier.size(14.dp),
+                      tint = MaterialTheme.colorScheme.error,
+                  )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    stringResource(R.string.items_left, (pendingCount + analyzingCount).toString()),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error,
+                )
+              }
+            }
+          } else {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier =
+                    Modifier.clip(RoundedCornerShape(16.dp))
+                        .combinedClickable(
+                            onDoubleClick = {
+                              if (isModelReady) viewModel.forceAnalyzeUnprocessed()
+                            },
+                            onClick = {},
+                        ),
+            ) {
+              Row(
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Icon(
+                    Icons.Rounded.CheckCircle,
+                    null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    stringResource(R.string.done),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+              }
             }
           }
         }

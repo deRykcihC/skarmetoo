@@ -142,6 +142,8 @@
     <string name="analysis_instance_count_desc">同時分析的圖片數量</string>
     <string name="token_length">Token 長度</string>
     <string name="token_length_desc">LLM 輸出的最大 Token 數量</string>
+    <string name="gallery_page_size">圖庫頁面載入量</string>
+    <string name="gallery_page_size_desc">圖庫檢視中每次滾動載入的圖片數量</string>
     <string name="apply">套用</string>
     <string name="play_pause_toggle_title">播放/暫停開關</string>
     <string name="play_pause_toggle_desc">在設定頁面上顯示暫停分析的按鈕</string>
@@ -161,4 +163,5 @@
     <string name="no_tags">不支援標籤</string>
     <string name="no_results_found">未找到圖片</string>
     <string name="no_results_desc">嘗試調整您的搜尋或篩選條件</string>
+    <string name="results_count">%d 個結果</string>
 </resources>
