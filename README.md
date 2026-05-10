@@ -60,6 +60,7 @@ Yes. Your screenshots remain in your storage, and the analysis database is store
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+<a href="https://play.google.com/store/apps/details?id=com.deryk.skarmetoo" target="_blank"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" style="height: 60px !important;"></a>
 <a href="https://buymeacoffee.com/derykcihc" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 If you appreciate the project and want to help keep the app evolving, you can donate via Buy Me a Coffee. Otherwise, it is always free on GitHub!
