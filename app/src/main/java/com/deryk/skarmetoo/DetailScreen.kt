@@ -206,7 +206,7 @@ fun DetailScreen(
                               androidx.compose.foundation.shape.CircleShape),
                   contentAlignment = Alignment.Center) {
                     Text(
-                        text = analyzingCount.toString(),
+                        text = if (analyzingCount > 5) "5+" else analyzingCount.toString(),
                         color = MaterialTheme.colorScheme.errorContainer,
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                         fontWeight = FontWeight.Bold,
