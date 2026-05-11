@@ -69,8 +69,7 @@ fun DetailScreen(
   val isActivelyAnalyzing = entry.isAnalyzing || entryProgressMap.containsKey(entry.id)
   val isAnalyzed = entry.summary.isNotBlank() && !isActivelyAnalyzing
   val isPending = entry.summary.isBlank() && !isActivelyAnalyzing
-  val analyzingCount =
-      remember(entries) { entries.count { it.isAnalyzing || entryProgressMap.containsKey(it.id) } }
+  val analyzingCount by viewModel.analyzingImageCount.collectAsState()
 
   // Double-tap detection for status button
   var lastTapTime by remember { mutableStateOf(0L) }
@@ -207,7 +206,7 @@ fun DetailScreen(
                               androidx.compose.foundation.shape.CircleShape),
                   contentAlignment = Alignment.Center) {
                     Text(
-                        text = analyzingCount.toString(),
+                        text = if (analyzingCount > 5) "5+" else analyzingCount.toString(),
                         color = MaterialTheme.colorScheme.errorContainer,
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                         fontWeight = FontWeight.Bold,

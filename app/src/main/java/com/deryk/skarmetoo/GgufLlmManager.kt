@@ -39,6 +39,8 @@ class GgufLlmManager(private val context: Context) {
 
   private val _downloadingModelName = MutableStateFlow<String?>(null)
   val downloadingModelName: StateFlow<String?> = _downloadingModelName.asStateFlow()
+  private val _isInferenceRunning = MutableStateFlow(false)
+  val isInferenceRunning: StateFlow<Boolean> = _isInferenceRunning.asStateFlow()
 
   sealed class LlmState {
     data object Initial : LlmState()
@@ -172,8 +174,9 @@ class GgufLlmManager(private val context: Context) {
       onResult: (summary: String, tags: String, modelUsed: String) -> Unit,
       onError: (String) -> Unit,
   ) {
-    if (_uiState.value !is LlmState.Ready) {
-      onError("GGUF model not initialized")
+    val currentState = _uiState.value
+    if (currentState !is LlmState.Ready && currentState !is LlmState.Generating) {
+      onError("GGUF model not initialized (state: $currentState)")
       return
     }
 
@@ -193,6 +196,7 @@ class GgufLlmManager(private val context: Context) {
 
     scope.launch {
       inferMutex.withLock {
+        _isInferenceRunning.value = true
         try {
           _analysisProgress.value = 0f
           onProgress(0.1f)
@@ -219,6 +223,8 @@ class GgufLlmManager(private val context: Context) {
         } catch (e: Exception) {
           Log.e(TAG, "GGUF screenshot analysis failed", e)
           onError(e.message ?: "GGUF analysis failed")
+        } finally {
+          _isInferenceRunning.value = false
         }
       }
     }
@@ -236,6 +242,7 @@ class GgufLlmManager(private val context: Context) {
   ) {
     scope.launch {
       inferMutex.withLock {
+        _isInferenceRunning.value = true
         try {
           _analysisProgress.value = 0f
           onProgress(0.1f)
@@ -256,9 +263,10 @@ class GgufLlmManager(private val context: Context) {
                 else -> "Describe this screenshot in 2-3 sentences."
               }
           val prompt = "$levelPrompt\nRespond in $targetLanguage."
+          val wrappedPrompt = applyChatTemplate(loadedModel?.chatTemplate ?: "", prompt)
 
           val responseResult =
-              runVisionAnalysis(jpegBytes, prompt) { p -> onProgress(0.1f + p * 0.8f) }
+              runVisionAnalysis(jpegBytes, wrappedPrompt) { p -> onProgress(0.1f + p * 0.8f) }
           if (responseResult == null) {
             onError("VLM returned no output")
             return@withLock
@@ -277,6 +285,8 @@ class GgufLlmManager(private val context: Context) {
         } catch (e: Exception) {
           Log.e(TAG, "VLM screenshot analysis failed", e)
           onError(e.message ?: "VLM analysis failed")
+        } finally {
+          _isInferenceRunning.value = false
         }
       }
     }
@@ -403,7 +413,8 @@ class GgufLlmManager(private val context: Context) {
           "custom" -> customPrompt ?: "Summarize the following."
           else -> "Summarize the following in 2-3 sentences."
         }
-    return "$levelPrompt\nRespond in $targetLanguage."
+    val rawPrompt = "$levelPrompt\nRespond in $targetLanguage."
+    return applyChatTemplate(loadedModel?.chatTemplate ?: "", rawPrompt)
   }
 
   private fun parseAnalysisResult(result: String): Pair<String, String> {
@@ -428,15 +439,20 @@ class GgufLlmManager(private val context: Context) {
           val destFile = File(context.filesDir, modelInfo.fileName)
           val url = "https://huggingface.co/${modelInfo.hfRepo}/resolve/main/${modelInfo.hfFile}"
           Log.d(TAG, "Downloading GGUF model from: $url")
-          downloadFile(url, destFile, hfToken, 1f)
-          _downloadProgress.value = 0.5f
-
           if (modelInfo.isVision && modelInfo.mmprojFile.isNotBlank()) {
+            val totalSize = modelInfo.sizeMb.toFloat() + modelInfo.mmprojSizeMb.toFloat()
+            val modelWeight = modelInfo.sizeMb.toFloat() / totalSize
+
+            downloadFile(url, destFile, hfToken, modelWeight, 0f)
+
             val mmprojDest = File(context.filesDir, modelInfo.mmprojFile)
             val mmprojUrl =
                 "https://huggingface.co/${modelInfo.hfRepo}/resolve/main/${modelInfo.mmprojFile}"
             Log.d(TAG, "Downloading mmproj from: $mmprojUrl")
-            downloadFile(mmprojUrl, mmprojDest, hfToken, 0.5f)
+            val mmprojWeight = modelInfo.mmprojSizeMb.toFloat() / totalSize
+            downloadFile(mmprojUrl, mmprojDest, hfToken, mmprojWeight, modelWeight)
+          } else {
+            downloadFile(url, destFile, hfToken, 1f, 0f)
           }
 
           _downloadProgress.value = 1f
@@ -477,7 +493,13 @@ class GgufLlmManager(private val context: Context) {
     }
   }
 
-  private fun downloadFile(url: String, destFile: File, token: String, progressWeight: Float) {
+  private fun downloadFile(
+      url: String,
+      destFile: File,
+      token: String,
+      progressWeight: Float,
+      overallStart: Float
+  ) {
     val tmpFile = File(context.filesDir, "${destFile.name}.tmp")
     var currentUrl = url
     var connection: java.net.HttpURLConnection
@@ -529,9 +551,7 @@ class GgufLlmManager(private val context: Context) {
             val now = System.currentTimeMillis()
             if (now - lastUpdate > 100) {
               val modelProgress = (total.toDouble() / fileLength.toDouble()).toFloat()
-              val overallStart = if (progressWeight < 1f) 0f else 0f
-              val overallEnd = progressWeight
-              _downloadProgress.value = overallStart + modelProgress * overallEnd
+              _downloadProgress.value = overallStart + modelProgress * progressWeight
               lastUpdate = now
             }
           }
@@ -596,16 +616,22 @@ class GgufLlmManager(private val context: Context) {
 
   fun close() {
     scope.launch {
-      inferMutex.withLock {
-        try {
-          LlamaBridge.shutdown()
-        } catch (_: Exception) {}
-        try {
-          MultimodalBridge.release()
-        } catch (_: Exception) {}
-        loadedModel = null
-        _uiState.value = LlmState.Initial
-      }
+      closeAndWait()
+    }
+  }
+
+  suspend fun closeAndWait() {
+    inferMutex.withLock {
+      try {
+        LlamaBridge.shutdown()
+      } catch (_: Exception) {}
+      try {
+        MultimodalBridge.release()
+      } catch (_: Exception) {}
+      loadedModel = null
+      _isInferenceRunning.value = false
+      _analysisProgress.value = 0f
+      _uiState.value = LlmState.Initial
     }
   }
 

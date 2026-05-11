@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -56,7 +57,8 @@ data class OnboardingPage(
     val content: @Composable () -> Unit
 )
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@OptIn(
+    ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   val isDark = LocalIsDarkMode.current
@@ -68,6 +70,18 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   val downloadProgress by viewModel.downloadProgress.collectAsState()
   val isGemma3nDownloaded by viewModel.isGemma3nDownloaded.collectAsState()
   val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
+  val selectedAlbums by viewModel.selectedAlbums.collectAsState()
+  val availableAlbums by viewModel.availableAlbums.collectAsState()
+
+  var showMoreModels by remember { mutableStateOf(false) }
+  val ggufManager = remember { GgufLlmManager.getInstance(context) }
+  val isGgufDownloading by ggufManager.isDownloading.collectAsState()
+  val ggufDownloadProgress by ggufManager.downloadProgress.collectAsState()
+  val ggufDownloadingModelName by ggufManager.downloadingModelName.collectAsState()
+  val isLfmDownloaded by
+      produceState(initialValue = ggufManager.isModelDownloaded(LFM2_5_MODEL), isGgufDownloading) {
+        value = ggufManager.isModelDownloaded(LFM2_5_MODEL)
+      }
 
   var showHfLogin by remember { mutableStateOf(false) }
   var hfLoginModelType by remember { mutableStateOf(ModelType.GEMMA_3N) }
@@ -75,7 +89,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   val gemma3nUrl =
       "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm"
   val gemma4Url =
-      "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+      "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/7fa1d78473894f7e736a21d920c3aa80f950c0db/gemma-4-E2B-it.litertlm"
 
   val pages =
       listOf(
@@ -84,7 +98,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
               title = stringResource(R.string.select_model),
               description = stringResource(R.string.onboarding_page0_desc)) {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-                  val isGemma4Selected = selectedModel == ModelType.GEMMA_4
+                  val isGemma4Selected = selectedModel == ModelType.GEMMA_4 && isGemma4Downloaded
                   val isDownloadingGemma4 =
                       isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
                   OutlinedCard(
@@ -117,7 +131,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                       Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        FlowRow {
                           Text(
                               stringResource(R.string.model_gemma4),
                               style = MaterialTheme.typography.titleSmall,
@@ -149,6 +163,11 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                                 )
                               }
                         }
+                        Text(
+                            "litert-community/gemma-4-e2b-it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        )
                         Text(
                             stringResource(R.string.model_gemma4_desc),
                             style = MaterialTheme.typography.bodySmall,
@@ -198,19 +217,22 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
 
                   Spacer(modifier = Modifier.height(8.dp))
 
-                  val isGemma3nSelected = selectedModel == ModelType.GEMMA_3N
-                  val isDownloadingGemma3n =
-                      isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
+                  val isLfmSelected = selectedModel == ModelType.GGUF && isLfmDownloaded
+                  val isDownloadingLfm =
+                      isGgufDownloading && ggufDownloadingModelName == LFM2_5_MODEL.displayName
+
                   OutlinedCard(
                       onClick = {
-                        viewModel.setSelectedModel(ModelType.GEMMA_3N)
-                        if (isGemma3nDownloaded) {
-                          val path =
-                              context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
-                          viewModel.initializeModel(path, isGemma4 = false)
-                        } else if (!isDownloadingModel) {
-                          hfLoginModelType = ModelType.GEMMA_3N
-                          showHfLogin = true
+                        if (isLfmDownloaded) {
+                          viewModel.setGgufModelAsActive(LFM2_5_MODEL)
+                        } else if (!isGgufDownloading) {
+                          ggufManager.downloadModel(
+                              LFM2_5_MODEL,
+                              onComplete = { success ->
+                                if (success) {
+                                  viewModel.setGgufModelAsActive(LFM2_5_MODEL)
+                                }
+                              })
                         }
                       },
                       modifier = Modifier.fillMaxWidth(),
@@ -218,13 +240,11 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       colors =
                           CardDefaults.outlinedCardColors(
                               containerColor =
-                                  if (isGemma3nSelected)
-                                      MaterialTheme.colorScheme.secondaryContainer
+                                  if (isLfmSelected) MaterialTheme.colorScheme.secondaryContainer
                                   else Color.Transparent,
                           ),
                       border =
-                          if (isGemma3nSelected)
-                              BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                          if (isLfmSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
                           else CardDefaults.outlinedCardBorder(),
                   ) {
                     Row(
@@ -232,28 +252,43 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                       Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        FlowRow {
                           Text(
-                              stringResource(R.string.model_gemma3n),
+                              LFM2_5_MODEL.displayName,
                               style = MaterialTheme.typography.titleSmall,
                               fontWeight =
-                                  if (isGemma3nSelected) FontWeight.Bold else FontWeight.Medium,
+                                  if (isLfmSelected) FontWeight.Bold else FontWeight.Medium,
                           )
-                          Spacer(modifier = Modifier.width(8.dp))
+                          Spacer(modifier = Modifier.width(6.dp))
                           Surface(
-                              color = MaterialTheme.colorScheme.surfaceVariant,
+                              color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                               shape = RoundedCornerShape(4.dp)) {
                                 Text(
-                                    text = stringResource(R.string.tags_tag),
+                                    text = stringResource(R.string.beta),
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold)
+                              }
+                          Spacer(modifier = Modifier.width(4.dp))
+                          Surface(
+                              color = Color(0xFFD32F2F).copy(alpha = 0.15f),
+                              shape = RoundedCornerShape(4.dp)) {
+                                Text(
+                                    text = stringResource(R.string.no_tags),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFD32F2F),
+                                    fontWeight = FontWeight.Bold)
                               }
                         }
                         Text(
-                            stringResource(R.string.model_gemma3n_desc),
+                            "LiquidAI/LFM2.5-VL-450M",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        )
+                        Text(
+                            stringResource(R.string.model_lfm_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -262,18 +297,18 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       Surface(
                           shape = RoundedCornerShape(8.dp),
                           color =
-                              if (isDownloadingGemma3n)
+                              if (isDownloadingLfm)
                                   (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
-                              else if (isGemma3nDownloaded)
+                              else if (isLfmDownloaded)
                                   (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
                               else MaterialTheme.colorScheme.surfaceContainerHighest,
                           modifier = Modifier.size(32.dp)) {
                             Box(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier.fillMaxSize()) {
-                                  if (isDownloadingGemma3n) {
+                                  if (isDownloadingLfm) {
                                     Text(
-                                        text = "${(downloadProgress * 100).toInt()}%",
+                                        text = "${(ggufDownloadProgress * 100).toInt()}%",
                                         style =
                                             MaterialTheme.typography.labelSmall.copy(
                                                 fontSize = 11.sp),
@@ -281,7 +316,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                                         color =
                                             if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
                                     )
-                                  } else if (isGemma3nDownloaded) {
+                                  } else if (isLfmDownloaded) {
                                     Icon(
                                         imageVector = Icons.Rounded.Check,
                                         contentDescription = "Downloaded",
@@ -545,21 +580,133 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
           OnboardingPage(
               title = stringResource(R.string.add_folder),
               description = stringResource(R.string.onboarding_page4_desc)) {
-                FilledTonalButton(
-                    onClick = {},
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp),
-                    colors =
-                        ButtonDefaults.filledTonalButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        ),
-                ) {
-                  Icon(Icons.Rounded.CreateNewFolder, null, modifier = Modifier.size(18.dp))
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Text(stringResource(R.string.add_media_folder), fontWeight = FontWeight.Medium)
-                }
+                Column(
+                    modifier =
+                        Modifier.fillMaxWidth()
+                            .padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 12.dp)) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0),
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                          Box(
+                              contentAlignment = Alignment.Center,
+                              modifier = Modifier.fillMaxSize()) {
+                                Icon(
+                                    Icons.Rounded.FolderOpen,
+                                    null,
+                                    tint = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                                    modifier = Modifier.size(22.dp))
+                              }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                          Text(
+                              stringResource(R.string.source_folders),
+                              style = MaterialTheme.typography.titleMedium,
+                              fontWeight = FontWeight.Medium,
+                          )
+                          Text(
+                              stringResource(
+                                  R.string.folders_selected, selectedAlbums.size.toString()),
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          )
+                        }
+                      }
+
+                      Spacer(modifier = Modifier.height(14.dp))
+
+                      val albumCounts = availableAlbums.filter { it.bucketId in selectedAlbums }
+                      val primaryColor = MaterialTheme.colorScheme.primary
+                      val chartColors =
+                          remember(primaryColor) {
+                            val hsv = FloatArray(3)
+                            android.graphics.Color.RGBToHSV(
+                                (primaryColor.red * 255).toInt(),
+                                (primaryColor.green * 255).toInt(),
+                                (primaryColor.blue * 255).toInt(),
+                                hsv)
+                            List(12) { i ->
+                              val newHsv =
+                                  floatArrayOf(
+                                      (hsv[0] + i * 73f) % 360f,
+                                      (hsv[1] * 1.1f).coerceIn(0.5f, 0.9f),
+                                      (hsv[2] * 1.2f).coerceIn(0.7f, 1.0f))
+                              if (i % 2 != 0) {
+                                newHsv[1] *= 0.75f
+                                newHsv[2] *= 0.85f
+                              }
+                              Color(android.graphics.Color.HSVToColor(newHsv))
+                            }
+                          }
+
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selectedAlbums.isNotEmpty()) {
+                          val totalInMap = albumCounts.sumOf { it.count }.coerceAtLeast(1)
+                          Row(
+                              modifier =
+                                  Modifier.weight(1f).height(16.dp).clip(RoundedCornerShape(8.dp)),
+                          ) {
+                            albumCounts.forEachIndexed { index, album ->
+                              val weight = album.count.toFloat()
+                              if (weight > 0) {
+                                Box(
+                                    modifier =
+                                        Modifier.weight(weight)
+                                            .fillMaxHeight()
+                                            .background(chartColors[index % chartColors.size]),
+                                )
+                              }
+                            }
+                          }
+                        } else {
+                          // Mock bar
+                          Surface(
+                              modifier = Modifier.weight(1f).height(16.dp),
+                              shape = RoundedCornerShape(8.dp),
+                              color =
+                                  MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) {}
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        IconButton(
+                            onClick = {
+                              val permission =
+                                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    Manifest.permission.READ_MEDIA_IMAGES
+                                  } else {
+                                    @Suppress("DEPRECATION")
+                                    Manifest.permission.READ_EXTERNAL_STORAGE
+                                  }
+                              if (android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                                  ContextCompat.checkSelfPermission(context, permission)) {
+                                viewModel.loadAlbums()
+                                // Note: In onboarding we might need a dialog too if we want it
+                                // interactive
+                                // But for now we just mirror the UI.
+                              } else {
+                                // Request permission if needed
+                              }
+                            },
+                            modifier =
+                                Modifier.size(36.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.primaryContainer.copy(
+                                            alpha = 0.7f),
+                                        CircleShape)
+                                    .clip(CircleShape),
+                        ) {
+                          Icon(
+                              Icons.Rounded.CreateNewFolder,
+                              contentDescription = stringResource(R.string.add_media_folder),
+                              tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                              modifier = Modifier.size(20.dp))
+                        }
+                      }
+                    }
               },
 
           // ── Page 6: Share Output ──
@@ -610,93 +757,102 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                 }
               },
 
-          // ── Page 7: Search Images ──
+          // ── Page 7: Search & Filter ──
           OnboardingPage(
               title = stringResource(R.string.onboarding_page7_title),
               description = stringResource(R.string.onboarding_page7_desc)) {
-                // Exact search bar from GalleryScreen
-                OutlinedTextField(
-                    value = "",
-                    onValueChange = {},
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(28.dp),
-                    readOnly = true,
-                    leadingIcon = {
-                      Icon(Icons.Rounded.Search, null, tint = MaterialTheme.colorScheme.outline)
-                    },
-                    colors =
-                        OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.outline,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                            focusedContainerColor =
-                                MaterialTheme.colorScheme.surfaceContainerLowest,
-                            unfocusedContainerColor =
-                                MaterialTheme.colorScheme.surfaceContainerLowest,
-                        ),
-                )
-              },
-
-          // ── Page 8: Filter Pills ──
-          OnboardingPage(
-              title = stringResource(R.string.onboarding_page8_title),
-              description = stringResource(R.string.onboarding_page8_desc)) {
-                // Exact filter chips from GalleryScreen — sort chip cycles automatically
-                var isSortDescending by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) {
-                  while (true) {
-                    delay(800L)
-                    isSortDescending = !isSortDescending
+                Column(modifier = Modifier.fillMaxWidth()) {
+                  // Search pill + sort/filter tags — matching the GalleryScreen layout
+                  var isSortDescending by remember { mutableStateOf(true) }
+                  LaunchedEffect(Unit) {
+                    while (true) {
+                      delay(800L)
+                      isSortDescending = !isSortDescending
+                    }
                   }
-                }
-                LazyRow(
-                    modifier = Modifier.padding(vertical = 12.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                  item {
-                    FilterChip(
-                        selected = true,
-                        onClick = {},
-                        label = {
-                          Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                if (isSortDescending) Icons.Rounded.South else Icons.Rounded.North,
-                                null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                if (isSortDescending) stringResource(R.string.newest_first)
-                                else stringResource(R.string.oldest_first),
-                                fontWeight = FontWeight.Bold,
-                            )
-                          }
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                        colors =
-                            FilterChipDefaults.filterChipColors(
-                                selectedContainerColor =
-                                    MaterialTheme.colorScheme.secondaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                selectedLeadingIconColor =
-                                    MaterialTheme.colorScheme.onSecondaryContainer,
-                            ),
-                    )
-                  }
-                  items(listOf("cat", "indoor", "selfie", "food")) { tag ->
-                    FilterChip(
-                        selected = tag == "cat",
-                        onClick = {},
-                        label = {
-                          Text(
-                              tag,
-                              fontWeight = FontWeight.SemiBold,
+                  LazyRow(
+                      modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                      contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                      horizontalArrangement =
+                          Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    item {
+                      Surface(
+                          shape = RoundedCornerShape(20.dp),
+                          color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                      ) {
+                        Row(
+                            modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                          Icon(
+                              Icons.Rounded.Search,
+                              null,
+                              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                              modifier = Modifier.size(20.dp),
                           )
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                    )
+                          Spacer(modifier = Modifier.width(6.dp))
+                          Text(
+                              stringResource(R.string.search_placeholder),
+                              style =
+                                  MaterialTheme.typography.labelLarge.copy(
+                                      fontWeight = FontWeight.SemiBold,
+                                      color =
+                                          MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                              alpha = 0.6f),
+                                  ),
+                              softWrap = false,
+                              maxLines = 1,
+                          )
+                        }
+                      }
+                    }
+                    item {
+                      FilterChip(
+                          selected = true,
+                          onClick = {},
+                          label = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                              Icon(
+                                  if (isSortDescending) Icons.Rounded.South
+                                  else Icons.Rounded.North,
+                                  null,
+                                  modifier = Modifier.size(16.dp),
+                              )
+                              Spacer(modifier = Modifier.width(4.dp))
+                              Text(
+                                  if (isSortDescending) stringResource(R.string.newest_first)
+                                  else stringResource(R.string.oldest_first),
+                                  fontWeight = FontWeight.Bold,
+                              )
+                            }
+                          },
+                          shape = RoundedCornerShape(20.dp),
+                          colors =
+                              FilterChipDefaults.filterChipColors(
+                                  selectedContainerColor =
+                                      MaterialTheme.colorScheme.secondaryContainer,
+                                  selectedLabelColor =
+                                      MaterialTheme.colorScheme.onSecondaryContainer,
+                                  selectedLeadingIconColor =
+                                      MaterialTheme.colorScheme.onSecondaryContainer,
+                              ),
+                      )
+                    }
+                    items(listOf("cat", "indoor", "selfie", "food")) { tag ->
+                      FilterChip(
+                          selected = tag == "cat",
+                          onClick = {},
+                          label = {
+                            Text(
+                                tag,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                          },
+                          shape = RoundedCornerShape(20.dp),
+                      )
+                    }
                   }
                 }
               },

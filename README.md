@@ -1,6 +1,6 @@
 # Skarmetoo
 
-v1.04
+v1.07
 
 **Skarmetoo** is an intelligent mobile gallery assistant that automatically analyzes, tags, and adds context to your screenshots, making them instantly searchable.
 
@@ -50,7 +50,7 @@ Yes. Your screenshots remain in your storage, and the analysis database is store
 ## Guide
 1. Open the app and go to the **Settings** page.
 2. Select one of the available models (**Gemma 4 is highly recommended** for best performance and ease of use).
-3. **Download Process:** 
+3. **Download Process:**
    - For **Gemma 4**: Simply close the login window (tap the **X**) if it appears, and the download will start immediately.
    - For **Gemma 3n**: You must log in to your Hugging Face account and ensure you have authorized the model license to begin the download.
 4. Stay on the app while the download completes. Do **not** quit the app or lock your phone, as this will suspend the download. You can use the built-in **Screen Saver** feature to safely leave the phone running.
@@ -60,6 +60,14 @@ Yes. Your screenshots remain in your storage, and the analysis database is store
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-<a href="https://buymeacoffee.com/derykcihc" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+<p>
+<a href="https://buymeacoffee.com/derykcihc" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important; vertical-align: middle;" ></a>
+</p>
 
 If you appreciate the project and want to help keep the app evolving, you can donate via Buy Me a Coffee. Otherwise, it is always free on GitHub!
+
+## Download
+
+Skarmetoo is available for download on the Google Play Store:
+
+<a href="https://play.google.com/store/apps/details?id=com.deryk.skarmetoo" target="_blank"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" style="height: 80px !important;"></a>

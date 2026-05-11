@@ -45,6 +45,8 @@
     <string name="pending">等待中</string>
     <string name="items_left">剩餘 %1$s 個</string>
     <string name="folders_selected">已選取 %1$s 個資料夾</string>
+    <string name="show_all">顯示全部</string>
+    <string name="hide_all">隱藏全部</string>
     <string name="brief">簡短</string>
     <string name="detailed">詳細</string>
     <string name="full">完整</string>
@@ -123,10 +125,8 @@
     <string name="onboarding_page5_desc">啟動螢幕保護程式，在 AI 於背景分析圖片時保持手機喚醒。</string>
     <string name="onboarding_page6_title">分享輸出</string>
     <string name="onboarding_page6_desc">您可以使用分享按鈕，直接從詳情畫面分享 AI 生成的文字和圖片。</string>
-    <string name="onboarding_page7_title">搜尋圖片</string>
-    <string name="onboarding_page7_desc">正在尋找特定內容？使用搜尋列根據 AI 發現的內容尋找圖片。</string>
-    <string name="onboarding_page8_title">篩選標籤</string>
-    <string name="onboarding_page8_desc">點擊建議的篩選標籤，快速查看包含特定主題（如人物、寵物或食物）的圖片。</string>
+    <string name="onboarding_page7_title">搜尋與篩選</string>
+    <string name="onboarding_page7_desc">使用搜尋框依關鍵字尋找圖片，或點擊篩選標籤來快速瀏覽寬物、食物或自拍等主題。</string>
     <string name="onboarding_page9_title">重新分析</string>
     <string name="onboarding_page9_desc">如果您想讓 AI 重新分析圖片，只需在圖庫或詳情畫面雙擊其狀態按鈕即可。</string>
     <string name="feedback">回饋</string>
@@ -142,6 +142,8 @@
     <string name="analysis_instance_count_desc">同時分析的圖片數量</string>
     <string name="token_length">Token 長度</string>
     <string name="token_length_desc">LLM 輸出的最大 Token 數量</string>
+    <string name="gallery_page_size">圖庫頁面載入量</string>
+    <string name="gallery_page_size_desc">圖庫檢視中每次滾動載入的圖片數量</string>
     <string name="apply">套用</string>
     <string name="play_pause_toggle_title">播放/暫停開關</string>
     <string name="play_pause_toggle_desc">在設定頁面上顯示暫停分析的按鈕</string>
@@ -156,7 +158,10 @@
     <string name="onboarding_page10_title">進階設定</string>
     <string name="onboarding_page10_desc">微調圖像解析度、並行分析數量，並啟用播放/暫停開關。這些選項屬於實驗性功能，請自行承擔風險，因為它們可能在效能較弱的硬體上造成不穩定。</string>
     <string name="more_models">更多模型</string>
-    <string name="model_lfm_desc">專為速度與低發熱優化的超高效視覺模型</string>
+    <string name="model_lfm_desc">專為速度與低發熱優化的超高效視覺模型。</string>
     <string name="beta">測試版</string>
     <string name="no_tags">不支援標籤</string>
+    <string name="no_results_found">未找到圖片</string>
+    <string name="no_results_desc">嘗試調整您的搜尋或篩選條件</string>
+    <string name="results_count">%d 個結果</string>
 </resources>
