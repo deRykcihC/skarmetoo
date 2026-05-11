@@ -616,16 +616,22 @@ class GgufLlmManager(private val context: Context) {
 
   fun close() {
     scope.launch {
-      inferMutex.withLock {
-        try {
-          LlamaBridge.shutdown()
-        } catch (_: Exception) {}
-        try {
-          MultimodalBridge.release()
-        } catch (_: Exception) {}
-        loadedModel = null
-        _uiState.value = LlmState.Initial
-      }
+      closeAndWait()
+    }
+  }
+
+  suspend fun closeAndWait() {
+    inferMutex.withLock {
+      try {
+        LlamaBridge.shutdown()
+      } catch (_: Exception) {}
+      try {
+        MultimodalBridge.release()
+      } catch (_: Exception) {}
+      loadedModel = null
+      _isInferenceRunning.value = false
+      _analysisProgress.value = 0f
+      _uiState.value = LlmState.Initial
     }
   }
 

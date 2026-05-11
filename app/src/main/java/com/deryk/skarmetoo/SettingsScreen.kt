@@ -584,30 +584,29 @@ fun SettingsScreen(
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
+            // If the model file exists on disk but isn't ready yet, it must be loading
+            // (or about to load). Never show "Offline" in that case.
             val statusText =
                 when {
                   isModelReady -> stringResource(R.string.ready)
                   !isModelFound && !isDownloadingModel -> stringResource(R.string.status_no_model)
-                  modelStatus.contains(
-                      "Loading",
-                  ) || modelStatus.contains("Downloading") ->
-                      stringResource(R.string.status_loading)
+                  isModelFound || isDownloadingModel -> stringResource(R.string.status_loading)
                   else -> stringResource(R.string.status_offline)
                 }
             val statusBg =
                 when {
                   isModelReady -> if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
-                  modelStatus.contains("Loading") || modelStatus.contains("Downloading") ->
+                  isModelFound || isDownloadingModel ->
                       if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)
-                  !isModelFound && !isDownloadingModel -> MaterialTheme.colorScheme.errorContainer
+                  !isModelFound -> MaterialTheme.colorScheme.errorContainer
                   else -> MaterialTheme.colorScheme.surfaceContainerHighest
                 }
             val statusColor =
                 when {
                   isModelReady -> if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
-                  modelStatus.contains("Loading") || modelStatus.contains("Downloading") ->
+                  isModelFound || isDownloadingModel ->
                       if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)
-                  !isModelFound && !isDownloadingModel -> MaterialTheme.colorScheme.onErrorContainer
+                  !isModelFound -> MaterialTheme.colorScheme.onErrorContainer
                   else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
 

@@ -16,6 +16,7 @@ import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -42,7 +43,18 @@ class LlmManager(private val context: Context) {
   private val engineMutex = kotlinx.coroutines.sync.Mutex()
 
   // Engine pool for concurrent analysis - each engine is independent
-  private val enginePool = ConcurrentLinkedQueue<Engine>()
+  private data class PooledEngine(
+      val engine: Engine,
+      val generation: Long,
+  )
+
+  private data class AcquiredEngine(
+      val engine: Engine,
+      val generation: Long,
+  )
+
+  private val enginePool = ConcurrentLinkedQueue<PooledEngine>()
+  private val poolGeneration = AtomicLong(0L)
   private var engineConfigForPool: EngineConfig? = null
 
   private val _uiState = MutableStateFlow<LlmState>(LlmState.Initial)
@@ -70,6 +82,7 @@ class LlmManager(private val context: Context) {
     scope.launch {
       engineMutex.withLock {
         try {
+          val newGeneration = poolGeneration.incrementAndGet()
           // Close existing engine and conversation securely before initializing
           try {
             conversation?.close()
@@ -78,6 +91,22 @@ class LlmManager(private val context: Context) {
             engine = null
           } catch (e: Exception) {
             Log.e(TAG, "Error closing existing engine or conversation", e)
+          }
+          // Drop old pooled engines so no stale inference instance survives a model swap.
+          var closedPoolCount = 0
+          while (true) {
+            val pooled = enginePool.poll() ?: break
+            try {
+              pooled.engine.close()
+              closedPoolCount++
+            } catch (e: Exception) {
+              Log.w(TAG, "Error closing pooled engine during model init: ${e.message}")
+            }
+          }
+          if (closedPoolCount > 0) {
+            Log.d(
+                TAG,
+                "Closed $closedPoolCount pooled engines while switching generation=$newGeneration")
           }
 
           val cacheDirPath = context.cacheDir.absolutePath
@@ -525,28 +554,79 @@ TAGS: [extracted tag1, tag2, tag3]"""
    * Get or create a pooled engine for concurrent analysis. Returns null if the primary engine isn't
    * ready.
    */
-  internal fun acquirePoolEngine(): Engine? {
+  private fun acquirePoolEngine(): AcquiredEngine? {
     if (engine == null) return null
-    return enginePool.poll()
-        ?: run {
-          val config = engineConfigForPool ?: return null
-          try {
-            Log.d(TAG, "Creating new pool engine (pool size was ${enginePool.size})")
-            val poolEngine = Engine(config)
-            poolEngine.initialize()
-            Log.d(TAG, "Pool engine created and initialized")
-            poolEngine
-          } catch (e: Throwable) {
-            Log.e(TAG, "Failed to create pool engine", e)
-            null
-          }
-        }
+    val generation = poolGeneration.get()
+    while (true) {
+      val pooled = enginePool.poll() ?: break
+      if (pooled.generation != generation) {
+        try {
+          pooled.engine.close()
+        } catch (_: Exception) {}
+        continue
+      }
+      return AcquiredEngine(engine = pooled.engine, generation = pooled.generation)
+    }
+    val config = engineConfigForPool ?: return null
+    return try {
+      Log.d(TAG, "Creating new pool engine (pool size was ${enginePool.size})")
+      val poolEngine = Engine(config)
+      poolEngine.initialize()
+      Log.d(TAG, "Pool engine created and initialized")
+      AcquiredEngine(engine = poolEngine, generation = generation)
+    } catch (e: Throwable) {
+      Log.e(TAG, "Failed to create pool engine", e)
+      null
+    }
   }
 
   /** Return an engine back to the pool after use. */
-  internal fun releasePoolEngine(poolEngine: Engine) {
-    enginePool.offer(poolEngine)
+  private fun releasePoolEngine(acquired: AcquiredEngine) {
+    val activeGeneration = poolGeneration.get()
+    if (acquired.generation != activeGeneration || engine == null || engineConfigForPool == null) {
+      try {
+        acquired.engine.close()
+      } catch (_: Exception) {}
+      Log.d(
+          TAG,
+          "Discarded pooled engine for stale generation ${acquired.generation} (active=$activeGeneration)")
+      return
+    }
+    enginePool.offer(PooledEngine(engine = acquired.engine, generation = acquired.generation))
     Log.d(TAG, "Pool engine returned (pool size: ${enginePool.size})")
+  }
+
+  suspend fun closeAndWait() {
+    // Invalidate any in-flight pool workers immediately so stale engines are never re-queued.
+    val newGeneration = poolGeneration.incrementAndGet()
+    engineMutex.withLock {
+      try {
+        conversation?.close()
+        conversation = null
+        engine?.close()
+        engine = null
+      } catch (e: Exception) {
+        Log.w(TAG, "Error during close: ${e.message}")
+      }
+    }
+
+    var count = 0
+    while (true) {
+      val pooled = enginePool.poll() ?: break
+      try {
+        pooled.engine.close()
+        count++
+      } catch (e: Exception) {
+        Log.w(TAG, "Error closing pool engine: ${e.message}")
+      }
+    }
+    engineConfigForPool = null
+    _uiState.value = LlmState.Initial
+    if (count > 0) Log.d(TAG, "Closed $count pool engines for generation=$newGeneration")
+  }
+
+  fun close() {
+    scope.launch { closeAndWait() }
   }
 
   /**
@@ -564,8 +644,8 @@ TAGS: [extracted tag1, tag2, tag3]"""
       onError: (String) -> Unit,
   ) {
     scope.launch {
-      val poolEngine = acquirePoolEngine()
-      if (poolEngine == null) {
+      val acquired = acquirePoolEngine()
+      if (acquired == null) {
         // Fall back to the mutex-locked single engine if pool is unavailable
         Log.d(TAG, "Pool engine unavailable, falling back to single-engine mode")
         analyzeScreenshot(
@@ -579,6 +659,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
             onError)
         return@launch
       }
+      val poolEngine = acquired.engine
 
       try {
         val convConfig =
@@ -700,36 +781,8 @@ TAGS: [extracted tag1, tag2, tag3]"""
         Log.e(TAG, "Pool engine analysis failed", e)
         onError(e.message ?: "Analysis failed")
       } finally {
-        releasePoolEngine(poolEngine)
+        releasePoolEngine(acquired)
       }
-    }
-  }
-
-  fun close() {
-    scope.launch {
-      engineMutex.withLock {
-        try {
-          conversation?.close()
-          conversation = null
-          engine?.close()
-          engine = null
-        } catch (e: Exception) {
-          Log.w(TAG, "Error during close: ${e.message}")
-        }
-      }
-      // Close pool engines
-      var count = 0
-      enginePool.forEach { poolEngine ->
-        try {
-          poolEngine.close()
-          count++
-        } catch (e: Exception) {
-          Log.w(TAG, "Error closing pool engine: ${e.message}")
-        }
-      }
-      enginePool.clear()
-      engineConfigForPool = null
-      if (count > 0) Log.d(TAG, "Closed $count pool engines")
     }
   }
 
