@@ -543,8 +543,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     setModelStatusImmediate("Loading model...")
                   } else {
                     setModelStatusImmediate(
-                        "Error: ${(ggufState as GgufLlmManager.LlmState.Error).message}"
-                    )
+                        "Error: ${(ggufState as GgufLlmManager.LlmState.Error).message}")
                   }
                   _isModelReady.value = false
                 }

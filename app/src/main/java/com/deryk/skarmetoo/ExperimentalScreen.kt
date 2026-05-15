@@ -220,7 +220,7 @@ fun ExperimentalScreen(
                 Modifier.clip(RoundedCornerShape(16.dp))
                     .combinedClickable(
                         onDoubleClick = { if (isModelReady) viewModel.forceAnalyzeUnprocessed() },
-                        onClick = {},
+                        onClick = hapticOnClick {},
                     ),
         ) {
           Row(
@@ -259,7 +259,7 @@ fun ExperimentalScreen(
               count = allImageCount,
               thumbnailUris = allThumbnailUris,
               isSelected = selectedAlbumId == null,
-              onClick = { viewModel.setSelectedExperimentalAlbumId(null) },
+              onClick = hapticOnClick { viewModel.setSelectedExperimentalAlbumId(null) },
           )
         }
         // Album items — long press to pin/unpin, hold + drag to reorder
@@ -363,14 +363,15 @@ fun ExperimentalScreen(
                 isSelected = selectedAlbumId == albumWithThumbs.album.bucketId,
                 isPinned = isPinned,
                 isDragging = isDragging,
-                onClick = {
-                  viewModel.setSelectedExperimentalAlbumId(
-                      if (selectedAlbumId == albumWithThumbs.album.bucketId) {
-                        null
-                      } else {
-                        albumWithThumbs.album.bucketId
-                      })
-                },
+                onClick =
+                    hapticOnClick {
+                      viewModel.setSelectedExperimentalAlbumId(
+                          if (selectedAlbumId == albumWithThumbs.album.bucketId) {
+                            null
+                          } else {
+                            albumWithThumbs.album.bucketId
+                          })
+                    },
             )
           }
         }
@@ -483,7 +484,7 @@ fun ExperimentalScreen(
                     dotColor = dotColor,
                     gridColumns = effectiveColumns,
                     showPlaceholder = isPinching,
-                    onClick = { entryId?.let { onScreenshotClick(it) } },
+                    onClick = hapticOnClick { entryId?.let { onScreenshotClick(it) } },
                     modifier = Modifier.weight(1f),
                 )
               }

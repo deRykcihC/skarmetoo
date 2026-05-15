@@ -102,17 +102,18 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                   val isDownloadingGemma4 =
                       isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
                   OutlinedCard(
-                      onClick = {
-                        viewModel.setSelectedModel(ModelType.GEMMA_4)
-                        if (isGemma4Downloaded) {
-                          val path =
-                              context.filesDir.absolutePath + "/" + ModelType.GEMMA_4.fileName
-                          viewModel.initializeModel(path, isGemma4 = true)
-                        } else if (!isDownloadingModel) {
-                          hfLoginModelType = ModelType.GEMMA_4
-                          showHfLogin = true
-                        }
-                      },
+                      onClick =
+                          hapticOnClick {
+                            viewModel.setSelectedModel(ModelType.GEMMA_4)
+                            if (isGemma4Downloaded) {
+                              val path =
+                                  context.filesDir.absolutePath + "/" + ModelType.GEMMA_4.fileName
+                              viewModel.initializeModel(path, isGemma4 = true)
+                            } else if (!isDownloadingModel) {
+                              hfLoginModelType = ModelType.GEMMA_4
+                              showHfLogin = true
+                            }
+                          },
                       modifier = Modifier.fillMaxWidth(),
                       shape = RoundedCornerShape(14.dp),
                       colors =
@@ -222,19 +223,20 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       isGgufDownloading && ggufDownloadingModelName == LFM2_5_MODEL.displayName
 
                   OutlinedCard(
-                      onClick = {
-                        if (isLfmDownloaded) {
-                          viewModel.setGgufModelAsActive(LFM2_5_MODEL)
-                        } else if (!isGgufDownloading) {
-                          ggufManager.downloadModel(
-                              LFM2_5_MODEL,
-                              onComplete = { success ->
-                                if (success) {
-                                  viewModel.setGgufModelAsActive(LFM2_5_MODEL)
-                                }
-                              })
-                        }
-                      },
+                      onClick =
+                          hapticOnClick {
+                            if (isLfmDownloaded) {
+                              viewModel.setGgufModelAsActive(LFM2_5_MODEL)
+                            } else if (!isGgufDownloading) {
+                              ggufManager.downloadModel(
+                                  LFM2_5_MODEL,
+                                  onComplete = { success ->
+                                    if (success) {
+                                      viewModel.setGgufModelAsActive(LFM2_5_MODEL)
+                                    }
+                                  })
+                            }
+                          },
                       modifier = Modifier.fillMaxWidth(),
                       shape = RoundedCornerShape(14.dp),
                       colors =
@@ -362,14 +364,15 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                           modifier = Modifier.padding(4.dp),
                           horizontalArrangement = Arrangement.spacedBy(4.dp),
                           verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = {}, modifier = Modifier.size(34.dp)) {
-                              Icon(
-                                  Icons.Rounded.MenuBook,
-                                  contentDescription = "Tutorial",
-                                  modifier = Modifier.size(20.dp))
-                            }
                             IconButton(
-                                onClick = { viewModel.setDarkMode(!isDark) },
+                                onClick = hapticOnClick {}, modifier = Modifier.size(34.dp)) {
+                                  Icon(
+                                      Icons.Rounded.MenuBook,
+                                      contentDescription = "Tutorial",
+                                      modifier = Modifier.size(20.dp))
+                                }
+                            IconButton(
+                                onClick = hapticOnClick { viewModel.setDarkMode(!isDark) },
                                 modifier = Modifier.size(34.dp)) {
                                   Icon(
                                       if (isDark) Icons.Rounded.LightMode
@@ -377,18 +380,20 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                                       contentDescription = "Toggle Dark Mode",
                                       modifier = Modifier.size(20.dp))
                                 }
-                            IconButton(onClick = {}, modifier = Modifier.size(34.dp)) {
-                              Icon(
-                                  Icons.Rounded.Monitor,
-                                  contentDescription = "Screen Saver",
-                                  modifier = Modifier.size(20.dp))
-                            }
-                            IconButton(onClick = {}, modifier = Modifier.size(34.dp)) {
-                              Icon(
-                                  Icons.Rounded.Language,
-                                  contentDescription = "Language",
-                                  modifier = Modifier.size(20.dp))
-                            }
+                            IconButton(
+                                onClick = hapticOnClick {}, modifier = Modifier.size(34.dp)) {
+                                  Icon(
+                                      Icons.Rounded.Monitor,
+                                      contentDescription = "Screen Saver",
+                                      modifier = Modifier.size(20.dp))
+                                }
+                            IconButton(
+                                onClick = hapticOnClick {}, modifier = Modifier.size(34.dp)) {
+                                  Icon(
+                                      Icons.Rounded.Language,
+                                      contentDescription = "Language",
+                                      modifier = Modifier.size(20.dp))
+                                }
                           }
                     }
                   }
@@ -412,7 +417,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                   ) {
                     // "English" selected
                     OutlinedCard(
-                        onClick = {},
+                        onClick = hapticOnClick {},
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors =
@@ -434,7 +439,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     }
                     // "More" not selected
                     OutlinedCard(
-                        onClick = {},
+                        onClick = hapticOnClick {},
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors =
@@ -476,7 +481,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     ) {
                       // Brief — not selected
                       OutlinedCard(
-                          onClick = {},
+                          onClick = hapticOnClick {},
                           modifier = Modifier.weight(1f).height(52.dp),
                           shape = RoundedCornerShape(12.dp),
                           colors =
@@ -499,7 +504,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       }
                       // Detailed — selected
                       OutlinedCard(
-                          onClick = {},
+                          onClick = hapticOnClick {},
                           modifier = Modifier.weight(1f).height(52.dp),
                           shape = RoundedCornerShape(12.dp),
                           colors =
@@ -527,7 +532,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     ) {
                       // Comprehensive — not selected
                       OutlinedCard(
-                          onClick = {},
+                          onClick = hapticOnClick {},
                           modifier = Modifier.weight(1f).height(52.dp),
                           shape = RoundedCornerShape(12.dp),
                           colors =
@@ -550,7 +555,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       }
                       // Custom — not selected
                       OutlinedCard(
-                          onClick = {},
+                          onClick = hapticOnClick {},
                           modifier = Modifier.weight(1f).height(52.dp),
                           shape = RoundedCornerShape(12.dp),
                           colors =
@@ -673,24 +678,25 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         Spacer(modifier = Modifier.width(12.dp))
 
                         IconButton(
-                            onClick = {
-                              val permission =
-                                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    Manifest.permission.READ_MEDIA_IMAGES
+                            onClick =
+                                hapticOnClick {
+                                  val permission =
+                                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        Manifest.permission.READ_MEDIA_IMAGES
+                                      } else {
+                                        @Suppress("DEPRECATION")
+                                        Manifest.permission.READ_EXTERNAL_STORAGE
+                                      }
+                                  if (android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                                      ContextCompat.checkSelfPermission(context, permission)) {
+                                    viewModel.loadAlbums()
+                                    // Note: In onboarding we might need a dialog too if we want it
+                                    // interactive
+                                    // But for now we just mirror the UI.
                                   } else {
-                                    @Suppress("DEPRECATION")
-                                    Manifest.permission.READ_EXTERNAL_STORAGE
+                                    // Request permission if needed
                                   }
-                              if (android.content.pm.PackageManager.PERMISSION_GRANTED ==
-                                  ContextCompat.checkSelfPermission(context, permission)) {
-                                viewModel.loadAlbums()
-                                // Note: In onboarding we might need a dialog too if we want it
-                                // interactive
-                                // But for now we just mirror the UI.
-                              } else {
-                                // Request permission if needed
-                              }
-                            },
+                                },
                             modifier =
                                 Modifier.size(36.dp)
                                     .background(
@@ -718,7 +724,9 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                  IconButton(onClick = {}) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+                  IconButton(onClick = hapticOnClick {}) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
+                  }
                   Text(
                       stringResource(R.string.details_title),
                       style = MaterialTheme.typography.titleLarge,
@@ -726,7 +734,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                   )
                   Spacer(modifier = Modifier.weight(1f))
                   // The share button
-                  IconButton(onClick = {}) { Icon(Icons.Rounded.Share, "Share") }
+                  IconButton(onClick = hapticOnClick {}) { Icon(Icons.Rounded.Share, "Share") }
                   Spacer(modifier = Modifier.width(4.dp))
                   // Done pill
                   Surface(
@@ -811,7 +819,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     item {
                       FilterChip(
                           selected = true,
-                          onClick = {},
+                          onClick = hapticOnClick {},
                           label = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                               Icon(
@@ -843,7 +851,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     items(listOf("cat", "indoor", "selfie", "food")) { tag ->
                       FilterChip(
                           selected = tag == "cat",
-                          onClick = {},
+                          onClick = hapticOnClick {},
                           label = {
                             Text(
                                 tag,
@@ -929,8 +937,9 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
                 shape = RoundedCornerShape(20.dp),
                 colors =
-                    CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
               Column(modifier = Modifier.padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1053,7 +1062,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
 
               Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AnimatedVisibility(visible = pagerState.currentPage < allPages.size - 1) {
-                  TextButton(onClick = onFinish) {
+                  TextButton(onClick = hapticOnClick(onFinish)) {
                     Text(
                         stringResource(R.string.onboarding_skip),
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1061,15 +1070,16 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                 }
 
                 Button(
-                    onClick = {
-                      if (pagerState.currentPage < allPages.size - 1) {
-                        coroutineScope.launch {
-                          pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                        }
-                      } else {
-                        onFinish()
-                      }
-                    },
+                    onClick =
+                        hapticOnClick {
+                          if (pagerState.currentPage < allPages.size - 1) {
+                            coroutineScope.launch {
+                              pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                            }
+                          } else {
+                            onFinish()
+                          }
+                        },
                     shape =
                         if (pagerState.currentPage == allPages.size - 1) RoundedCornerShape(20.dp)
                         else CircleShape,
@@ -1107,7 +1117,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     Surface(
                         shape = RoundedCornerShape(24.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        tonalElevation = 1.dp,
+                        tonalElevation = 0.dp,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                           Box(
                               contentAlignment = Alignment.Center,
@@ -1164,15 +1174,17 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                   fontWeight = FontWeight.Bold,
               )
               IconButton(
-                  onClick = {
-                    showHfLogin = false
-                    val cookies = CookieManager.getInstance().getCookie("https://huggingface.co")
-                    if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
-                      val url =
-                          if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
-                      viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
-                    }
-                  }) {
+                  onClick =
+                      hapticOnClick {
+                        showHfLogin = false
+                        val cookies =
+                            CookieManager.getInstance().getCookie("https://huggingface.co")
+                        if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
+                          val url =
+                              if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
+                          viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+                        }
+                      }) {
                     Icon(Icons.Rounded.Close, "Close")
                   }
             }

@@ -615,9 +615,7 @@ class GgufLlmManager(private val context: Context) {
   }
 
   fun close() {
-    scope.launch {
-      closeAndWait()
-    }
+    scope.launch { closeAndWait() }
   }
 
   suspend fun closeAndWait() {

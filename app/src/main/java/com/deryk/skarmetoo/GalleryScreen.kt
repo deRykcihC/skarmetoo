@@ -275,7 +275,7 @@ fun GalleryScreen(
                             onDoubleClick = {
                               if (isModelReady) viewModel.forceAnalyzeUnprocessed()
                             },
-                            onClick = {},
+                            onClick = hapticOnClick {},
                         ),
             ) {
               Row(
@@ -315,7 +315,7 @@ fun GalleryScreen(
         item {
           FilterChip(
               selected = true,
-              onClick = { viewModel.toggleSortOrder() },
+              onClick = hapticOnClick { viewModel.toggleSortOrder() },
               label = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Icon(
@@ -346,7 +346,7 @@ fun GalleryScreen(
         items(allTags) { tag ->
           FilterChip(
               selected = selectedTag == tag,
-              onClick = { selectedTag = if (selectedTag == tag) null else tag },
+              onClick = hapticOnClick { selectedTag = if (selectedTag == tag) null else tag },
               label = {
                 Text(
                     tag,
@@ -439,7 +439,7 @@ fun GalleryScreen(
                             ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
                     isActivelyAnalyzing = isActivelyAnalyzing,
                     isQueueRunning = isAnalysisRunning,
-                    onClick = { onScreenshotClick(entry.id) },
+                    onClick = hapticOnClick { onScreenshotClick(entry.id) },
                 )
               }
             }
@@ -460,7 +460,7 @@ fun GalleryScreen(
                             ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
                     isActivelyAnalyzing = isActivelyAnalyzing,
                     isQueueRunning = isAnalysisRunning,
-                    onClick = { onScreenshotClick(entry.id) },
+                    onClick = hapticOnClick { onScreenshotClick(entry.id) },
                 )
               }
             }
@@ -501,7 +501,7 @@ fun SearchPill(
       color =
           if (isFocused) MaterialTheme.colorScheme.secondaryContainer
           else MaterialTheme.colorScheme.surfaceContainerHighest,
-      onClick = { focusRequester.requestFocus() },
+      onClick = hapticOnClick { focusRequester.requestFocus() },
   ) {
     Row(
         modifier = Modifier.height(32.dp).padding(start = 10.dp, end = 10.dp),
@@ -555,10 +555,11 @@ fun SearchPill(
       ) {
         if (hasText) {
           IconButton(
-              onClick = {
-                textFieldValue = TextFieldValue("")
-                onSearchQueryChange("")
-              },
+              onClick =
+                  hapticOnClick {
+                    textFieldValue = TextFieldValue("")
+                    onSearchQueryChange("")
+                  },
               modifier = Modifier.size(16.dp),
           ) {
             Icon(
@@ -589,10 +590,10 @@ fun ScreenshotGridItem(
       onClick = onClick,
       modifier = Modifier.fillMaxWidth(),
       shape = RoundedCornerShape(16.dp),
-      elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+      elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
       colors =
           CardDefaults.cardColors(
-              containerColor = MaterialTheme.colorScheme.surface,
+              containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
           ),
   ) {
     Column {
