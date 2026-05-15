@@ -188,24 +188,25 @@ fun MainApp(viewModel: ScreenshotViewModel) {
           NavigationBar(tonalElevation = 4.dp) {
             NavigationBarItem(
                 selected = currentRoute == Routes.GALLERY,
-                onClick = {
-                  val now = System.currentTimeMillis()
-                  if (currentRoute != Routes.GALLERY) {
-                    navController.navigate(Routes.GALLERY) {
-                      popUpTo(navController.graph.startDestinationId) { saveState = true }
-                      launchSingleTop = true
-                      restoreState = true
-                    }
-                  } else {
-                    if (now - lastGalleryClickTime < 400) {
-                      galleryRefreshKey++
-                      lastGalleryClickTime = 0L
-                    } else {
-                      galleryScrollKey++
-                      lastGalleryClickTime = now
-                    }
-                  }
-                },
+                onClick =
+                    hapticOnClick {
+                      val now = System.currentTimeMillis()
+                      if (currentRoute != Routes.GALLERY) {
+                        navController.navigate(Routes.GALLERY) {
+                          popUpTo(navController.graph.startDestinationId) { saveState = true }
+                          launchSingleTop = true
+                          restoreState = true
+                        }
+                      } else {
+                        if (now - lastGalleryClickTime < 400) {
+                          galleryRefreshKey++
+                          lastGalleryClickTime = 0L
+                        } else {
+                          galleryScrollKey++
+                          lastGalleryClickTime = now
+                        }
+                      }
+                    },
                 icon = {
                   Icon(
                       if (currentRoute == Routes.GALLERY) Icons.Rounded.PhotoLibrary
@@ -223,15 +224,16 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             )
             NavigationBarItem(
                 selected = currentRoute == Routes.SETTINGS,
-                onClick = {
-                  if (currentRoute != Routes.SETTINGS) {
-                    navController.navigate(Routes.SETTINGS) {
-                      popUpTo(navController.graph.startDestinationId) { saveState = true }
-                      launchSingleTop = true
-                      restoreState = true
-                    }
-                  }
-                },
+                onClick =
+                    hapticOnClick {
+                      if (currentRoute != Routes.SETTINGS) {
+                        navController.navigate(Routes.SETTINGS) {
+                          popUpTo(navController.graph.startDestinationId) { saveState = true }
+                          launchSingleTop = true
+                          restoreState = true
+                        }
+                      }
+                    },
                 icon = {
                   Icon(
                       if (currentRoute == Routes.SETTINGS) Icons.Rounded.Settings
@@ -249,15 +251,16 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             )
             NavigationBarItem(
                 selected = currentRoute == Routes.EXPERIMENTAL,
-                onClick = {
-                  if (currentRoute != Routes.EXPERIMENTAL) {
-                    navController.navigate(Routes.EXPERIMENTAL) {
-                      popUpTo(navController.graph.startDestinationId) { saveState = true }
-                      launchSingleTop = true
-                      restoreState = true
-                    }
-                  }
-                },
+                onClick =
+                    hapticOnClick {
+                      if (currentRoute != Routes.EXPERIMENTAL) {
+                        navController.navigate(Routes.EXPERIMENTAL) {
+                          popUpTo(navController.graph.startDestinationId) { saveState = true }
+                          launchSingleTop = true
+                          restoreState = true
+                        }
+                      }
+                    },
                 icon = {
                   Icon(
                       if (currentRoute == Routes.EXPERIMENTAL) Icons.Rounded.Science

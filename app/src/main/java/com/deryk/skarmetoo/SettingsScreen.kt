@@ -182,35 +182,39 @@ fun SettingsScreen(
                 modifier = Modifier.padding(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                  IconButton(onClick = onRevisitTutorial, modifier = Modifier.size(34.dp)) {
-                    Icon(
-                        Icons.Rounded.MenuBook,
-                        contentDescription = "Tutorial",
-                        modifier = Modifier.size(20.dp))
-                  }
                   IconButton(
-                      onClick = { viewModel.setDarkMode(!isDark) },
+                      onClick = hapticOnClick(onRevisitTutorial), modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            Icons.Rounded.MenuBook,
+                            contentDescription = "Tutorial",
+                            modifier = Modifier.size(20.dp))
+                      }
+                  IconButton(
+                      onClick = hapticOnClick { viewModel.setDarkMode(!isDark) },
                       modifier = Modifier.size(34.dp)) {
                         Icon(
                             if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
                             contentDescription = "Toggle Dark Mode",
                             modifier = Modifier.size(20.dp))
                       }
-                  IconButton(onClick = onStartScreenSaver, modifier = Modifier.size(34.dp)) {
-                    Icon(
-                        Icons.Rounded.Monitor,
-                        contentDescription = "Screen Saver",
-                        modifier = Modifier.size(20.dp))
-                  }
                   IconButton(
-                      onClick = {
-                        val nextLang =
-                            when (currentLanguage) {
-                              "en" -> "zh-rTW"
-                              else -> "en"
-                            }
-                        viewModel.setAppLanguage(nextLang)
-                      },
+                      onClick = hapticOnClick(onStartScreenSaver),
+                      modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            Icons.Rounded.Monitor,
+                            contentDescription = "Screen Saver",
+                            modifier = Modifier.size(20.dp))
+                      }
+                  IconButton(
+                      onClick =
+                          hapticOnClick {
+                            val nextLang =
+                                when (currentLanguage) {
+                                  "en" -> "zh-rTW"
+                                  else -> "en"
+                                }
+                            viewModel.setAppLanguage(nextLang)
+                          },
                       modifier = Modifier.size(34.dp)) {
                         Icon(
                             Icons.Rounded.Language,
@@ -233,6 +237,7 @@ fun SettingsScreen(
             colors =
                 CardDefaults.cardColors(
                     containerColor = if (isDark) Color(0xFF1A2E42) else Color(0xFFE3F2FD)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
           Row(
               modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -285,6 +290,7 @@ fun SettingsScreen(
             colors =
                 CardDefaults.cardColors(
                     containerColor = if (isDark) Color(0xFF3E3115) else Color(0xFFFFF8E1)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
           val amberText = if (isDark) Color(0xFFFFD54F) else Color(0xFFF57F17)
           Column(modifier = Modifier.padding(16.dp)) {
@@ -324,23 +330,25 @@ fun SettingsScreen(
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
           shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-          elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+          colors =
+              CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
       ) {
         Column(
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 12.dp)) {
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)) {
               Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = CircleShape,
                     color = if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0),
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(34.dp),
                 ) {
                   Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                     Icon(
                         Icons.Rounded.FolderOpen,
                         null,
                         tint = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
-                        modifier = Modifier.size(22.dp))
+                        modifier = Modifier.size(20.dp))
                   }
                 }
                 Spacer(modifier = Modifier.width(12.dp))
@@ -352,13 +360,13 @@ fun SettingsScreen(
                   )
                   Text(
                       stringResource(R.string.folders_selected, selectedAlbums.size.toString()),
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                   )
                 }
               }
 
-              Spacer(modifier = Modifier.height(14.dp))
+              Spacer(modifier = Modifier.height(8.dp))
 
               val albumCounts = availableAlbums.filter { it.bucketId in selectedAlbums }
               val primaryColor = MaterialTheme.colorScheme.primary
@@ -417,21 +425,23 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(12.dp))
 
                     IconButton(
-                        onClick = {
-                          val permission =
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                Manifest.permission.READ_MEDIA_IMAGES
+                        onClick =
+                            hapticOnClick {
+                              val permission =
+                                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    Manifest.permission.READ_MEDIA_IMAGES
+                                  } else {
+                                    @Suppress("DEPRECATION")
+                                    Manifest.permission.READ_EXTERNAL_STORAGE
+                                  }
+                              if (android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                                  ContextCompat.checkSelfPermission(context, permission)) {
+                                viewModel.loadAlbums()
+                                showMediaFolderDialog = true
                               } else {
-                                @Suppress("DEPRECATION") Manifest.permission.READ_EXTERNAL_STORAGE
+                                mediaPermissionLauncher.launch(permission)
                               }
-                          if (android.content.pm.PackageManager.PERMISSION_GRANTED ==
-                              ContextCompat.checkSelfPermission(context, permission)) {
-                            viewModel.loadAlbums()
-                            showMediaFolderDialog = true
-                          } else {
-                            mediaPermissionLauncher.launch(permission)
-                          }
-                        },
+                            },
                         modifier =
                             Modifier.size(36.dp)
                                 .background(
@@ -548,17 +558,19 @@ fun SettingsScreen(
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
           shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-          elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+          colors =
+              CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
       ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
           Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
                 color =
                     if (isModelReady) (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
                     else (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)),
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(34.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
@@ -567,7 +579,7 @@ fun SettingsScreen(
                     tint =
                         if (isModelReady) (if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32))
                         else (if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)),
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(20.dp),
                 )
               }
             }
@@ -580,8 +592,8 @@ fun SettingsScreen(
               )
               Text(
                   stringResource(R.string.on_device_analysis_model),
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
               )
             }
             // If the model file exists on disk but isn't ready yet, it must be loading
@@ -637,16 +649,17 @@ fun SettingsScreen(
           val isGemma4Selected = selectedModel == ModelType.GEMMA_4 && isGemma4Downloaded
           val isDownloadingGemma4 = isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
           OutlinedCard(
-              onClick = {
-                viewModel.setSelectedModel(ModelType.GEMMA_4)
-                if (isGemma4Downloaded) {
-                  val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_4.fileName
-                  viewModel.initializeModel(path, isGemma4 = true)
-                } else if (!isDownloadingModel) {
-                  hfLoginModelType = ModelType.GEMMA_4
-                  showHfLogin = true
-                }
-              },
+              onClick =
+                  hapticOnClick {
+                    viewModel.setSelectedModel(ModelType.GEMMA_4)
+                    if (isGemma4Downloaded) {
+                      val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_4.fileName
+                      viewModel.initializeModel(path, isGemma4 = true)
+                    } else if (!isDownloadingModel) {
+                      hfLoginModelType = ModelType.GEMMA_4
+                      showHfLogin = true
+                    }
+                  },
               modifier = Modifier.fillMaxWidth(),
               shape = RoundedCornerShape(14.dp),
               colors =
@@ -749,19 +762,20 @@ fun SettingsScreen(
               isGgufDownloading && ggufDownloadingModelName == LFM2_5_MODEL.displayName
 
           OutlinedCard(
-              onClick = {
-                if (isLfmDownloaded) {
-                  viewModel.setGgufModelAsActive(LFM2_5_MODEL)
-                } else if (!isGgufDownloading) {
-                  ggufManager.downloadModel(
-                      LFM2_5_MODEL,
-                      onComplete = { success ->
-                        if (success) {
-                          viewModel.setGgufModelAsActive(LFM2_5_MODEL)
-                        }
-                      })
-                }
-              },
+              onClick =
+                  hapticOnClick {
+                    if (isLfmDownloaded) {
+                      viewModel.setGgufModelAsActive(LFM2_5_MODEL)
+                    } else if (!isGgufDownloading) {
+                      ggufManager.downloadModel(
+                          LFM2_5_MODEL,
+                          onComplete = { success ->
+                            if (success) {
+                              viewModel.setGgufModelAsActive(LFM2_5_MODEL)
+                            }
+                          })
+                    }
+                  },
               modifier = Modifier.fillMaxWidth(),
               shape = RoundedCornerShape(14.dp),
               colors =
@@ -894,17 +908,18 @@ fun SettingsScreen(
                   val isDownloadingGemma3n =
                       isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
                   OutlinedCard(
-                      onClick = {
-                        viewModel.setSelectedModel(ModelType.GEMMA_3N)
-                        if (isGemma3nDownloaded) {
-                          val path =
-                              context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
-                          viewModel.initializeModel(path, isGemma4 = false)
-                        } else if (!isDownloadingModel) {
-                          hfLoginModelType = ModelType.GEMMA_3N
-                          showHfLogin = true
-                        }
-                      },
+                      onClick =
+                          hapticOnClick {
+                            viewModel.setSelectedModel(ModelType.GEMMA_3N)
+                            if (isGemma3nDownloaded) {
+                              val path =
+                                  context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
+                              viewModel.initializeModel(path, isGemma4 = false)
+                            } else if (!isDownloadingModel) {
+                              hfLoginModelType = ModelType.GEMMA_3N
+                              showHfLogin = true
+                            }
+                          },
                       modifier = Modifier.fillMaxWidth(),
                       shape = RoundedCornerShape(14.dp),
                       colors =
@@ -1017,10 +1032,11 @@ fun SettingsScreen(
                 modifier = Modifier.weight(1f),
                 label = stringResource(R.string.language_en),
                 selected = analysisLang == "en",
-                onClick = {
-                  viewModel.setAnalysisLanguage("en")
-                  showMoreLanguages = false
-                },
+                onClick =
+                    hapticOnClick {
+                      viewModel.setAnalysisLanguage("en")
+                      showMoreLanguages = false
+                    },
             )
             DetailLevelCard(
                 modifier = Modifier.weight(1f),
@@ -1040,7 +1056,7 @@ fun SettingsScreen(
                     },
                 selected = analysisLang != "en",
                 enabled = selectedModel != ModelType.GGUF,
-                onClick = { showMoreLanguages = !showMoreLanguages },
+                onClick = hapticOnClick { showMoreLanguages = !showMoreLanguages },
             )
           }
 
@@ -1062,26 +1078,29 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.language_zh),
                         selected = analysisLang == "zh-rTW",
-                        onClick = {
-                          viewModel.setAnalysisLanguage("zh-rTW")
-                          showMoreLanguages = false
-                        })
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setAnalysisLanguage("zh-rTW")
+                              showMoreLanguages = false
+                            })
                     DetailLevelCard(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.language_hi),
                         selected = analysisLang == "hi",
-                        onClick = {
-                          viewModel.setAnalysisLanguage("hi")
-                          showMoreLanguages = false
-                        })
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setAnalysisLanguage("hi")
+                              showMoreLanguages = false
+                            })
                     DetailLevelCard(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.language_es),
                         selected = analysisLang == "es",
-                        onClick = {
-                          viewModel.setAnalysisLanguage("es")
-                          showMoreLanguages = false
-                        })
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setAnalysisLanguage("es")
+                              showMoreLanguages = false
+                            })
                   }
               Spacer(modifier = Modifier.height(8.dp))
               Row(
@@ -1091,26 +1110,29 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.language_ar),
                         selected = analysisLang == "ar",
-                        onClick = {
-                          viewModel.setAnalysisLanguage("ar")
-                          showMoreLanguages = false
-                        })
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setAnalysisLanguage("ar")
+                              showMoreLanguages = false
+                            })
                     DetailLevelCard(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.language_fr),
                         selected = analysisLang == "fr",
-                        onClick = {
-                          viewModel.setAnalysisLanguage("fr")
-                          showMoreLanguages = false
-                        })
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setAnalysisLanguage("fr")
+                              showMoreLanguages = false
+                            })
                     DetailLevelCard(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.language_ru),
                         selected = analysisLang == "ru",
-                        onClick = {
-                          viewModel.setAnalysisLanguage("ru")
-                          showMoreLanguages = false
-                        })
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setAnalysisLanguage("ru")
+                              showMoreLanguages = false
+                            })
                   }
             }
           }
@@ -1145,7 +1167,7 @@ fun SettingsScreen(
                     enabled =
                         !(level == LlmManager.DetailLevel.COMPREHENSIVE &&
                             selectedModel == ModelType.GGUF),
-                    onClick = { viewModel.setDetailLevel(level) },
+                    onClick = hapticOnClick { viewModel.setDetailLevel(level) },
                 )
               }
             }
@@ -1168,7 +1190,7 @@ fun SettingsScreen(
                     enabled =
                         !(level == LlmManager.DetailLevel.COMPREHENSIVE &&
                             selectedModel == ModelType.GGUF),
-                    onClick = { viewModel.setDetailLevel(level) },
+                    onClick = hapticOnClick { viewModel.setDetailLevel(level) },
                 )
               }
             }
@@ -1266,18 +1288,20 @@ fun SettingsScreen(
                       fontWeight = FontWeight.Bold,
                   )
                   IconButton(
-                      onClick = {
-                        showHfLogin = false
-                        val cookies =
-                            android.webkit.CookieManager.getInstance()
-                                .getCookie("https://huggingface.co")
-                        isHfLoggedIn = !cookies.isNullOrEmpty()
-                        if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
-                          val url =
-                              if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
-                          viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
-                        }
-                      },
+                      onClick =
+                          hapticOnClick {
+                            showHfLogin = false
+                            val cookies =
+                                android.webkit.CookieManager.getInstance()
+                                    .getCookie("https://huggingface.co")
+                            isHfLoggedIn = !cookies.isNullOrEmpty()
+                            if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
+                              val url =
+                                  if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl
+                                  else gemma4Url
+                              viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+                            }
+                          },
                       modifier = Modifier) {
                         Icon(Icons.Rounded.Close, "Close")
                       }
@@ -1317,10 +1341,12 @@ fun SettingsScreen(
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
           shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-          elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+          colors =
+              CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
       ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
           val interactionSource = remember {
             androidx.compose.foundation.interaction.MutableInteractionSource()
           }
@@ -1330,20 +1356,20 @@ fun SettingsScreen(
                       .clickable(
                           interactionSource = interactionSource,
                           indication = null,
-                          onClick = { isAdvancedExpanded = !isAdvancedExpanded }),
+                          onClick = hapticOnClick { isAdvancedExpanded = !isAdvancedExpanded }),
               verticalAlignment = Alignment.CenterVertically,
           ) {
             Surface(
                 shape = CircleShape,
                 color = if (isDark) Color(0xFF2D1F3D) else Color(0xFFF3E5F5),
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(34.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.Tune,
                     null,
                     tint = if (isDark) Color(0xFFCE93D8) else Color(0xFF7B1FA2),
-                    modifier = Modifier.size(22.dp))
+                    modifier = Modifier.size(20.dp))
               }
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -1355,8 +1381,8 @@ fun SettingsScreen(
               )
               Text(
                   stringResource(R.string.advanced_settings_desc),
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
               )
             }
             Icon(
@@ -1619,7 +1645,7 @@ fun SettingsScreen(
 
               // Play/Pause button toggle
               Surface(
-                  onClick = { localShowPlayPause = !localShowPlayPause },
+                  onClick = hapticOnClick { localShowPlayPause = !localShowPlayPause },
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
                   modifier = Modifier.fillMaxWidth()) {
@@ -1654,25 +1680,26 @@ fun SettingsScreen(
 
               // Background process toggle
               Surface(
-                  onClick = {
-                    if (!localBackgroundProcess) {
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        if (ContextCompat.checkSelfPermission(
-                            context, Manifest.permission.POST_NOTIFICATIONS) !=
-                            PackageManager.PERMISSION_GRANTED) {
-                          notificationPermissionLauncher.launch(
-                              Manifest.permission.POST_NOTIFICATIONS)
-                          localBackgroundProcess = true
+                  onClick =
+                      hapticOnClick {
+                        if (!localBackgroundProcess) {
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            if (ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.POST_NOTIFICATIONS) !=
+                                PackageManager.PERMISSION_GRANTED) {
+                              notificationPermissionLauncher.launch(
+                                  Manifest.permission.POST_NOTIFICATIONS)
+                              localBackgroundProcess = true
+                            } else {
+                              localBackgroundProcess = true
+                            }
+                          } else {
+                            localBackgroundProcess = true
+                          }
                         } else {
-                          localBackgroundProcess = true
+                          localBackgroundProcess = false
                         }
-                      } else {
-                        localBackgroundProcess = true
-                      }
-                    } else {
-                      localBackgroundProcess = false
-                    }
-                  },
+                      },
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
                   modifier = Modifier.fillMaxWidth()) {
@@ -1724,7 +1751,7 @@ fun SettingsScreen(
               Spacer(modifier = Modifier.height(16.dp))
 
               Button(
-                  onClick = { showAdvancedConfirmDialog = true },
+                  onClick = hapticOnClick { showAdvancedConfirmDialog = true },
                   modifier = Modifier.fillMaxWidth(),
                   shape = RoundedCornerShape(12.dp),
               ) {
@@ -1757,31 +1784,33 @@ fun SettingsScreen(
             },
             confirmButton = {
               Button(
-                  onClick = {
-                    viewModel.setImageResolution(localResolution)
-                    viewModel.setAnalysisInstanceCount(localInstanceCount)
-                    viewModel.setShowPlayPauseToggle(localShowPlayPause)
-                    viewModel.setBackgroundProcessEnabled(localBackgroundProcess)
-                    viewModel.setMaxTokens(localMaxTokens)
-                    viewModel.setGalleryPageSize(localPageSize)
-                    viewModel.applyAdvancedSettings()
-                    showAdvancedConfirmDialog = false
-                  },
+                  onClick =
+                      hapticOnClick {
+                        viewModel.setImageResolution(localResolution)
+                        viewModel.setAnalysisInstanceCount(localInstanceCount)
+                        viewModel.setShowPlayPauseToggle(localShowPlayPause)
+                        viewModel.setBackgroundProcessEnabled(localBackgroundProcess)
+                        viewModel.setMaxTokens(localMaxTokens)
+                        viewModel.setGalleryPageSize(localPageSize)
+                        viewModel.applyAdvancedSettings()
+                        showAdvancedConfirmDialog = false
+                      },
                   enabled = countdown == 0) {
                     Text(if (countdown > 0) "$confirmBtnText ($countdown)" else confirmBtnText)
                   }
             },
             dismissButton = {
               TextButton(
-                  onClick = {
-                    localResolution = savedResolution
-                    localInstanceCount = savedInstanceCount
-                    localShowPlayPause = savedShowPlayPause
-                    localBackgroundProcess = savedBackgroundProcess
-                    localMaxTokens = savedMaxTokens
-                    localPageSize = savedPageSize
-                    showAdvancedConfirmDialog = false
-                  }) {
+                  onClick =
+                      hapticOnClick {
+                        localResolution = savedResolution
+                        localInstanceCount = savedInstanceCount
+                        localShowPlayPause = savedShowPlayPause
+                        localBackgroundProcess = savedBackgroundProcess
+                        localMaxTokens = savedMaxTokens
+                        localPageSize = savedPageSize
+                        showAdvancedConfirmDialog = false
+                      }) {
                     Text(cancelBtnText)
                   }
             })
@@ -1793,22 +1822,24 @@ fun SettingsScreen(
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
           shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-          elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+          colors =
+              CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
       ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
           Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
                 color = if (isDark) Color(0xFF1A3333) else Color(0xFFE0F7FA),
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(34.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.SwapHoriz,
                     null,
                     tint = if (isDark) Color(0xFF80CBC4) else Color(0xFF00695C),
-                    modifier = Modifier.size(22.dp))
+                    modifier = Modifier.size(20.dp))
               }
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -1820,8 +1851,8 @@ fun SettingsScreen(
               )
               Text(
                   stringResource(R.string.transfer_metadata_between_devices),
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
               )
             }
           }
@@ -1832,7 +1863,7 @@ fun SettingsScreen(
               horizontalArrangement = Arrangement.spacedBy(12.dp),
           ) {
             OutlinedButton(
-                onClick = {},
+                onClick = hapticOnClick {},
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(14.dp),
                 contentPadding = PaddingValues(vertical = 14.dp),
@@ -1843,7 +1874,7 @@ fun SettingsScreen(
               Text(stringResource(R.string.export))
             }
             FilledTonalButton(
-                onClick = {},
+                onClick = hapticOnClick {},
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(14.dp),
                 contentPadding = PaddingValues(vertical = 14.dp),
@@ -1873,22 +1904,24 @@ fun SettingsScreen(
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
           shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-          elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+          colors =
+              CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
       ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
           Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
                 color = if (isDark) Color(0xFF3B1929) else Color(0xFFFCE4EC),
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(34.dp),
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
                     Icons.Rounded.Feedback,
                     null,
                     tint = if (isDark) Color(0xFFEF9A9A) else Color(0xFFC62828),
-                    modifier = Modifier.size(22.dp))
+                    modifier = Modifier.size(20.dp))
               }
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -1900,15 +1933,15 @@ fun SettingsScreen(
               )
               Text(
                   stringResource(R.string.feedback_desc),
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
               )
             }
           }
           Spacer(modifier = Modifier.height(16.dp))
 
           FilledTonalButton(
-              onClick = { uriHandler.openUri("https://forms.gle/KR2AsC5VifMP2WkQ9") },
+              onClick = hapticOnClick { uriHandler.openUri("https://forms.gle/KR2AsC5VifMP2WkQ9") },
               modifier = Modifier.fillMaxWidth(),
               shape = RoundedCornerShape(14.dp),
               contentPadding = PaddingValues(vertical = 14.dp),
@@ -1924,18 +1957,16 @@ fun SettingsScreen(
 
       // Buy Me a Coffee
       Surface(
-          onClick = { uriHandler.openUri("https://buymeacoffee.com/derykcihc") },
+          onClick = hapticOnClick { uriHandler.openUri("https://buymeacoffee.com/derykcihc") },
           modifier =
               Modifier.fillMaxWidth().padding(horizontal = 16.dp).graphicsLayer {
-                shadowElevation = 6.dp.toPx()
+                shadowElevation = 0.dp.toPx()
                 shape = RoundedCornerShape(24.dp)
                 clip = true
-                spotShadowColor = Color(0xFFFFDD00).copy(alpha = 0.5f)
-                ambientShadowColor = Color(0xFFFFDD00).copy(alpha = 0.5f)
               },
           shape = RoundedCornerShape(24.dp),
           color = Color(0xFFFFDD00), // BMC Yellow
-          shadowElevation = 6.dp,
+          shadowElevation = 0.dp,
       ) {
         Row(
             modifier = Modifier.padding(vertical = 16.dp),
@@ -1995,12 +2026,13 @@ fun SettingsScreen(
             style =
                 MaterialTheme.typography.bodySmall.copy(
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-            onClick = { offset ->
-              annotatedString
-                  .getStringAnnotations(tag = "github", start = offset, end = offset)
-                  .firstOrNull()
-                  ?.let { annotation -> uriHandler.openUri(annotation.item) }
-            },
+            onClick =
+                hapticOnClick { offset ->
+                  annotatedString
+                      .getStringAnnotations(tag = "github", start = offset, end = offset)
+                      .firstOrNull()
+                      ?.let { annotation -> uriHandler.openUri(annotation.item) }
+                },
         )
       }
 
@@ -2008,10 +2040,11 @@ fun SettingsScreen(
 
       // Privacy Policy Link
       TextButton(
-          onClick = {
-            uriHandler.openUri(
-                "https://github.com/deRykcihC/skarmetoo/blob/master/PRIVACY_POLICY.md")
-          },
+          onClick =
+              hapticOnClick {
+                uriHandler.openUri(
+                    "https://github.com/deRykcihC/skarmetoo/blob/master/PRIVACY_POLICY.md")
+              },
           modifier = Modifier.align(Alignment.CenterHorizontally),
       ) {
         Text(
@@ -2068,13 +2101,14 @@ fun SettingsScreen(
                             if (isSelected)
                                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                             else Color.Transparent,
-                        onClick = {
-                          tempSelectedAlbums =
-                              tempSelectedAlbums.toMutableSet().apply {
-                                if (album.bucketId in this) remove(album.bucketId)
-                                else add(album.bucketId)
-                              }
-                        },
+                        onClick =
+                            hapticOnClick {
+                              tempSelectedAlbums =
+                                  tempSelectedAlbums.toMutableSet().apply {
+                                    if (album.bucketId in this) remove(album.bucketId)
+                                    else add(album.bucketId)
+                                  }
+                            },
                     ) {
                       Row(
                           modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -2116,14 +2150,15 @@ fun SettingsScreen(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            TextButton(onClick = { tempSelectedAlbums = mutableSetOf<String>() }) {
+            TextButton(onClick = hapticOnClick { tempSelectedAlbums = mutableSetOf<String>() }) {
               Text(dlgDeselectAll)
             }
             Button(
-                onClick = {
-                  viewModel.applySelectedMediaAlbums(tempSelectedAlbums)
-                  showMediaFolderDialog = false
-                }) {
+                onClick =
+                    hapticOnClick {
+                      viewModel.applySelectedMediaAlbums(tempSelectedAlbums)
+                      showMediaFolderDialog = false
+                    }) {
                   Text(dlgDone)
                 }
           }

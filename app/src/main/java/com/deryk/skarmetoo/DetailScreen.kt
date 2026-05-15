@@ -148,7 +148,7 @@ fun DetailScreen(
 
         // Close button
         IconButton(
-            onClick = { showFullscreenImage = false },
+            onClick = hapticOnClick { showFullscreenImage = false },
             modifier =
                 Modifier.align(Alignment.TopEnd)
                     .padding(16.dp)
@@ -168,10 +168,11 @@ fun DetailScreen(
         verticalAlignment = Alignment.CenterVertically,
     ) {
       IconButton(
-          onClick = {
-            viewModel.updateNote(entryId, noteText)
-            onBack()
-          }) {
+          onClick =
+              hapticOnClick {
+                viewModel.updateNote(entryId, noteText)
+                onBack()
+              }) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
           }
       Text(
@@ -181,9 +182,10 @@ fun DetailScreen(
       )
       Spacer(modifier = Modifier.weight(1f))
 
-      IconButton(onClick = { ShareUtils.shareScreenshotContent(context, entry, noteText) }) {
-        Icon(Icons.Rounded.Share, "Share")
-      }
+      IconButton(
+          onClick = hapticOnClick { ShareUtils.shareScreenshotContent(context, entry, noteText) }) {
+            Icon(Icons.Rounded.Share, "Share")
+          }
       Spacer(modifier = Modifier.width(4.dp))
 
       // Status pill — exact copy of home page style
@@ -238,7 +240,7 @@ fun DetailScreen(
                 Modifier.clip(RoundedCornerShape(16.dp))
                     .combinedClickable(
                         onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
-                        onClick = {},
+                        onClick = hapticOnClick {},
                     ),
         ) {
           Row(
@@ -268,7 +270,7 @@ fun DetailScreen(
                 Modifier.clip(RoundedCornerShape(16.dp))
                     .combinedClickable(
                         onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
-                        onClick = {},
+                        onClick = hapticOnClick {},
                     ),
         ) {
           Row(
@@ -303,7 +305,10 @@ fun DetailScreen(
     ) {
       Card(
           shape = RoundedCornerShape(16.dp),
-          elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+          elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+          colors =
+              CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
           modifier = Modifier.fillMaxWidth().clickable { showFullscreenImage = true },
       ) {
         if (entry.imageUri.isNotBlank()) {
@@ -401,7 +406,7 @@ fun DetailScreen(
             OutlinedCard(
                 shape = RoundedCornerShape(20.dp),
                 border = CardDefaults.outlinedCardBorder(),
-                onClick = { onTagClick(tag) },
+                onClick = hapticOnClick { onTagClick(tag) },
             ) {
               Text(
                   text = tag,

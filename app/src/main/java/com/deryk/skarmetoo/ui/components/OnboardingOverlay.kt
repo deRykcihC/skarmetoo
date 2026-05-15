@@ -19,6 +19,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.deryk.skarmetoo.hapticOnClick
 
 @Composable
 fun OnboardingOverlay(
@@ -95,15 +96,17 @@ fun OnboardingOverlay(
                       modifier = Modifier.fillMaxWidth(),
                       horizontalArrangement = Arrangement.SpaceBetween,
                       verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onClose) {
+                        TextButton(onClick = hapticOnClick(onClose)) {
                           Text("Skip", color = MaterialTheme.colorScheme.outline)
                         }
 
                         Row {
                           if (hasPrev) {
-                            TextButton(onClick = onPrev) { Text("Back") }
+                            TextButton(onClick = hapticOnClick(onPrev)) { Text("Back") }
                           }
-                          Button(onClick = onNext) { Text(if (hasNext) "Next" else "Done") }
+                          Button(onClick = hapticOnClick(onNext)) {
+                            Text(if (hasNext) "Next" else "Done")
+                          }
                         }
                       }
                 }
