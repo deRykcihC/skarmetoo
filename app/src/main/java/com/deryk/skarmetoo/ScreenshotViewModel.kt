@@ -53,6 +53,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val db = ScreenshotDatabase(application)
   val llmManager = LlmManager.getInstance(application)
   private val ggufManager = GgufLlmManager.getInstance(application)
+  private val currentAppVersionCode =
+      try {
+        val packageInfo =
+            application.packageManager.getPackageInfo(application.packageName, 0)
+        @Suppress("DEPRECATION")
+        packageInfo.longVersionCode
+      } catch (_: Exception) {
+        0L
+      }
+  private val prefs =
+      application.getSharedPreferences("skarmetoo_prefs", android.content.Context.MODE_PRIVATE)
+  private val onboardingPrefs =
+      application.getSharedPreferences(
+          "skarmetoo_onboarding_prefs", android.content.Context.MODE_PRIVATE)
 
   private val _entries = MutableStateFlow<List<ScreenshotEntry>>(emptyList())
   val entries: StateFlow<List<ScreenshotEntry>> = _entries.asStateFlow()
@@ -118,9 +132,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   private val _isRefreshing = MutableStateFlow(false)
   val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
-
-  private val prefs =
-      application.getSharedPreferences("skarmetoo_prefs", android.content.Context.MODE_PRIVATE)
 
   private val _availableAlbums = MutableStateFlow<List<AlbumInfo>>(emptyList())
   val availableAlbums: StateFlow<List<AlbumInfo>> = _availableAlbums.asStateFlow()
@@ -409,6 +420,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   private val _hasSeenOnboarding = MutableStateFlow(false)
   val hasSeenOnboarding: StateFlow<Boolean> = _hasSeenOnboarding.asStateFlow()
+  private val onboardingVersionKey = "last_seen_onboarding_version_code"
 
   fun setAppLanguage(lang: String) {
     _appLanguage.value = lang
@@ -427,7 +439,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   fun setHasSeenOnboarding(seen: Boolean) {
     _hasSeenOnboarding.value = seen
-    prefs.edit().putBoolean("has_seen_onboarding", seen).apply()
+    onboardingPrefs
+        .edit()
+        .putLong(onboardingVersionKey, if (seen) currentAppVersionCode else 0L)
+        .apply()
   }
 
   /** Toggle pin/unpin for an album by its bucket ID. */
@@ -468,7 +483,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     _analysisLanguage.value = savedAnalysisLang
 
     _isSortDescending.value = prefs.getBoolean("is_sort_descending", true)
-    _hasSeenOnboarding.value = prefs.getBoolean("has_seen_onboarding", false)
+    val lastSeenOnboardingVersion = onboardingPrefs.getLong(onboardingVersionKey, 0L)
+    _hasSeenOnboarding.value = lastSeenOnboardingVersion >= currentAppVersionCode
 
     // Restore pinned album IDs
     _pinnedAlbumIds.value = prefs.getStringSet("pinned_album_ids", emptySet()) ?: emptySet()

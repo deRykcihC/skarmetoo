@@ -16,4 +16,5 @@ local.properties
 key.properties
 *.jks
 upload_certificate.pem
+deploymentTargetSelector.xml
 

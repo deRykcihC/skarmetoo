@@ -5,15 +5,9 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!--
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="skarmetoo_onboarding_prefs.xml" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="skarmetoo_onboarding_prefs.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>

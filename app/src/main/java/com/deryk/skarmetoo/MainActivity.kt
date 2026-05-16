@@ -19,8 +19,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -28,6 +31,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.deryk.skarmetoo.ui.theme.SkarmetooTheme
+import com.deryk.skarmetoo.ui.theme.uiScaleForDensityDpi
 
 class MainActivity : ComponentActivity() {
   private val viewModel: ScreenshotViewModel by viewModels()
@@ -61,7 +65,14 @@ class MainActivity : ComponentActivity() {
     )
     setContent {
       val context = LocalContext.current
+      val configuration = LocalConfiguration.current
       val currentLanguage by viewModel.appLanguage.collectAsState()
+      val baseDensity = LocalDensity.current
+      val uiScale = remember(configuration.densityDpi) { uiScaleForDensityDpi(configuration.densityDpi) }
+      val scaledDensity =
+          remember(baseDensity, uiScale) {
+            Density(density = baseDensity.density * uiScale, fontScale = baseDensity.fontScale)
+          }
 
       val localeContext =
           remember(currentLanguage) {
@@ -88,6 +99,7 @@ class MainActivity : ComponentActivity() {
           LocalContext provides localeContext,
           androidx.compose.ui.platform.LocalConfiguration provides
               localeContext.resources.configuration,
+          LocalDensity provides scaledDensity,
           androidx.activity.compose.LocalActivityResultRegistryOwner provides
               (context as androidx.activity.result.ActivityResultRegistryOwner),
       ) {
