@@ -11,7 +11,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ImageSearch
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
@@ -19,12 +19,12 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -41,16 +41,22 @@ class MainActivity : ComponentActivity() {
       kotlinx.coroutines.flow.MutableSharedFlow<Intent>(extraBufferCapacity = 1)
   val newIntentFlow = _newIntentFlow
 
+  private val _isPickMode = androidx.compose.runtime.mutableStateOf(false)
+  val isPickMode: androidx.compose.runtime.State<Boolean> = _isPickMode
+
   override fun onNewIntent(intent: android.content.Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
     _newIntentFlow.tryEmit(intent)
+    _isPickMode.value =
+        intent.action == Intent.ACTION_PICK || intent.action == Intent.ACTION_GET_CONTENT
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
-    // Removed early permission request
+    _isPickMode.value =
+        intent?.action == Intent.ACTION_PICK || intent?.action == Intent.ACTION_GET_CONTENT
 
     enableEdgeToEdge(
         statusBarStyle =
@@ -69,7 +75,8 @@ class MainActivity : ComponentActivity() {
       val configuration = LocalConfiguration.current
       val currentLanguage by viewModel.appLanguage.collectAsState()
       val baseDensity = LocalDensity.current
-      val uiScale = remember(configuration.densityDpi) { uiScaleForDensityDpi(configuration.densityDpi) }
+      val uiScale =
+          remember(configuration.densityDpi) { uiScaleForDensityDpi(configuration.densityDpi) }
       val scaledDensity =
           remember(baseDensity, uiScale) {
             Density(density = baseDensity.density * uiScale, fontScale = baseDensity.fontScale)
@@ -107,7 +114,7 @@ class MainActivity : ComponentActivity() {
         SkarmetooTheme(darkTheme = isDarkMode) {
           CompositionLocalProvider(
               com.deryk.skarmetoo.ui.theme.LocalIsDarkMode provides isDarkMode) {
-                MainApp(viewModel = viewModel)
+                MainApp(viewModel = viewModel, isPickMode = isPickMode.value)
               }
         }
       }
@@ -118,10 +125,10 @@ class MainActivity : ComponentActivity() {
 // --- Navigation ---
 object Routes {
   const val ONBOARDING = "onboarding"
-  const val GALLERY = "gallery"
+  const val LEGACY = "legacy"
   const val SETTINGS = "settings"
   const val EXPERIMENTAL = "experimental"
-  const val TEST_GALLERY = "test_gallery"
+  const val GALLERY = "gallery"
   const val DETAIL = "detail/{id}"
 
   fun detail(id: Long) = "detail/$id"
@@ -137,25 +144,27 @@ fun android.content.Context.findComponentActivity(): ComponentActivity? {
 }
 
 // --- Main App ---
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainApp(viewModel: ScreenshotViewModel) {
+fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
   val navController = rememberNavController()
   val navBackStackEntry by navController.currentBackStackEntryAsState()
   val currentRoute = navBackStackEntry?.destination?.route
   val context = LocalContext.current
 
   val showBottomBar =
-      currentRoute == Routes.GALLERY ||
-          currentRoute == Routes.SETTINGS ||
-          currentRoute == Routes.EXPERIMENTAL ||
-          currentRoute == Routes.TEST_GALLERY
+      !isPickMode &&
+          (currentRoute == Routes.LEGACY ||
+              currentRoute == Routes.SETTINGS ||
+              currentRoute == Routes.EXPERIMENTAL ||
+              currentRoute == Routes.GALLERY)
 
-  var galleryScrollKey by remember { mutableIntStateOf(0) }
-  var galleryRefreshKey by remember { mutableIntStateOf(0) }
+  var legacyScrollKey by remember { mutableIntStateOf(0) }
+  var legacyRefreshKey by remember { mutableIntStateOf(0) }
+  val legacyScrollState = androidx.compose.foundation.rememberScrollState()
   val galleryScrollState = androidx.compose.foundation.rememberScrollState()
-  val testGalleryScrollState = androidx.compose.foundation.rememberScrollState()
   var isScreenSaverActive by remember { mutableStateOf(false) }
-  var lastGalleryClickTime by remember { mutableLongStateOf(0L) }
+  var lastLegacyClickTime by remember { mutableLongStateOf(0L) }
   val isEasterEgg = remember { kotlin.random.Random.nextFloat() < 0.069f }
   val logoRes = if (isEasterEgg) R.drawable.app_logo_rainbow else R.drawable.app_logo
 
@@ -165,18 +174,42 @@ fun MainApp(viewModel: ScreenshotViewModel) {
 
   val activity = context.findComponentActivity() as? MainActivity
 
-  LaunchedEffect(activity) {
-    activity?.newIntentFlow?.collect { newIntent ->
-      if (newIntent.action == "SHOW_GALLERY") {
-        newIntent.setAction(null) // Clear action so we don't repeatedly navigate on recomposition
-        if (currentRoute != Routes.GALLERY) {
-          navController.navigate(Routes.GALLERY) {
-            popUpTo(navController.graph.startDestinationId) { saveState = true }
-            launchSingleTop = true
-            restoreState = true
-          }
+  fun processLaunchIntent(
+      intent: Intent,
+      viewModel: ScreenshotViewModel,
+      navController: androidx.navigation.NavController
+  ) {
+    val action = intent.action
+    val uri = intent.data
+
+    if (action == "SHOW_GALLERY") {
+      intent.setAction(null) // Clear action so we don't repeatedly navigate on recomposition
+      val currentRoute = navController.currentBackStackEntry?.destination?.route
+      if (currentRoute != Routes.GALLERY) {
+        navController.navigate(Routes.GALLERY) {
+          popUpTo(navController.graph.startDestinationId) { saveState = true }
+          launchSingleTop = true
+          restoreState = true
         }
       }
+    } else if (action == Intent.ACTION_VIEW && uri != null) {
+      intent.setAction(null) // Clear action so we don't repeatedly navigate on recomposition
+      viewModel.getOrCreateEntryForUri(uri) { entryId ->
+        if (entryId > 0) {
+          navController.navigate(Routes.detail(entryId)) { launchSingleTop = true }
+        }
+      }
+    }
+  }
+
+  LaunchedEffect(activity) {
+    // Process initial intent
+    activity?.intent?.let { initialIntent ->
+      processLaunchIntent(initialIntent, viewModel, navController)
+    }
+    // Collect subsequent intents
+    activity?.newIntentFlow?.collect { newIntent ->
+      processLaunchIntent(newIntent, viewModel, navController)
     }
   }
 
@@ -195,6 +228,21 @@ fun MainApp(viewModel: ScreenshotViewModel) {
   }
 
   Scaffold(
+      topBar = {
+        if (isPickMode) {
+          TopAppBar(
+              title = { Text(stringResource(R.string.select_photo_title)) },
+              navigationIcon = {
+                IconButton(onClick = hapticOnClick { activity?.finish() }) {
+                  Icon(Icons.Rounded.Close, stringResource(R.string.cancel))
+                }
+              },
+              colors =
+                  TopAppBarDefaults.topAppBarColors(
+                      containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                      titleContentColor = MaterialTheme.colorScheme.onSurface))
+        }
+      },
       bottomBar = {
         AnimatedVisibility(
             visible = showBottomBar,
@@ -206,36 +254,27 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                 selected = currentRoute == Routes.GALLERY,
                 onClick =
                     hapticOnClick {
-                      val now = System.currentTimeMillis()
                       if (currentRoute != Routes.GALLERY) {
                         navController.navigate(Routes.GALLERY) {
                           popUpTo(navController.graph.startDestinationId) { saveState = true }
                           launchSingleTop = true
                           restoreState = true
                         }
-                      } else {
-                        if (now - lastGalleryClickTime < 400) {
-                          galleryRefreshKey++
-                          lastGalleryClickTime = 0L
-                        } else {
-                          galleryScrollKey++
-                          lastGalleryClickTime = now
-                        }
                       }
                     },
                 icon = {
                   Icon(
-                      if (currentRoute == Routes.GALLERY) Icons.Rounded.PhotoLibrary
-                      else Icons.Outlined.PhotoLibrary,
-                      "Gallery",
+                      if (currentRoute == Routes.GALLERY) Icons.Rounded.Home
+                      else Icons.Outlined.Home,
+                      "Home",
                   )
                 },
                 label = { Text(stringResource(R.string.gallery)) },
                 colors =
                     NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
             )
             NavigationBarItem(
@@ -266,6 +305,42 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                     ),
             )
             NavigationBarItem(
+                selected = currentRoute == Routes.LEGACY,
+                onClick =
+                    hapticOnClick {
+                      val now = System.currentTimeMillis()
+                      if (currentRoute != Routes.LEGACY) {
+                        navController.navigate(Routes.LEGACY) {
+                          popUpTo(navController.graph.startDestinationId) { saveState = true }
+                          launchSingleTop = true
+                          restoreState = true
+                        }
+                      } else {
+                        if (now - lastLegacyClickTime < 400) {
+                          legacyRefreshKey++
+                          lastLegacyClickTime = 0L
+                        } else {
+                          legacyScrollKey++
+                          lastLegacyClickTime = now
+                        }
+                      }
+                    },
+                icon = {
+                  Icon(
+                      if (currentRoute == Routes.LEGACY) Icons.Rounded.PhotoLibrary
+                      else Icons.Outlined.PhotoLibrary,
+                      "Legacy",
+                  )
+                },
+                label = { Text(stringResource(R.string.legacy_gallery)) },
+                colors =
+                    NavigationBarItemDefaults.colors(
+                        indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                        selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        selectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ),
+            )
+            NavigationBarItem(
                 selected = currentRoute == Routes.EXPERIMENTAL,
                 onClick =
                     hapticOnClick {
@@ -292,33 +367,6 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                         selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
             )
-            NavigationBarItem(
-                selected = currentRoute == Routes.TEST_GALLERY,
-                onClick =
-                    hapticOnClick {
-                      if (currentRoute != Routes.TEST_GALLERY) {
-                        navController.navigate(Routes.TEST_GALLERY) {
-                          popUpTo(navController.graph.startDestinationId) { saveState = true }
-                          launchSingleTop = true
-                          restoreState = true
-                        }
-                      }
-                    },
-                icon = {
-                  Icon(
-                      if (currentRoute == Routes.TEST_GALLERY) Icons.Rounded.ImageSearch
-                      else Icons.Outlined.ImageSearch,
-                      "TestGallery",
-                  )
-                },
-                label = { Text(stringResource(R.string.test_gallery)) },
-                colors =
-                    NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-            )
           }
         }
       },
@@ -328,7 +376,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             targetValue = innerPadding.calculateBottomPadding(),
             label = "bottomPadding",
         )
-    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS, Routes.EXPERIMENTAL, Routes.TEST_GALLERY)
+    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS, Routes.LEGACY, Routes.EXPERIMENTAL)
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -353,6 +401,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             when (targetRoute) {
               Routes.GALLERY -> slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn()
               Routes.SETTINGS,
+              Routes.LEGACY,
               Routes.EXPERIMENTAL -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
               else -> fadeIn()
             }
@@ -374,6 +423,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             when (targetRoute) {
               Routes.GALLERY -> slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut()
               Routes.SETTINGS,
+              Routes.LEGACY,
               Routes.EXPERIMENTAL -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
               else -> fadeOut()
             }
@@ -392,14 +442,15 @@ fun MainApp(viewModel: ScreenshotViewModel) {
               }
             })
       }
-      composable(Routes.GALLERY) {
-        GalleryScreen(
+      composable(Routes.LEGACY) {
+        LegacyScreen(
             viewModel = viewModel,
             onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
-            scrollToTopKey = galleryScrollKey,
-            refreshKey = galleryRefreshKey,
+            scrollToTopKey = legacyScrollKey,
+            refreshKey = legacyRefreshKey,
             logoRes = logoRes,
-            scrollState = galleryScrollState,
+            scrollState = legacyScrollState,
+            isPickMode = isPickMode,
         )
       }
       composable(Routes.SETTINGS) {
@@ -417,14 +468,15 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             logoRes = logoRes,
         )
       }
-        composable(Routes.TEST_GALLERY) {
-          TestGalleryScreen(
-              viewModel = viewModel,
-              onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
-              scrollState = testGalleryScrollState,
-              logoRes = logoRes,
-          )
-        }
+      composable(Routes.GALLERY) {
+        GalleryScreen(
+            viewModel = viewModel,
+            onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
+            scrollState = galleryScrollState,
+            logoRes = logoRes,
+            isPickMode = isPickMode,
+        )
+      }
 
       composable(
           Routes.DETAIL,

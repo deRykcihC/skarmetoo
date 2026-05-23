@@ -55,6 +55,7 @@ import kotlinx.coroutines.launch
 fun PillScrollbar(
     scrollState: ScrollState,
     bottomPadding: Dp = 8.dp,
+    totalContentHeightPx: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
   val coroutineScope = rememberCoroutineScope()
@@ -97,32 +98,40 @@ fun PillScrollbar(
 
   val maxValue = scrollState.maxValue
 
+  // When totalContentHeightPx is provided, use it instead of the rendered-only maxValue
+  // so the scrollbar reflects the full content, not just what is progressively loaded.
+  val viewportPx = trackHeightPx.toFloat().coerceAtLeast(1f)
+  val useTotalOverride = totalContentHeightPx > 0f && totalContentHeightPx > viewportPx
+  val effectiveMaxScroll =
+      if (useTotalOverride) (totalContentHeightPx - viewportPx).coerceAtLeast(1f)
+      else maxValue.toFloat()
+
   // Don't render if content fits in the viewport or scrollbar is hidden
   // Hidden scrollbar should not be draggable — only interactive after user scrolls
-  if ((maxValue <= 0 && !isDragging) || (!isVisible && !isDragging)) return
+  if ((effectiveMaxScroll <= 0f && !isDragging) || (!isVisible && !isDragging)) return
 
   // === Pixel-perfect position from ScrollState ===
   val rawNormalizedPosition =
-      if (maxValue > 0) {
-        scrollState.value.toFloat() / maxValue.toFloat()
+      if (effectiveMaxScroll > 0f) {
+        (scrollState.value.toFloat() / effectiveMaxScroll).coerceIn(0f, 1f)
       } else 0f
 
   // Use raw position directly — no animation delay for snappy scrolling
   val normalizedPosition = rawNormalizedPosition
 
-  // Thumb height: viewport / contentHeight where contentHeight = viewport + maxValue
+  // Thumb height: viewport / totalContent
   val thumbHeightFraction =
-      if (trackHeightPx > 0 && maxValue > 0) {
-        (trackHeightPx.toFloat() / (trackHeightPx + maxValue)).coerceIn(0.05f, 0.4f)
+      if (trackHeightPx > 0 && effectiveMaxScroll > 0f) {
+        (viewportPx / (viewportPx + effectiveMaxScroll)).coerceIn(0.05f, 0.4f)
       } else 0.15f
 
   // Only enable touch handling when the scrollbar is visible or being dragged
   val touchModifier =
       if (isVisible || isDragging) {
-        Modifier.pointerInput(scrollState, maxValue, trackHeightPx) {
+        Modifier.pointerInput(scrollState, effectiveMaxScroll, trackHeightPx) {
           awaitEachGesture {
             val down = awaitFirstDown()
-            if (trackHeightPx <= 0 || maxValue <= 0) return@awaitEachGesture
+            if (trackHeightPx <= 0 || effectiveMaxScroll <= 0f) return@awaitEachGesture
 
             down.consume()
             isDragging = true
@@ -149,9 +158,10 @@ fun PillScrollbar(
                         (effectiveY / scrollableTrack).coerceIn(0f, 1f)
                       } else 0f
 
-                  // Apply scroll immediately using pixel position
-                  val targetScrollPx = (targetPosition * maxValue).toInt()
-                  val delta = (targetScrollPx - scrollState.value).toFloat()
+                  // Apply scroll using the effective max (total content aware)
+                  val targetScrollPx = (targetPosition * effectiveMaxScroll).toInt()
+                  val clampedTarget = targetScrollPx.coerceAtMost(scrollState.maxValue)
+                  val delta = (clampedTarget - scrollState.value).toFloat()
                   scrollState.dispatchRawDelta(delta)
                 }
 

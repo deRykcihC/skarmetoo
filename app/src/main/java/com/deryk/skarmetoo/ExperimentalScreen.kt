@@ -44,6 +44,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
@@ -78,6 +80,7 @@ fun ExperimentalScreen(
   var isPinching by remember { mutableStateOf(false) }
   var pinchingPreviewColumns by remember { mutableStateOf(gridColumns) }
   var pendingConfirmColumns by remember { mutableStateOf<Int?>(null) }
+  var isNavigating by remember { mutableStateOf(false) }
   // Use preview columns during pinch/debounce, committed columns otherwise
   val effectiveColumns = if (isPinching) pinchingPreviewColumns else gridColumns
   val selectedAlbumId by viewModel.selectedExperimentalAlbumId.collectAsState()
@@ -480,59 +483,57 @@ fun ExperimentalScreen(
                     gridViewportHeightPx = it.height
                   }
                   .pointerInput(gridColumns) {
-                // Pinch-to-resize: shows grey placeholders during gesture,
-                // with 0.5s debounce after release for further adjustment before committing.
-                var localPinching = false
-                var initialPinchDistance = 0f
-                var startColumns = gridColumns
+                    // Pinch-to-resize: shows grey placeholders during gesture,
+                    // with 0.5s debounce after release for further adjustment before committing.
+                    var localPinching = false
+                    var initialPinchDistance = 0f
+                    var startColumns = gridColumns
 
-                awaitPointerEventScope {
-                  while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                    val activePointers = event.changes.filter { it.pressed }
+                    awaitPointerEventScope {
+                      while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val activePointers = event.changes.filter { it.pressed }
 
-                    if (activePointers.isEmpty()) {
-                      if (localPinching) {
-                        localPinching = false
-                        // Don't commit yet — start 0.5s debounce
-                        pendingConfirmColumns = pinchingPreviewColumns
+                        if (activePointers.isEmpty()) {
+                          if (localPinching) {
+                            localPinching = false
+                            // Don't commit yet — start 0.5s debounce
+                            pendingConfirmColumns = pinchingPreviewColumns
+                          }
+                          continue
+                        }
+
+                        if (!localPinching && activePointers.size >= 2) {
+                          localPinching = true
+                          isPinching = true
+                          // Cancel any pending debounce
+                          pendingConfirmColumns = null
+                          initialPinchDistance = pinchDistance(activePointers)
+                          startColumns = pinchingPreviewColumns
+                        }
+
+                        if (localPinching) {
+                          // Consume events so verticalScroll doesn't scroll during pinch
+                          event.changes.forEach { it.consume() }
+                          if (activePointers.size >= 2) {
+                            val currentDistance = pinchDistance(activePointers)
+                            val scale = currentDistance / initialPinchDistance
+                            val newColumns = (startColumns / scale).roundToInt().coerceIn(1, 10)
+                            pinchingPreviewColumns = newColumns
+                          }
+                          if (activePointers.size < 2) {
+                            localPinching = false
+                            // Don't commit yet — start 0.5s debounce
+                            pendingConfirmColumns = pinchingPreviewColumns
+                          }
+                        }
                       }
-                      continue
                     }
-
-                    if (!localPinching && activePointers.size >= 2) {
-                      localPinching = true
-                      isPinching = true
-                      // Cancel any pending debounce
-                      pendingConfirmColumns = null
-                      initialPinchDistance = pinchDistance(activePointers)
-                      startColumns = pinchingPreviewColumns
-                    }
-
-                    if (localPinching) {
-                      // Consume events so verticalScroll doesn't scroll during pinch
-                      event.changes.forEach { it.consume() }
-                      if (activePointers.size >= 2) {
-                        val currentDistance = pinchDistance(activePointers)
-                        val scale = currentDistance / initialPinchDistance
-                        val newColumns = (startColumns / scale).roundToInt().coerceIn(1, 10)
-                        pinchingPreviewColumns = newColumns
-                      }
-                      if (activePointers.size < 2) {
-                        localPinching = false
-                        // Don't commit yet — start 0.5s debounce
-                        pendingConfirmColumns = pinchingPreviewColumns
-                      }
-                    }
-                  }
-                }
                   },
       ) {
         Column(
             modifier =
-                Modifier.fillMaxSize()
-                    .verticalScroll(scrollState)
-                    .padding(EXP_GRID_SPACING_DP.dp),
+                Modifier.fillMaxSize().verticalScroll(scrollState).padding(EXP_GRID_SPACING_DP.dp),
             verticalArrangement = Arrangement.spacedBy(EXP_GRID_SPACING_DP.dp),
         ) {
           rows.take(renderedRows).forEachIndexed { rowIndex, row ->
@@ -547,14 +548,25 @@ fun ExperimentalScreen(
                 val uriString = uri.toString()
                 val statusPair = experimentalStatuses[uriString]
                 val entryId = statusPair?.first
-
                 ExperimentalGalleryItem(
                     uri = uri,
                     gridColumns = effectiveColumns,
                     shouldLoad = shouldLoadRow,
                     showPlaceholder = isPinching,
-                    isClickable = entryId != null,
-                    onClick = hapticOnClick { entryId?.let { onScreenshotClick(it) } },
+                    isClickable = true,
+                    onClick =
+                        hapticOnClick {
+                          if (isNavigating) return@hapticOnClick
+                          if (entryId != null) {
+                            onScreenshotClick(entryId)
+                          } else {
+                            isNavigating = true
+                            viewModel.getOrCreateEntryForUri(uri) { newId ->
+                              isNavigating = false
+                              onScreenshotClick(newId)
+                            }
+                          }
+                        },
                     modifier = Modifier.weight(1f),
                 )
               }
@@ -568,11 +580,50 @@ fun ExperimentalScreen(
           }
         }
 
+        // Total content height based on ALL rows (not just rendered),
+        // so the scrollbar reflects the full image count in the folder.
+        val totalGridContentHeightPx =
+            if (rows.isNotEmpty() && rowHeightPx > 0f) {
+              val paddingPx = with(density) { EXP_GRID_SPACING_DP.dp.toPx() }
+              rows.size * rowHeightPx + paddingPx * 2
+            } else 0f
+
         PillScrollbar(
             scrollState = scrollState,
+            totalContentHeightPx = totalGridContentHeightPx,
             modifier = Modifier.align(Alignment.TopEnd).padding(end = 2.dp),
         )
       }
+    }
+
+    if (isNavigating) {
+      Dialog(
+          onDismissRequest = {},
+          properties =
+              DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
+            Box(
+                modifier =
+                    Modifier.size(120.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            shape = RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center) {
+                  Column(
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                      verticalArrangement = Arrangement.Center,
+                      modifier = Modifier.padding(16.dp)) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            strokeWidth = 3.dp,
+                            color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(R.string.status_loading),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                      }
+                }
+          }
     }
   }
 }

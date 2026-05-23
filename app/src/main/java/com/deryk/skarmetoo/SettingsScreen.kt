@@ -39,8 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
-import kotlin.math.roundToInt
 import com.google.mlkit.genai.common.FeatureStatus
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -1029,8 +1029,7 @@ fun SettingsScreen(
                       colors =
                           CardDefaults.outlinedCardColors(
                               containerColor =
-                                  if (isAicoreSelected)
-                                      MaterialTheme.colorScheme.secondaryContainer
+                                  if (isAicoreSelected) MaterialTheme.colorScheme.secondaryContainer
                                   else Color.Transparent,
                           ),
                       border =
@@ -1054,13 +1053,13 @@ fun SettingsScreen(
                           Surface(
                               color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                               shape = RoundedCornerShape(4.dp)) {
-                            Text(
-                                text = "BETA",
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold)
-                          }
+                                Text(
+                                    text = "BETA",
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold)
+                              }
                         }
                         Text(
                             "Android AICore",
@@ -1074,43 +1073,44 @@ fun SettingsScreen(
                         )
                       }
                       Spacer(modifier = Modifier.width(12.dp))
-                      
-                      val aicoreColor = if (aicoreStatus == FeatureStatus.AVAILABLE) {
-                        if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
-                      } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
-                        MaterialTheme.colorScheme.errorContainer
-                      } else {
-                        MaterialTheme.colorScheme.surfaceContainerHighest
-                      }
+
+                      val aicoreColor =
+                          if (aicoreStatus == FeatureStatus.AVAILABLE) {
+                            if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+                          } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+                            MaterialTheme.colorScheme.errorContainer
+                          } else {
+                            MaterialTheme.colorScheme.surfaceContainerHighest
+                          }
 
                       Surface(
                           shape = RoundedCornerShape(8.dp),
                           color = aicoreColor,
                           modifier = Modifier.size(32.dp)) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()) {
-                          if (aicoreStatus == FeatureStatus.AVAILABLE) {
-                            Icon(
-                                imageVector = Icons.Rounded.Check,
-                                contentDescription = "Ready",
-                                tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
-                                modifier = Modifier.size(20.dp))
-                          } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "Unsupported",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(20.dp))
-                          } else {
-                            Icon(
-                                imageVector = Icons.Rounded.Info,
-                                contentDescription = "Check Setup",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp))
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.fillMaxSize()) {
+                                  if (aicoreStatus == FeatureStatus.AVAILABLE) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Ready",
+                                        tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                        modifier = Modifier.size(20.dp))
+                                  } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Close,
+                                        contentDescription = "Unsupported",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(20.dp))
+                                  } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Info,
+                                        contentDescription = "Check Setup",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp))
+                                  }
+                                }
                           }
-                        }
-                      }
                     }
                   }
                 }

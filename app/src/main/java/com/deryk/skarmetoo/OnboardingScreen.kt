@@ -10,9 +10,12 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -770,7 +773,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
               title = stringResource(R.string.onboarding_page7_title),
               description = stringResource(R.string.onboarding_page7_desc)) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                  // Search pill + sort/filter tags — matching the GalleryScreen layout
+                  // Search pill + sort/filter tags — matching the LegacyScreen layout
                   var isSortDescending by remember { mutableStateOf(true) }
                   LaunchedEffect(Unit) {
                     while (true) {
@@ -865,6 +868,272 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                 }
               },
 
+          // ── Page 7.1: Layout Pills (New) ──
+          OnboardingPage(
+              title = stringResource(R.string.onboarding_layout_pills_title),
+              description = stringResource(R.string.onboarding_layout_pills_desc)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                      var isGalleryStyle by remember { mutableStateOf(true) }
+                      LaunchedEffect(Unit) {
+                        while (true) {
+                          delay(1800L)
+                          isGalleryStyle = !isGalleryStyle
+                        }
+                      }
+
+                      Box(
+                          modifier =
+                              Modifier.fillMaxWidth()
+                                  .height(110.dp)
+                                  .clip(RoundedCornerShape(16.dp))
+                                  .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                          contentAlignment = Alignment.Center) {
+                            androidx.compose.animation.AnimatedContent(
+                                targetState = isGalleryStyle, label = "LayoutPreview") { isGallery
+                                  ->
+                                  if (isGallery) {
+                                    Card(
+                                        modifier = Modifier.width(180.dp).height(80.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors =
+                                            CardDefaults.cardColors(
+                                                containerColor =
+                                                    MaterialTheme.colorScheme.surfaceVariant)) {
+                                          Box(
+                                              modifier = Modifier.fillMaxSize(),
+                                              contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    Icons.Rounded.Image,
+                                                    null,
+                                                    tint =
+                                                        MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(32.dp))
+                                              }
+                                        }
+                                  } else {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(
+                                            modifier =
+                                                Modifier.size(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        MaterialTheme.colorScheme.surfaceVariant))
+                                        Box(
+                                            modifier =
+                                                Modifier.size(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        MaterialTheme.colorScheme.surfaceVariant))
+                                      }
+                                      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(
+                                            modifier =
+                                                Modifier.size(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        MaterialTheme.colorScheme.surfaceVariant))
+                                        Box(
+                                            modifier =
+                                                Modifier.size(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        MaterialTheme.colorScheme.surfaceVariant))
+                                      }
+                                    }
+                                  }
+                                }
+                          }
+
+                      Spacer(modifier = Modifier.height(16.dp))
+
+                      Surface(
+                          modifier =
+                              Modifier.width(120.dp)
+                                  .border(
+                                      width = 1.dp,
+                                      color =
+                                          MaterialTheme.colorScheme.outlineVariant.copy(
+                                              alpha = 0.5f),
+                                      shape = CircleShape),
+                          shape = CircleShape,
+                          color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            Box(modifier = Modifier.padding(4.dp).width(112.dp).height(36.dp)) {
+                              val selectedOffset by
+                                  androidx.compose.animation.core.animateDpAsState(
+                                      targetValue = if (isGalleryStyle) 0.dp else 56.dp,
+                                      animationSpec =
+                                          androidx.compose.animation.core.spring(
+                                              dampingRatio = 0.8f, stiffness = 300f),
+                                      label = "PillOffset")
+                              Box(
+                                  modifier =
+                                      Modifier.offset(x = selectedOffset)
+                                          .width(56.dp)
+                                          .fillMaxHeight()
+                                          .clip(CircleShape)
+                                          .background(MaterialTheme.colorScheme.primary))
+
+                              Row(
+                                  modifier = Modifier.fillMaxSize(),
+                                  verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier =
+                                            Modifier.weight(1f)
+                                                .fillMaxHeight()
+                                                .clip(CircleShape)
+                                                .clickable(
+                                                    onClick =
+                                                        hapticOnClick { isGalleryStyle = true }),
+                                        contentAlignment = Alignment.Center) {
+                                          Icon(
+                                              imageVector = Icons.Rounded.ViewQuilt,
+                                              contentDescription = "Gallery Layout",
+                                              tint =
+                                                  if (isGalleryStyle)
+                                                      MaterialTheme.colorScheme.onPrimary
+                                                  else MaterialTheme.colorScheme.onSurfaceVariant,
+                                              modifier = Modifier.size(18.dp))
+                                        }
+                                    Box(
+                                        modifier =
+                                            Modifier.weight(1f)
+                                                .fillMaxHeight()
+                                                .clip(CircleShape)
+                                                .clickable(
+                                                    onClick =
+                                                        hapticOnClick { isGalleryStyle = false }),
+                                        contentAlignment = Alignment.Center) {
+                                          Icon(
+                                              imageVector = Icons.Rounded.GridView,
+                                              contentDescription = "Grid Layout",
+                                              tint =
+                                                  if (!isGalleryStyle)
+                                                      MaterialTheme.colorScheme.onPrimary
+                                                  else MaterialTheme.colorScheme.onSurfaceVariant,
+                                              modifier = Modifier.size(18.dp))
+                                        }
+                                  }
+                            }
+                          }
+                    }
+              },
+
+          // ── Page 7.2: Collapsible Album Row (New) ──
+          OnboardingPage(
+              title = stringResource(R.string.onboarding_hide_albums_title),
+              description = stringResource(R.string.onboarding_hide_albums_desc)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                      var isAlbumRowVisible by remember { mutableStateOf(true) }
+                      LaunchedEffect(Unit) {
+                        while (true) {
+                          delay(1800L)
+                          isAlbumRowVisible = !isAlbumRowVisible
+                        }
+                      }
+
+                      Row(
+                          modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                          horizontalArrangement =
+                              Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                          verticalAlignment = Alignment.CenterVertically) {
+                            FilterChip(
+                                selected = true,
+                                onClick = hapticOnClick { isAlbumRowVisible = !isAlbumRowVisible },
+                                label = {
+                                  Icon(
+                                      if (isAlbumRowVisible) Icons.Rounded.KeyboardArrowDown
+                                      else Icons.Rounded.KeyboardArrowUp,
+                                      contentDescription = null,
+                                      modifier = Modifier.size(18.dp))
+                                },
+                                shape = RoundedCornerShape(20.dp),
+                                colors =
+                                    FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor =
+                                            MaterialTheme.colorScheme.secondaryContainer,
+                                        selectedLabelColor =
+                                            MaterialTheme.colorScheme.onSecondaryContainer))
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            ) {
+                              Row(
+                                  modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
+                                  verticalAlignment = Alignment.CenterVertically,
+                              ) {
+                                Icon(
+                                    Icons.Rounded.Search,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    stringResource(R.string.search_placeholder),
+                                    style =
+                                        MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            color =
+                                                MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                                    alpha = 0.6f)),
+                                    softWrap = false,
+                                    maxLines = 1,
+                                )
+                              }
+                            }
+                          }
+
+                      Box(
+                          modifier = Modifier.fillMaxWidth().height(64.dp),
+                          contentAlignment = Alignment.Center) {
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = isAlbumRowVisible,
+                                enter =
+                                    androidx.compose.animation.expandVertically() +
+                                        androidx.compose.animation.fadeIn(),
+                                exit =
+                                    androidx.compose.animation.shrinkVertically() +
+                                        androidx.compose.animation.fadeOut()) {
+                                  Row(
+                                      modifier = Modifier.fillMaxWidth(),
+                                      horizontalArrangement =
+                                          Arrangement.spacedBy(
+                                              12.dp, Alignment.CenterHorizontally)) {
+                                        repeat(3) {
+                                          Card(
+                                              modifier = Modifier.size(64.dp),
+                                              shape = RoundedCornerShape(10.dp),
+                                              colors =
+                                                  CardDefaults.cardColors(
+                                                      containerColor =
+                                                          MaterialTheme.colorScheme
+                                                              .surfaceContainerHighest)) {
+                                                Box(
+                                                    modifier = Modifier.fillMaxSize().padding(4.dp),
+                                                    contentAlignment = Alignment.BottomStart) {
+                                                      Box(
+                                                          modifier =
+                                                              Modifier.fillMaxWidth()
+                                                                  .height(10.dp)
+                                                                  .background(
+                                                                      MaterialTheme.colorScheme
+                                                                          .onSurfaceVariant
+                                                                          .copy(alpha = 0.2f),
+                                                                      RoundedCornerShape(2.dp)))
+                                                    }
+                                              }
+                                        }
+                                      }
+                                }
+                          }
+                    }
+              },
+
           // ── Page 9: Reanalyze ──
           OnboardingPage(
               title = stringResource(R.string.onboarding_page9_title),
@@ -872,7 +1141,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth()) {
-                      // "Done" pill — exact copy from GalleryScreen / DetailScreen
+                      // "Done" pill — exact copy from LegacyScreen / DetailScreen
                       Surface(
                           shape = RoundedCornerShape(16.dp),
                           color = MaterialTheme.colorScheme.secondaryContainer,
@@ -894,6 +1163,34 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                               style = MaterialTheme.typography.labelMedium,
                               fontWeight = FontWeight.Bold,
                               color = MaterialTheme.colorScheme.onSecondaryContainer,
+                          )
+                        }
+                      }
+
+                      Spacer(modifier = Modifier.height(12.dp))
+
+                      // "Analyzing" pill
+                      Surface(
+                          shape = RoundedCornerShape(16.dp),
+                          color = MaterialTheme.colorScheme.errorContainer,
+                          modifier = Modifier.clip(RoundedCornerShape(16.dp)),
+                      ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                          CircularProgressIndicator(
+                              modifier = Modifier.size(14.dp),
+                              strokeWidth = 2.dp,
+                              color = MaterialTheme.colorScheme.error,
+                              trackColor = MaterialTheme.colorScheme.errorContainer,
+                          )
+                          Spacer(modifier = Modifier.width(4.dp))
+                          Text(
+                              stringResource(R.string.analyzing),
+                              style = MaterialTheme.typography.labelMedium,
+                              fontWeight = FontWeight.Bold,
+                              color = MaterialTheme.colorScheme.error,
                           )
                         }
                       }
@@ -985,11 +1282,12 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       color = MaterialTheme.colorScheme.onSurfaceVariant,
                   )
                   Spacer(modifier = Modifier.height(8.dp))
+
+                  var resolutionValue by remember { mutableStateOf(0.5f) }
                   Slider(
-                      value = 0.5f,
-                      onValueChange = {},
-                      enabled = false,
-                  )
+                      value = resolutionValue,
+                      onValueChange = { resolutionValue = it },
+                      valueRange = 0f..1f)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
 

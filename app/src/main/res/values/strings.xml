@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">skarmetoo</string>
     <string name="settings">Settings</string>
-    <string name="gallery">Gallery</string>
+    <string name="legacy_gallery">Legacy</string>
     <string name="manage_folders">Manage Folders</string>
     <string name="add_media_folder">Add Media Folder</string>
     <string name="select_media_folders">Select Media Folders</string>
@@ -127,13 +127,17 @@
     <string name="onboarding_page6_desc">You can share the AI-generated text and the image directly from the detail screen using the share button.</string>
     <string name="onboarding_page7_title">Search &amp; Filter</string>
     <string name="onboarding_page7_desc">Use the search pill to find images by keyword, or tap the filter tags to quickly browse by subject like pets, food, or selfies.</string>
+    <string name="onboarding_layout_pills_title">Layout Styles</string>
+    <string name="onboarding_layout_pills_desc">Swipe or tap the floating layout pills at the bottom to easily switch between a cinematic card-based Gallery view and a classic Grid view.</string>
+    <string name="onboarding_hide_albums_title">Toggle Albums Row</string>
+    <string name="onboarding_hide_albums_desc">Tap the arrow button in the filter bar to collapse or expand the albums row, saving screen space when browsing your gallery.</string>
     <string name="onboarding_page9_title">Reanalyze</string>
     <string name="onboarding_page9_desc">If you want the AI to analyze an image again, simply double-click its status button in the gallery or the detail screen.</string>
     <string name="feedback">Feedback</string>
     <string name="feedback_desc">Report bugs, request features, or share suggestions</string>
     <string name="submit_feedback">Submit Feedback</string>
     <string name="experimental">Experimental</string>
-    <string name="test_gallery">TestGallery</string>
+    <string name="gallery">Home</string>
     <string name="all">All</string>
     <string name="advanced_settings">Advanced Settings</string>
     <string name="advanced_settings_desc">Fine-tune app behavior and performance</string>
@@ -165,4 +169,6 @@
     <string name="no_results_found">No images found</string>
     <string name="no_results_desc">Try adjusting your search or filters</string>
     <string name="results_count">%d results</string>
+    <string name="select_photo_title">Select a photo</string>
+    <string name="cancel">Cancel</string>
 </resources>

@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Skarmetoo</string>
     <string name="settings">設定</string>
-    <string name="gallery">圖庫</string>
+    <string name="legacy_gallery">Legacy</string>
     <string name="manage_folders">管理資料夾</string>
     <string name="add_media_folder">新增媒體資料夾</string>
     <string name="select_media_folders">選擇媒體資料夾</string>
@@ -127,12 +127,17 @@
     <string name="onboarding_page6_desc">您可以使用分享按鈕，直接從詳情畫面分享 AI 生成的文字和圖片。</string>
     <string name="onboarding_page7_title">搜尋與篩選</string>
     <string name="onboarding_page7_desc">使用搜尋框依關鍵字尋找圖片，或點擊篩選標籤來快速瀏覽寬物、食物或自拍等主題。</string>
+    <string name="onboarding_layout_pills_title">版面樣式</string>
+    <string name="onboarding_layout_pills_desc">滑動或點擊底部懸浮的版面藥丸，即可輕鬆在電影感卡片式的「圖庫視圖」與經典的「網格視圖」之間切換。</string>
+    <string name="onboarding_hide_albums_title">切換相簿列</string>
+    <string name="onboarding_hide_albums_desc">點擊篩選列中的箭頭按鈕，即可摺疊或展開相簿列，在瀏覽圖庫時節省更多螢幕空間。</string>
     <string name="onboarding_page9_title">重新分析</string>
     <string name="onboarding_page9_desc">如果您想讓 AI 重新分析圖片，只需在圖庫或詳情畫面雙擊其狀態按鈕即可。</string>
     <string name="feedback">回饋</string>
     <string name="feedback_desc">回報錯誤、請求功能或分享建議</string>
     <string name="submit_feedback">提交回饋</string>
     <string name="experimental">實驗</string>
+    <string name="gallery">首頁</string>
     <string name="all">全部</string>
     <string name="advanced_settings">進階設定</string>
     <string name="advanced_settings_desc">微調應用程式行為與效能</string>
@@ -164,4 +169,6 @@
     <string name="no_results_found">未找到圖片</string>
     <string name="no_results_desc">嘗試調整您的搜尋或篩選條件</string>
     <string name="results_count">%d 個結果</string>
+    <string name="select_photo_title">選擇照片</string>
+    <string name="cancel">取消</string>
 </resources>

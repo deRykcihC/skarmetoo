@@ -1,6 +1,8 @@
 package com.deryk.skarmetoo
 
+import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -182,11 +184,35 @@ fun DetailScreen(
       )
       Spacer(modifier = Modifier.weight(1f))
 
+      // Custom Rendered Share Card Button
       IconButton(
-          onClick = hapticOnClick { ShareUtils.shareScreenshotContent(context, entry, noteText) }) {
-            Icon(Icons.Rounded.Share, "Share")
+          onClick = hapticOnClick { ShareUtils.shareScreenshotContent(context, entry, noteText) },
+          modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Rounded.Style, "Generate Share Card")
           }
       Spacer(modifier = Modifier.width(4.dp))
+
+      // Direct Original Screenshot Share Button
+      IconButton(
+          onClick =
+              hapticOnClick {
+                try {
+                  val intent =
+                      Intent(Intent.ACTION_SEND).apply {
+                        type = "image/*"
+                        putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                      }
+                  context.startActivity(Intent.createChooser(intent, "Share Original Screenshot"))
+                } catch (e: Exception) {
+                  Toast.makeText(context, "Failed to share original screenshot", Toast.LENGTH_SHORT)
+                      .show()
+                }
+              },
+          modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Rounded.Share, "Share Original")
+          }
+      Spacer(modifier = Modifier.width(8.dp))
 
       // Status pill — exact copy of home page style
       if (isActivelyAnalyzing) {

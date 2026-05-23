@@ -3,8 +3,8 @@ package com.deryk.skarmetoo.ui.theme
 /**
  * Returns a gentle UI scale multiplier based on the device's density bucket.
  *
- * Compose already makes `dp` and `sp` density-aware, so this is intentionally subtle:
- * it only nudges the whole app a bit on very low/high density devices.
+ * Compose already makes `dp` and `sp` density-aware, so this is intentionally subtle: it only
+ * nudges the whole app a bit on very low/high density devices.
  */
 fun uiScaleForDensityDpi(densityDpi: Int): Float {
   return when {

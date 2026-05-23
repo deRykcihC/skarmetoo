@@ -17,8 +17,8 @@ import com.deryk.skarmetoo.data.DataManager
 import com.deryk.skarmetoo.data.ImageHasher
 import com.deryk.skarmetoo.data.ScreenshotDatabase
 import com.deryk.skarmetoo.data.ScreenshotEntry
-import kotlin.coroutines.resume
 import com.google.mlkit.genai.common.FeatureStatus
+import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -58,10 +58,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val aicoreManager = AicoreManager.getInstance(application)
   private val currentAppVersionCode =
       try {
-        val packageInfo =
-            application.packageManager.getPackageInfo(application.packageName, 0)
-        @Suppress("DEPRECATION")
-        packageInfo.longVersionCode
+        val packageInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+        @Suppress("DEPRECATION") packageInfo.longVersionCode
       } catch (_: Exception) {
         0L
       }
@@ -111,9 +109,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   val downloadingModelType: StateFlow<ModelType?> = _downloadingModelType.asStateFlow()
 
   // Stored cached status for AICore to avoid querying Play Services on launch
-  private val _aicoreCachedStatus = MutableStateFlow<Int>(
-      prefs.getInt("aicore_cached_status", -999)
-  )
+  private val _aicoreCachedStatus =
+      MutableStateFlow<Int>(prefs.getInt("aicore_cached_status", -999))
   val aicoreCachedStatus: StateFlow<Int> = _aicoreCachedStatus.asStateFlow()
 
   private val _downloadProgress = MutableStateFlow(0f)
@@ -388,12 +385,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
    */
   fun applyAdvancedSettings() {
     viewModelScope.launch(Dispatchers.IO) {
-      // 1. Kill any active background scanning, reset database flags, and close/teardown active model runtimes
+      // 1. Kill any active background scanning, reset database flags, and close/teardown active
+      // model runtimes
       stopAllAnalysisForModelSwitch("applyAdvancedSettings")
-      
+
       val context = getApplication<Application>()
       val model = _selectedModel.value
-      
+
       // 2. Re-initialize / restart the model engine using the new advanced parameters
       if (model == ModelType.GEMMA_3N || model == ModelType.GEMMA_4) {
         val modelPath = java.io.File(context.filesDir, model.fileName)
@@ -402,8 +400,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
       } else if (model == ModelType.GGUF) {
         val lastGgufFile = prefs.getString("last_gguf_model", null)
-        val modelInfo = ggufManager.getDownloadedModels().find { it.fileName == lastGgufFile }
-            ?: ggufManager.getDownloadedModels().firstOrNull()
+        val modelInfo =
+            ggufManager.getDownloadedModels().find { it.fileName == lastGgufFile }
+                ?: ggufManager.getDownloadedModels().firstOrNull()
         if (modelInfo != null) {
           ggufManager.loadModel(modelInfo)
         }
@@ -748,7 +747,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       val status = aicoreManager.checkStatus()
       _aicoreCachedStatus.value = status
       prefs.edit().putInt("aicore_cached_status", status).apply()
-      
+
       // Update model ready states dynamically if currently selected model is AICORE
       if (_selectedModel.value == ModelType.AICORE) {
         if (status == FeatureStatus.AVAILABLE) {
@@ -1214,14 +1213,22 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     prefs.edit().putInt("experimental_grid_columns", columns).apply()
   }
 
-  private val _testGalleryGridColumns =
-      MutableStateFlow(prefs.getInt("test_gallery_grid_columns", 4))
-  val testGalleryGridColumns: StateFlow<Int> = _testGalleryGridColumns.asStateFlow()
+  private val _galleryGridColumns = MutableStateFlow(prefs.getInt("gallery_grid_columns", 4))
+  val galleryGridColumns: StateFlow<Int> = _galleryGridColumns.asStateFlow()
 
-  fun setTestGalleryGridColumns(columns: Int) {
+  fun setGalleryGridColumns(columns: Int) {
     val clamped = columns.coerceIn(4, 7)
-    _testGalleryGridColumns.value = clamped
-    prefs.edit().putInt("test_gallery_grid_columns", clamped).apply()
+    _galleryGridColumns.value = clamped
+    prefs.edit().putInt("gallery_grid_columns", clamped).apply()
+  }
+
+  private val _galleryIsGalleryStyle =
+      MutableStateFlow(prefs.getBoolean("gallery_is_gallery_style", false))
+  val galleryIsGalleryStyle: StateFlow<Boolean> = _galleryIsGalleryStyle.asStateFlow()
+
+  fun setGalleryIsGalleryStyle(value: Boolean) {
+    _galleryIsGalleryStyle.value = value
+    prefs.edit().putBoolean("gallery_is_gallery_style", value).apply()
   }
 
   /**
@@ -1548,6 +1555,46 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     // Use existing addScreenshots logic (handles dedup, hash, etc.)
     withContext(Dispatchers.Main) { addScreenshots(uris) }
+  }
+
+  fun getOrCreateEntryForUri(uri: Uri, onResult: (Long) -> Unit) {
+    viewModelScope.launch(Dispatchers.IO) {
+      val uriString = uri.toString()
+      val existing = db.getEntryByImageUri(uriString)
+      if (existing != null) {
+        withContext(Dispatchers.Main) { onResult(existing.id) }
+        return@launch
+      }
+
+      val bitmap = loadBitmap(uri)
+      val hash = if (bitmap != null) ImageHasher.computeDHash(bitmap) else ""
+
+      if (hash.isNotEmpty()) {
+        val hashExisting = db.getEntryByHash(hash)
+        if (hashExisting != null) {
+          if (hashExisting.imageUri.isBlank()) {
+            db.linkImageToHash(hash, uriString)
+            refreshEntries()
+          }
+          withContext(Dispatchers.Main) { onResult(hashExisting.id) }
+          return@launch
+        }
+      }
+
+      val entry =
+          ScreenshotEntry(
+              imageUri = uriString,
+              imageHash = hash,
+          )
+      val newId = db.insertEntry(entry)
+      refreshEntries()
+
+      if (_isModelReady.value) {
+        launchAnalysisQueue()
+      }
+
+      withContext(Dispatchers.Main) { onResult(newId) }
+    }
   }
 
   fun addScreenshots(uris: List<Uri>): kotlinx.coroutines.Job {
@@ -2125,25 +2172,26 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
               val useAicore = _selectedModel.value == ModelType.AICORE
 
               if (useAicore) {
-                val promptText = when (_detailLevel.value) {
-                  LlmManager.DetailLevel.BRIEF ->
-                      """Describe this image briefly in $targetLang. Respond with EXACTLY this format and nothing else:
+                val promptText =
+                    when (_detailLevel.value) {
+                      LlmManager.DetailLevel.BRIEF ->
+                          """Describe this image briefly in $targetLang. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your one sentence description]
 TAGS: [tag1, tag2, tag3]"""
-                  LlmManager.DetailLevel.DETAILED ->
-                      """Describe this image in detail in $targetLang. Write 2-3 sentences. Respond with EXACTLY this format and nothing else:
+                      LlmManager.DetailLevel.DETAILED ->
+                          """Describe this image in detail in $targetLang. Write 2-3 sentences. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your detailed 2-3 sentence description]
 TAGS: [tag1, tag2, tag3, tag4, tag5]"""
-                  LlmManager.DetailLevel.COMPREHENSIVE ->
-                      """Describe this image with maximum detail in $targetLang, using a single paragraph. Respond with EXACTLY this format and nothing else:
+                      LlmManager.DetailLevel.COMPREHENSIVE ->
+                          """Describe this image with maximum detail in $targetLang, using a single paragraph. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your comprehensive paragraph describing absolutely everything visible in the image]
 TAGS: [tag1, tag2, tag3, tag4, tag5, tag6, tag7, tag8]"""
-                  LlmManager.DetailLevel.CUSTOM ->
-                      """${_customPrompt.value.takeIf { it.isNotBlank() } ?: "Describe this screenshot."} Output your summary in $targetLang.
+                      LlmManager.DetailLevel.CUSTOM ->
+                          """${_customPrompt.value.takeIf { it.isNotBlank() } ?: "Describe this screenshot."} Output your summary in $targetLang.
 Respond with EXACTLY this format and nothing else:
 SUMMARY: [your response based on the instruction]
 TAGS: [extracted tag1, tag2, tag3]"""
-                }
+                    }
                 viewModelScope.launch(Dispatchers.IO) {
                   var attempts = 0
                   val maxAttempts = 3
@@ -2161,14 +2209,18 @@ TAGS: [extracted tag1, tag2, tag3]"""
                         success = true
                       } else {
                         lastError = analysisResult.exceptionOrNull()
-                        Log.w("ScreenshotViewModel", "AICore try $attempts failed for entry ${entry.id}: ${lastError?.message}")
+                        Log.w(
+                            "ScreenshotViewModel",
+                            "AICore try $attempts failed for entry ${entry.id}: ${lastError?.message}")
                         if (attempts < maxAttempts) {
                           kotlinx.coroutines.delay(500L * attempts)
                         }
                       }
                     } catch (e: Exception) {
                       lastError = e
-                      Log.e("ScreenshotViewModel", "AICore exception on try $attempts for entry ${entry.id}: ${e.message}")
+                      Log.e(
+                          "ScreenshotViewModel",
+                          "AICore exception on try $attempts for entry ${entry.id}: ${e.message}")
                       if (attempts < maxAttempts) {
                         kotlinx.coroutines.delay(500L * attempts)
                       }
@@ -2186,20 +2238,22 @@ TAGS: [extracted tag1, tag2, tag3]"""
                   } else {
                     val errStr = lastError?.message ?: ""
                     val errType = lastError?.javaClass?.simpleName ?: ""
-                    val isPolicyOrSafety = errType.contains("Block") ||
-                        errType.contains("Safety") ||
-                        errType.contains("Policy") ||
-                        errStr.contains("block", ignoreCase = true) ||
-                        errStr.contains("safety", ignoreCase = true) ||
-                        errStr.contains("policy", ignoreCase = true) ||
-                        errStr.contains("restrict", ignoreCase = true) ||
-                        errStr.contains("filter", ignoreCase = true)
+                    val isPolicyOrSafety =
+                        errType.contains("Block") ||
+                            errType.contains("Safety") ||
+                            errType.contains("Policy") ||
+                            errStr.contains("block", ignoreCase = true) ||
+                            errStr.contains("safety", ignoreCase = true) ||
+                            errStr.contains("policy", ignoreCase = true) ||
+                            errStr.contains("restrict", ignoreCase = true) ||
+                            errStr.contains("filter", ignoreCase = true)
 
-                    val fallbackSummary = if (isPolicyOrSafety) {
-                      "This screenshot could not be analyzed due to local AI model policy restrictions or safety filters. Please re-analyze this image using another model (e.g. Gemma or GGUF)."
-                    } else {
-                      "This screenshot could not be processed by the on-device AI core due to hardware or format limitations. Please re-analyze this image using another model (e.g. Gemma or GGUF)."
-                    }
+                    val fallbackSummary =
+                        if (isPolicyOrSafety) {
+                          "This screenshot could not be analyzed due to local AI model policy restrictions or safety filters. Please re-analyze this image using another model (e.g. Gemma or GGUF)."
+                        } else {
+                          "This screenshot could not be processed by the on-device AI core due to hardware or format limitations. Please re-analyze this image using another model (e.g. Gemma or GGUF)."
+                        }
                     val fallbackTags = "restricted"
                     onProgress(1.0f)
                     onResult(fallbackSummary, fallbackTags, "Gemini Nano")
