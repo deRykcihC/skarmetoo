@@ -11,6 +11,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ImageSearch
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
@@ -120,6 +121,7 @@ object Routes {
   const val GALLERY = "gallery"
   const val SETTINGS = "settings"
   const val EXPERIMENTAL = "experimental"
+  const val TEST_GALLERY = "test_gallery"
   const val DETAIL = "detail/{id}"
 
   fun detail(id: Long) = "detail/$id"
@@ -145,11 +147,13 @@ fun MainApp(viewModel: ScreenshotViewModel) {
   val showBottomBar =
       currentRoute == Routes.GALLERY ||
           currentRoute == Routes.SETTINGS ||
-          currentRoute == Routes.EXPERIMENTAL
+          currentRoute == Routes.EXPERIMENTAL ||
+          currentRoute == Routes.TEST_GALLERY
 
   var galleryScrollKey by remember { mutableIntStateOf(0) }
   var galleryRefreshKey by remember { mutableIntStateOf(0) }
   val galleryScrollState = androidx.compose.foundation.rememberScrollState()
+  val testGalleryScrollState = androidx.compose.foundation.rememberScrollState()
   var isScreenSaverActive by remember { mutableStateOf(false) }
   var lastGalleryClickTime by remember { mutableLongStateOf(0L) }
   val isEasterEgg = remember { kotlin.random.Random.nextFloat() < 0.069f }
@@ -288,6 +292,33 @@ fun MainApp(viewModel: ScreenshotViewModel) {
                         selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
             )
+            NavigationBarItem(
+                selected = currentRoute == Routes.TEST_GALLERY,
+                onClick =
+                    hapticOnClick {
+                      if (currentRoute != Routes.TEST_GALLERY) {
+                        navController.navigate(Routes.TEST_GALLERY) {
+                          popUpTo(navController.graph.startDestinationId) { saveState = true }
+                          launchSingleTop = true
+                          restoreState = true
+                        }
+                      }
+                    },
+                icon = {
+                  Icon(
+                      if (currentRoute == Routes.TEST_GALLERY) Icons.Rounded.ImageSearch
+                      else Icons.Outlined.ImageSearch,
+                      "TestGallery",
+                  )
+                },
+                label = { Text(stringResource(R.string.test_gallery)) },
+                colors =
+                    NavigationBarItemDefaults.colors(
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ),
+            )
           }
         }
       },
@@ -297,7 +328,7 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             targetValue = innerPadding.calculateBottomPadding(),
             label = "bottomPadding",
         )
-    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS, Routes.EXPERIMENTAL)
+    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS, Routes.EXPERIMENTAL, Routes.TEST_GALLERY)
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -386,6 +417,14 @@ fun MainApp(viewModel: ScreenshotViewModel) {
             logoRes = logoRes,
         )
       }
+        composable(Routes.TEST_GALLERY) {
+          TestGalleryScreen(
+              viewModel = viewModel,
+              onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
+              scrollState = testGalleryScrollState,
+              logoRes = logoRes,
+          )
+        }
 
       composable(
           Routes.DETAIL,

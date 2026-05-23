@@ -133,6 +133,7 @@
     <string name="feedback_desc">Report bugs, request features, or share suggestions</string>
     <string name="submit_feedback">Submit Feedback</string>
     <string name="experimental">Experimental</string>
+    <string name="test_gallery">TestGallery</string>
     <string name="all">All</string>
     <string name="advanced_settings">Advanced Settings</string>
     <string name="advanced_settings_desc">Fine-tune app behavior and performance</string>

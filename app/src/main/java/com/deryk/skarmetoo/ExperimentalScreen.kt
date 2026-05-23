@@ -33,7 +33,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -49,10 +51,17 @@ import coil.request.ImageRequest
 import coil.size.Scale
 import coil.size.Size
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlinx.coroutines.delay
+
+private const val EXP_GRID_SPACING_DP = 2
+private const val EXP_INITIAL_RENDER_ROWS = 36
+private const val EXP_RENDER_ROWS_CHUNK = 24
+private const val EXP_LOAD_MORE_THRESHOLD_ROWS = 8
+private const val EXP_PRELOAD_ROWS = 8
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -126,6 +135,8 @@ fun ExperimentalScreen(
   }
 
   val scrollState = rememberScrollState()
+  var gridViewportHeightPx by remember { mutableIntStateOf(0) }
+  var gridViewportWidthPx by remember { mutableIntStateOf(0) }
 
   // Debounce: commit column change 0.5s after last pinch activity,
   // allowing further pinching during the window before confirming.
@@ -399,15 +410,76 @@ fun ExperimentalScreen(
         }
       }
     } else {
-      // Chunk URIs into rows of `gridColumns` items each
+      // Chunk URIs into rows of `gridColumns` items each.
       val rows =
           remember(experimentalImageUris, effectiveColumns) {
             experimentalImageUris.chunked(effectiveColumns)
           }
+      var renderedRows by remember { mutableIntStateOf(0) }
+
+      LaunchedEffect(rows.size) {
+        renderedRows =
+            when {
+              rows.isEmpty() -> 0
+              renderedRows <= 0 -> minOf(rows.size, EXP_INITIAL_RENDER_ROWS)
+              else -> renderedRows.coerceIn(1, rows.size)
+            }
+      }
+
+      val density = LocalDensity.current
+      val spacingPx = with(density) { EXP_GRID_SPACING_DP.dp.toPx() }
+      val rowHeightPx =
+          remember(gridViewportWidthPx, effectiveColumns, spacingPx) {
+            if (gridViewportWidthPx <= 0) return@remember 0f
+            val availableWidth =
+                gridViewportWidthPx - (spacingPx * 2f) - (spacingPx * (effectiveColumns - 1))
+            val cellSize = (availableWidth / effectiveColumns).coerceAtLeast(1f)
+            cellSize + spacingPx
+          }
+
+      LaunchedEffect(
+          scrollState.value,
+          renderedRows,
+          rows.size,
+          rowHeightPx,
+          gridViewportHeightPx,
+      ) {
+        if (rows.isEmpty() || renderedRows >= rows.size) return@LaunchedEffect
+        if (rowHeightPx <= 0f || gridViewportHeightPx <= 0) return@LaunchedEffect
+
+        val viewportBottomPx = scrollState.value + gridViewportHeightPx
+        val renderedHeightPx = renderedRows * rowHeightPx
+        val triggerPx = renderedHeightPx - (EXP_LOAD_MORE_THRESHOLD_ROWS * rowHeightPx)
+        if (viewportBottomPx >= triggerPx) {
+          renderedRows = (renderedRows + EXP_RENDER_ROWS_CHUNK).coerceAtMost(rows.size)
+        }
+      }
+
+      val firstVisibleRow =
+          if (rowHeightPx > 0f) {
+            (scrollState.value / rowHeightPx).toInt().coerceAtLeast(0)
+          } else {
+            0
+          }
+      val visibleRows =
+          if (rowHeightPx > 0f && gridViewportHeightPx > 0) {
+            ceil(gridViewportHeightPx / rowHeightPx).toInt() + 1
+          } else {
+            0
+          }
+      val loadStartRow = (firstVisibleRow - EXP_PRELOAD_ROWS).coerceAtLeast(0)
+      val loadEndRowExclusive =
+          (firstVisibleRow + visibleRows + EXP_PRELOAD_ROWS).coerceAtMost(renderedRows)
 
       Box(
           modifier =
-              Modifier.weight(1f).fillMaxWidth().pointerInput(gridColumns) {
+              Modifier.weight(1f)
+                  .fillMaxWidth()
+                  .onSizeChanged {
+                    gridViewportWidthPx = it.width
+                    gridViewportHeightPx = it.height
+                  }
+                  .pointerInput(gridColumns) {
                 // Pinch-to-resize: shows grey placeholders during gesture,
                 // with 0.5s debounce after release for further adjustment before committing.
                 var localPinching = false
@@ -454,43 +526,43 @@ fun ExperimentalScreen(
                     }
                   }
                 }
-              },
+                  },
       ) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(2.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier =
+                Modifier.fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(EXP_GRID_SPACING_DP.dp),
+            verticalArrangement = Arrangement.spacedBy(EXP_GRID_SPACING_DP.dp),
         ) {
-          rows.forEachIndexed { rowIndex, row ->
+          rows.take(renderedRows).forEachIndexed { rowIndex, row ->
+            val shouldLoadRow =
+                !isPinching && rowIndex >= loadStartRow && rowIndex < loadEndRowExclusive
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(EXP_GRID_SPACING_DP.dp),
             ) {
-              row.forEachIndexed { colIndex, uri ->
-                val flatIndex = rowIndex * effectiveColumns + colIndex
+              row.forEach { uri ->
                 val uriString = uri.toString()
                 val statusPair = experimentalStatuses[uriString]
                 val entryId = statusPair?.first
-                val isAnalyzed = statusPair?.second ?: false
-
-                val dotColor =
-                    when {
-                      statusPair == null -> null
-                      isAnalyzed -> Color(0xFF4CAF50) // Green
-                      else -> Color(0xFF9E9E9E) // Grey
-                    }
 
                 ExperimentalGalleryItem(
                     uri = uri,
-                    dotColor = dotColor,
                     gridColumns = effectiveColumns,
+                    shouldLoad = shouldLoadRow,
                     showPlaceholder = isPinching,
+                    isClickable = entryId != null,
                     onClick = hapticOnClick { entryId?.let { onScreenshotClick(it) } },
                     modifier = Modifier.weight(1f),
                 )
               }
               // Fill remaining columns with empty space so items maintain width
               if (row.size < effectiveColumns) {
-                repeat(effectiveColumns - row.size) { Spacer(modifier = Modifier.weight(1f)) }
+                repeat(effectiveColumns - row.size) {
+                  Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
+                }
               }
             }
           }
@@ -636,50 +708,53 @@ private fun AlbumThumbnailCard(
 @Composable
 private fun ExperimentalGalleryItem(
     uri: Uri,
-    dotColor: Color?,
     gridColumns: Int,
+    shouldLoad: Boolean,
     showPlaceholder: Boolean = false,
+    isClickable: Boolean = true,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
 
-  // Use painter directly to have reliable access to state for sequential loading
+  // Use painter directly to have reliable access to state for sequential loading.
   val painter =
       rememberAsyncImagePainter(
           model =
-              remember(uri, gridColumns) {
+              remember(uri, gridColumns, shouldLoad) {
+                if (!shouldLoad) {
+                  return@remember null
+                }
+
                 // Apply thumbnail compression based on column count.
-                // Smaller thumbnails = less memory usage and faster decoding on weak processors.
-                // Each thumbnail is decoded at a fixed pixel size that scales with column count.
-                // Always set an explicit size to ensure Coil's memory cache uses a unique key
-                // per column count — preventing stale low-res bitmaps when expanding the grid.
+                // Smaller thumbnails reduce memory and decode work on weak devices.
                 val thumbnailSizePx =
                     when {
-                      gridColumns > 6 -> 80 // Very small: ~80px per thumbnail
-                      gridColumns > 4 -> 120 // Small: ~120px per thumbnail
-                      gridColumns > 3 -> 180 // Medium: ~180px per thumbnail
-                      gridColumns > 2 -> 360 // Large: ~360px per thumbnail
-                      gridColumns > 1 -> 540 // XL: ~540px per thumbnail
-                      else -> 720 // Full: ~720px per thumbnail
+                      gridColumns > 6 -> 80
+                      gridColumns > 4 -> 120
+                      gridColumns > 3 -> 180
+                      gridColumns > 2 -> 360
+                      gridColumns > 1 -> 540
+                      else -> 720
                     }
 
                 ImageRequest.Builder(context)
                     .data(uri)
-                    .scale(coil.size.Scale.FILL)
-                    .size(coil.size.Size(thumbnailSizePx, thumbnailSizePx))
+                    .scale(Scale.FILL)
+                    .size(Size(thumbnailSizePx, thumbnailSizePx))
                     .build()
-              })
+              },
+      )
 
   val state = painter.state
   val isLoaded = state is AsyncImagePainter.State.Success
-  val isError = state is AsyncImagePainter.State.Error
 
   val alpha by
       animateFloatAsState(
           targetValue = if (isLoaded) 1f else 0f,
           animationSpec = tween(durationMillis = 400),
-          label = "fade")
+          label = "fade",
+      )
 
   Box(
       modifier =
@@ -688,10 +763,10 @@ private fun ExperimentalGalleryItem(
               .aspectRatio(1f)
               .clip(RoundedCornerShape(4.dp))
               .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-              .then(if (dotColor != null) Modifier.clickable(onClick = onClick) else Modifier),
+              .then(if (isClickable) Modifier.clickable(onClick = onClick) else Modifier),
   ) {
-    if (showPlaceholder) {
-      // Grey placeholder during pinch or staggered reveal — no image decoding
+    if (showPlaceholder || !shouldLoad) {
+      // Grey placeholder during pinch or when this row is outside the preload window.
       Box(
           modifier =
               Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -704,22 +779,8 @@ private fun ExperimentalGalleryItem(
           contentScale = ContentScale.Crop,
       )
     }
-
-    // Dot indicator: grey = in gallery, green = analyzed, no dot = not in gallery
-    if (dotColor != null && !showPlaceholder) {
-      Box(
-          modifier =
-              Modifier.align(Alignment.TopEnd)
-                  .padding(4.dp)
-                  .size(10.dp)
-                  .background(dotColor, RoundedCornerShape(50))
-                  .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(50))
-                  .graphicsLayer { this.alpha = alpha },
-      )
-    }
   }
 }
-
 /** Euclidean distance between the first two active pointers for pinch detection. */
 private fun pinchDistance(pointers: List<PointerInputChange>): Float {
   if (pointers.size < 2) return 0f

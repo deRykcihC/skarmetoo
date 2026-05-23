@@ -1214,6 +1214,16 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     prefs.edit().putInt("experimental_grid_columns", columns).apply()
   }
 
+  private val _testGalleryGridColumns =
+      MutableStateFlow(prefs.getInt("test_gallery_grid_columns", 4))
+  val testGalleryGridColumns: StateFlow<Int> = _testGalleryGridColumns.asStateFlow()
+
+  fun setTestGalleryGridColumns(columns: Int) {
+    val clamped = columns.coerceIn(4, 7)
+    _testGalleryGridColumns.value = clamped
+    prefs.edit().putInt("test_gallery_grid_columns", clamped).apply()
+  }
+
   /**
    * Adaptive batch size: fewer columns = larger images = smaller batches to reduce memory pressure
    */
