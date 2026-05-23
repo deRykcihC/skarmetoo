@@ -586,6 +586,10 @@ fun ScreenshotGridItem(
     onClick: () -> Unit,
 ) {
   val context = androidx.compose.ui.platform.LocalContext.current
+  val isRestricted = remember(entry.tags) {
+    entry.getTagList().any { it.equals("restricted", ignoreCase = true) }
+  }
+
   Card(
       onClick = onClick,
       modifier = Modifier.fillMaxWidth(),
@@ -593,7 +597,11 @@ fun ScreenshotGridItem(
       elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
       colors =
           CardDefaults.cardColors(
-              containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+              containerColor = if (isRestricted) {
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+              } else {
+                MaterialTheme.colorScheme.surfaceContainerLow
+              },
           ),
   ) {
     Column {
@@ -646,7 +654,7 @@ fun ScreenshotGridItem(
               fontWeight = FontWeight.SemiBold,
               maxLines = 2,
               overflow = TextOverflow.Ellipsis,
-              color = MaterialTheme.colorScheme.onSurface,
+              color = if (isRestricted) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface,
               lineHeight = 18.sp,
           )
         } else if (isActivelyAnalyzing) {
@@ -668,7 +676,7 @@ fun ScreenshotGridItem(
           Text(
               text = entry.getTagList().joinToString(", "),
               style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              color = if (isRestricted) MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
           )

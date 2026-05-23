@@ -18,6 +18,7 @@ import com.deryk.skarmetoo.data.ImageHasher
 import com.deryk.skarmetoo.data.ScreenshotDatabase
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import kotlin.coroutines.resume
+import com.google.mlkit.genai.common.FeatureStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -47,12 +48,14 @@ enum class ModelType(val fileName: String, val displayName: String) {
   GEMMA_3N("gemma-3n-E2B-it-int4.litertlm", "Gemma 3n"),
   GEMMA_4("gemma-4-E2B-it.litertlm", "Gemma 4"),
   GGUF("", "GGUF Model"),
+  AICORE("", "Gemini Nano"),
 }
 
 class ScreenshotViewModel(application: Application) : AndroidViewModel(application) {
   private val db = ScreenshotDatabase(application)
   val llmManager = LlmManager.getInstance(application)
   private val ggufManager = GgufLlmManager.getInstance(application)
+  private val aicoreManager = AicoreManager.getInstance(application)
   private val currentAppVersionCode =
       try {
         val packageInfo =
@@ -106,6 +109,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   private val _downloadingModelType = MutableStateFlow<ModelType?>(null)
   val downloadingModelType: StateFlow<ModelType?> = _downloadingModelType.asStateFlow()
+
+  // Stored cached status for AICore to avoid querying Play Services on launch
+  private val _aicoreCachedStatus = MutableStateFlow<Int>(
+      prefs.getInt("aicore_cached_status", -999)
+  )
+  val aicoreCachedStatus: StateFlow<Int> = _aicoreCachedStatus.asStateFlow()
 
   private val _downloadProgress = MutableStateFlow(0f)
   val downloadProgress: StateFlow<Float> = _downloadProgress.asStateFlow()
@@ -378,16 +387,31 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
    * analysis and restarting the queue so that new values take effect immediately.
    */
   fun applyAdvancedSettings() {
-    viewModelScope.launch {
-      // Halt any in-progress analysis
-      isAnalyzing.set(false)
-      _activeAnalysisIds.value = emptySet()
-      _entryProgressMap.value = emptyMap()
-      // Wait for existing workers to completely finish their current image and exit
-      analysisJob?.join()
-      refreshEntries()
-      withContext(Dispatchers.Main) {}
-      // Restart with the newly persisted values
+    viewModelScope.launch(Dispatchers.IO) {
+      // 1. Kill any active background scanning, reset database flags, and close/teardown active model runtimes
+      stopAllAnalysisForModelSwitch("applyAdvancedSettings")
+      
+      val context = getApplication<Application>()
+      val model = _selectedModel.value
+      
+      // 2. Re-initialize / restart the model engine using the new advanced parameters
+      if (model == ModelType.GEMMA_3N || model == ModelType.GEMMA_4) {
+        val modelPath = java.io.File(context.filesDir, model.fileName)
+        if (modelPath.exists()) {
+          initializeModel(modelPath.absolutePath, isGemma4 = model == ModelType.GEMMA_4)
+        }
+      } else if (model == ModelType.GGUF) {
+        val lastGgufFile = prefs.getString("last_gguf_model", null)
+        val modelInfo = ggufManager.getDownloadedModels().find { it.fileName == lastGgufFile }
+            ?: ggufManager.getDownloadedModels().firstOrNull()
+        if (modelInfo != null) {
+          ggufManager.loadModel(modelInfo)
+        }
+      } else if (model == ModelType.AICORE) {
+        triggerAicoreRescan()
+      }
+
+      // 3. Restart the background scanner queue to process unprocessed images with the new settings
       launchAnalysisQueue()
     }
   }
@@ -506,13 +530,32 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     // Restore selected experimental album
     _selectedExperimentalAlbumId.value = prefs.getString("selected_experimental_album_id", null)
 
+    // Trigger initial scan for AICore status once on very first launch
+    if (_aicoreCachedStatus.value == -999) {
+      triggerAicoreRescan()
+    }
+
     viewModelScope.launch {
       kotlinx.coroutines.flow
-          .combine(_selectedModel, llmManager.uiState, ggufManager.uiState) {
+          .combine(_selectedModel, llmManager.uiState, ggufManager.uiState, _aicoreCachedStatus) {
               selected,
               llmState,
-              ggufState ->
-            if (selected == ModelType.GGUF) {
+              ggufState,
+              cachedAicoreStatus ->
+            if (selected == ModelType.AICORE) {
+              if (cachedAicoreStatus == FeatureStatus.AVAILABLE) {
+                clearModelSwitchStatus(ModelType.AICORE)
+                setModelStatusImmediate("Ready (AICore)")
+                _isModelReady.value = true
+                launchAnalysisQueue()
+              } else if (cachedAicoreStatus == FeatureStatus.DOWNLOADING) {
+                setModelStatusImmediate("AICore downloading...")
+                _isModelReady.value = false
+              } else {
+                setModelStatusImmediate("AICore unsupported")
+                _isModelReady.value = false
+              }
+            } else if (selected == ModelType.GGUF) {
               when (ggufState) {
                 is GgufLlmManager.LlmState.Initial -> {
                   if (isModelSwitchStatusActive(ModelType.GGUF)) {
@@ -684,14 +727,45 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         stopAllAnalysisForModelSwitch("setSelectedModel:${model.name}")
         withContext(Dispatchers.Main) {}
         checkModelExists()
-        val modelPath = java.io.File(getApplication<Application>().filesDir, model.fileName)
-        if (modelPath.exists()) {
-          initializeModel(modelPath.absolutePath, isGemma4 = model == ModelType.GEMMA_4)
+        if (model != ModelType.AICORE) {
+          val modelPath = java.io.File(getApplication<Application>().filesDir, model.fileName)
+          if (modelPath.exists()) {
+            initializeModel(modelPath.absolutePath, isGemma4 = model == ModelType.GEMMA_4)
+          } else {
+            refreshModelDownloadStatus()
+          }
         } else {
-          refreshModelDownloadStatus()
+          triggerAicoreRescan()
         }
       } finally {
         isSwitchingModel.set(false)
+      }
+    }
+  }
+
+  fun triggerAicoreRescan() {
+    viewModelScope.launch(Dispatchers.IO) {
+      val status = aicoreManager.checkStatus()
+      _aicoreCachedStatus.value = status
+      prefs.edit().putInt("aicore_cached_status", status).apply()
+      
+      // Update model ready states dynamically if currently selected model is AICORE
+      if (_selectedModel.value == ModelType.AICORE) {
+        if (status == FeatureStatus.AVAILABLE) {
+          clearModelSwitchStatus(ModelType.AICORE)
+          setModelStatusImmediate("Ready (AICore)")
+          _isModelReady.value = true
+          _isModelFound.value = true
+          launchAnalysisQueue()
+        } else if (status == FeatureStatus.DOWNLOADING) {
+          setModelStatusImmediate("AICore downloading...")
+          _isModelReady.value = false
+          _isModelFound.value = false
+        } else {
+          setModelStatusImmediate("AICore unsupported")
+          _isModelReady.value = false
+          _isModelFound.value = false
+        }
       }
     }
   }
@@ -742,6 +816,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       val exists =
           if (_selectedModel.value == ModelType.GGUF) {
             ggufManager.getDownloadedModels().isNotEmpty()
+          } else if (_selectedModel.value == ModelType.AICORE) {
+            _aicoreCachedStatus.value == FeatureStatus.AVAILABLE
           } else {
             val selectedFile = java.io.File(context.filesDir, _selectedModel.value.fileName)
             selectedFile.exists()
@@ -2036,7 +2112,94 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                       (ggufState is GgufLlmManager.LlmState.Ready ||
                           ggufState is GgufLlmManager.LlmState.Generating)
 
-              if (useGguf) {
+              val useAicore = _selectedModel.value == ModelType.AICORE
+
+              if (useAicore) {
+                val promptText = when (_detailLevel.value) {
+                  LlmManager.DetailLevel.BRIEF ->
+                      """Describe this image briefly in $targetLang. Respond with EXACTLY this format and nothing else:
+SUMMARY: [your one sentence description]
+TAGS: [tag1, tag2, tag3]"""
+                  LlmManager.DetailLevel.DETAILED ->
+                      """Describe this image in detail in $targetLang. Write 2-3 sentences. Respond with EXACTLY this format and nothing else:
+SUMMARY: [your detailed 2-3 sentence description]
+TAGS: [tag1, tag2, tag3, tag4, tag5]"""
+                  LlmManager.DetailLevel.COMPREHENSIVE ->
+                      """Describe this image with maximum detail in $targetLang, using a single paragraph. Respond with EXACTLY this format and nothing else:
+SUMMARY: [your comprehensive paragraph describing absolutely everything visible in the image]
+TAGS: [tag1, tag2, tag3, tag4, tag5, tag6, tag7, tag8]"""
+                  LlmManager.DetailLevel.CUSTOM ->
+                      """${_customPrompt.value.takeIf { it.isNotBlank() } ?: "Describe this screenshot."} Output your summary in $targetLang.
+Respond with EXACTLY this format and nothing else:
+SUMMARY: [your response based on the instruction]
+TAGS: [extracted tag1, tag2, tag3]"""
+                }
+                viewModelScope.launch(Dispatchers.IO) {
+                  var attempts = 0
+                  val maxAttempts = 3
+                  var success = false
+                  var lastError: Throwable? = null
+                  var parsedResult: Pair<String, String>? = null
+
+                  while (attempts < maxAttempts && !success) {
+                    attempts++
+                    try {
+                      onProgress(0.1f + (attempts - 1) * 0.2f)
+                      val analysisResult = aicoreManager.analyzeScreenshot(bitmap, promptText)
+                      if (analysisResult.isSuccess) {
+                        parsedResult = analysisResult.getOrNull()
+                        success = true
+                      } else {
+                        lastError = analysisResult.exceptionOrNull()
+                        Log.w("ScreenshotViewModel", "AICore try $attempts failed for entry ${entry.id}: ${lastError?.message}")
+                        if (attempts < maxAttempts) {
+                          kotlinx.coroutines.delay(500L * attempts)
+                        }
+                      }
+                    } catch (e: Exception) {
+                      lastError = e
+                      Log.e("ScreenshotViewModel", "AICore exception on try $attempts for entry ${entry.id}: ${e.message}")
+                      if (attempts < maxAttempts) {
+                        kotlinx.coroutines.delay(500L * attempts)
+                      }
+                    }
+                  }
+
+                  if (success && parsedResult != null) {
+                    val (summary, tags) = parsedResult
+                    onProgress(1.0f)
+                    onResult(summary, tags, "Gemini Nano")
+                    viewModelScope.launch(Dispatchers.IO) {
+                      kotlinx.coroutines.delay(600L)
+                      if (continuation.isActive) continuation.resume(true)
+                    }
+                  } else {
+                    val errStr = lastError?.message ?: ""
+                    val errType = lastError?.javaClass?.simpleName ?: ""
+                    val isPolicyOrSafety = errType.contains("Block") ||
+                        errType.contains("Safety") ||
+                        errType.contains("Policy") ||
+                        errStr.contains("block", ignoreCase = true) ||
+                        errStr.contains("safety", ignoreCase = true) ||
+                        errStr.contains("policy", ignoreCase = true) ||
+                        errStr.contains("restrict", ignoreCase = true) ||
+                        errStr.contains("filter", ignoreCase = true)
+
+                    val fallbackSummary = if (isPolicyOrSafety) {
+                      "This screenshot could not be analyzed due to local AI model policy restrictions or safety filters. Please re-analyze this image using another model (e.g. Gemma or GGUF)."
+                    } else {
+                      "This screenshot could not be processed by the on-device AI core due to hardware or format limitations. Please re-analyze this image using another model (e.g. Gemma or GGUF)."
+                    }
+                    val fallbackTags = "restricted"
+                    onProgress(1.0f)
+                    onResult(fallbackSummary, fallbackTags, "Gemini Nano")
+                    viewModelScope.launch(Dispatchers.IO) {
+                      kotlinx.coroutines.delay(600L)
+                      if (continuation.isActive) continuation.resume(true)
+                    }
+                  }
+                }
+              } else if (useGguf) {
                 val detailLevelName =
                     when (_detailLevel.value) {
                       LlmManager.DetailLevel.BRIEF -> "brief"

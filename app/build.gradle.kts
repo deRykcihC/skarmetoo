@@ -12,11 +12,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.deryk.skarmetoo"
+    applicationId = "com.deryk.skarmetoo.alt"
     minSdk = 29
     targetSdk = 36
     versionCode = 17
-    versionName = "1.08"
+    versionName = "1.091e"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -91,6 +91,7 @@ dependencies {
   implementation("io.coil-kt:coil-compose:2.5.0")
   implementation(libs.androidx.palette)
   implementation(libs.llamatik.library)
+  implementation(libs.mlkit.genai)
   testImplementation(libs.junit)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.espresso.core)

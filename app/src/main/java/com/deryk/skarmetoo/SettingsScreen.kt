@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import kotlin.math.roundToInt
+import com.google.mlkit.genai.common.FeatureStatus
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1010,6 +1012,107 @@ fun SettingsScreen(
                           }
                     }
                   }
+
+                  Spacer(modifier = Modifier.height(8.dp))
+
+                  val isAicoreSelected = selectedModel == ModelType.AICORE
+                  val aicoreStatus by viewModel.aicoreCachedStatus.collectAsState()
+
+                  OutlinedCard(
+                      onClick =
+                          hapticOnClick {
+                            viewModel.setSelectedModel(ModelType.AICORE)
+                            viewModel.triggerAicoreRescan()
+                          },
+                      modifier = Modifier.fillMaxWidth(),
+                      shape = RoundedCornerShape(14.dp),
+                      colors =
+                          CardDefaults.outlinedCardColors(
+                              containerColor =
+                                  if (isAicoreSelected)
+                                      MaterialTheme.colorScheme.secondaryContainer
+                                  else Color.Transparent,
+                          ),
+                      border =
+                          if (isAicoreSelected)
+                              BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                          else CardDefaults.outlinedCardBorder(),
+                  ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                      Column(modifier = Modifier.weight(1f)) {
+                        FlowRow {
+                          Text(
+                              "Gemini Nano",
+                              style = MaterialTheme.typography.titleSmall,
+                              fontWeight =
+                                  if (isAicoreSelected) FontWeight.Bold else FontWeight.Medium,
+                          )
+                          Spacer(modifier = Modifier.width(8.dp))
+                          Surface(
+                              color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                              shape = RoundedCornerShape(4.dp)) {
+                            Text(
+                                text = "BETA",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold)
+                          }
+                        }
+                        Text(
+                            "Android AICore",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        )
+                        Text(
+                            "Offline, OS-managed Gemini Nano. Zero storage needed, but content safety guidelines are more restricted.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                      }
+                      Spacer(modifier = Modifier.width(12.dp))
+                      
+                      val aicoreColor = if (aicoreStatus == FeatureStatus.AVAILABLE) {
+                        if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+                      } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+                        MaterialTheme.colorScheme.errorContainer
+                      } else {
+                        MaterialTheme.colorScheme.surfaceContainerHighest
+                      }
+
+                      Surface(
+                          shape = RoundedCornerShape(8.dp),
+                          color = aicoreColor,
+                          modifier = Modifier.size(32.dp)) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()) {
+                          if (aicoreStatus == FeatureStatus.AVAILABLE) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Ready",
+                                tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                modifier = Modifier.size(20.dp))
+                          } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Unsupported",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp))
+                          } else {
+                            Icon(
+                                imageVector = Icons.Rounded.Info,
+                                contentDescription = "Check Setup",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp))
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
 
@@ -1258,6 +1361,7 @@ fun SettingsScreen(
               ModelType.GEMMA_4 ->
                   "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
               ModelType.GGUF -> ""
+              ModelType.AICORE -> ""
             }
         androidx.compose.ui.window.Dialog(
             onDismissRequest = {
@@ -1406,10 +1510,13 @@ fun SettingsScreen(
               Spacer(modifier = Modifier.height(16.dp))
 
               // Image Resolution Setting Block
+              val isAicoreSelected = selectedModel == ModelType.AICORE
               Surface(
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
-                  modifier = Modifier.fillMaxWidth()) {
+                  modifier =
+                      Modifier.fillMaxWidth()
+                          .then(if (isAicoreSelected) Modifier.alpha(0.5f) else Modifier)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                       Row(
                           modifier = Modifier.fillMaxWidth(),
@@ -1453,6 +1560,7 @@ fun SettingsScreen(
                           valueRange = 0f..4f,
                           steps = 3,
                           modifier = Modifier.fillMaxWidth(),
+                          enabled = !isAicoreSelected,
                       )
                       Row(
                           modifier = Modifier.fillMaxWidth(),
@@ -1472,12 +1580,13 @@ fun SettingsScreen(
 
               // Instance Count Setting Block
               val isGgufSelected = selectedModel == ModelType.GGUF
+              val isInstanceDisabled = isGgufSelected || isAicoreSelected
               Surface(
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
                   modifier =
                       Modifier.fillMaxWidth()
-                          .then(if (isGgufSelected) Modifier.alpha(0.5f) else Modifier)) {
+                          .then(if (isInstanceDisabled) Modifier.alpha(0.5f) else Modifier)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                       Row(
                           modifier = Modifier.fillMaxWidth(),
@@ -1503,7 +1612,7 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer) {
                                   Text(
-                                      if (isGgufSelected) "1x" else "${localInstanceCount}x",
+                                      if (isInstanceDisabled) "1x" else "${localInstanceCount}x",
                                       style = MaterialTheme.typography.labelMedium,
                                       fontWeight = FontWeight.Bold,
                                       color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1520,19 +1629,20 @@ fun SettingsScreen(
                           valueRange = 1f..5f,
                           steps = 3,
                           modifier = Modifier.fillMaxWidth(),
-                          enabled = !isGgufSelected)
+                          enabled = !isInstanceDisabled)
                     }
                   }
 
               Spacer(modifier = Modifier.height(12.dp))
 
               // Token Length Setting Block
+              val isTokenDisabled = isGgufSelected || isAicoreSelected
               Surface(
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceContainerLow,
                   modifier =
                       Modifier.fillMaxWidth()
-                          .then(if (isGgufSelected) Modifier.alpha(0.5f) else Modifier)) {
+                          .then(if (isTokenDisabled) Modifier.alpha(0.5f) else Modifier)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                       Row(
                           modifier = Modifier.fillMaxWidth(),
@@ -1558,7 +1668,7 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer) {
                                   Text(
-                                      if (isGgufSelected) "Auto" else "$localMaxTokens",
+                                      if (isTokenDisabled) "Auto" else "$localMaxTokens",
                                       style = MaterialTheme.typography.labelMedium,
                                       fontWeight = FontWeight.Bold,
                                       color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1576,7 +1686,7 @@ fun SettingsScreen(
                           valueRange = 0f..2f,
                           steps = 1,
                           modifier = Modifier.fillMaxWidth(),
-                          enabled = !isGgufSelected)
+                          enabled = !isTokenDisabled)
                       Row(
                           modifier = Modifier.fillMaxWidth(),
                           horizontalArrangement = Arrangement.SpaceBetween,
