@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.legacy
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -44,7 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.imageLoader
+import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.ScreenshotViewModel
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.findComponentActivity
+import com.deryk.skarmetoo.hapticOnClick
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable

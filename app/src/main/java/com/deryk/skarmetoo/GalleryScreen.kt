@@ -100,6 +100,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.legacy.SearchPill
+import com.deryk.skarmetoo.legacy.ScreenshotGridItem
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.ceil

@@ -125,9 +125,7 @@ class MainActivity : ComponentActivity() {
 // --- Navigation ---
 object Routes {
   const val ONBOARDING = "onboarding"
-  const val LEGACY = "legacy"
   const val SETTINGS = "settings"
-  const val EXPERIMENTAL = "experimental"
   const val GALLERY = "gallery"
   const val DETAIL = "detail/{id}"
 
@@ -154,17 +152,11 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
 
   val showBottomBar =
       !isPickMode &&
-          (currentRoute == Routes.LEGACY ||
-              currentRoute == Routes.SETTINGS ||
-              currentRoute == Routes.EXPERIMENTAL ||
+          (currentRoute == Routes.SETTINGS ||
               currentRoute == Routes.GALLERY)
 
-  var legacyScrollKey by remember { mutableIntStateOf(0) }
-  var legacyRefreshKey by remember { mutableIntStateOf(0) }
-  val legacyScrollState = androidx.compose.foundation.rememberScrollState()
   val galleryScrollState = androidx.compose.foundation.rememberScrollState()
   var isScreenSaverActive by remember { mutableStateOf(false) }
-  var lastLegacyClickTime by remember { mutableLongStateOf(0L) }
   val isEasterEgg = remember { kotlin.random.Random.nextFloat() < 0.069f }
   val logoRes = if (isEasterEgg) R.drawable.app_logo_rainbow else R.drawable.app_logo
 
@@ -304,69 +296,6 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                         selectedTextColor = MaterialTheme.colorScheme.onTertiaryContainer,
                     ),
             )
-            NavigationBarItem(
-                selected = currentRoute == Routes.LEGACY,
-                onClick =
-                    hapticOnClick {
-                      val now = System.currentTimeMillis()
-                      if (currentRoute != Routes.LEGACY) {
-                        navController.navigate(Routes.LEGACY) {
-                          popUpTo(navController.graph.startDestinationId) { saveState = true }
-                          launchSingleTop = true
-                          restoreState = true
-                        }
-                      } else {
-                        if (now - lastLegacyClickTime < 400) {
-                          legacyRefreshKey++
-                          lastLegacyClickTime = 0L
-                        } else {
-                          legacyScrollKey++
-                          lastLegacyClickTime = now
-                        }
-                      }
-                    },
-                icon = {
-                  Icon(
-                      if (currentRoute == Routes.LEGACY) Icons.Rounded.PhotoLibrary
-                      else Icons.Outlined.PhotoLibrary,
-                      "Legacy",
-                  )
-                },
-                label = { Text(stringResource(R.string.legacy_gallery)) },
-                colors =
-                    NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                    ),
-            )
-            NavigationBarItem(
-                selected = currentRoute == Routes.EXPERIMENTAL,
-                onClick =
-                    hapticOnClick {
-                      if (currentRoute != Routes.EXPERIMENTAL) {
-                        navController.navigate(Routes.EXPERIMENTAL) {
-                          popUpTo(navController.graph.startDestinationId) { saveState = true }
-                          launchSingleTop = true
-                          restoreState = true
-                        }
-                      }
-                    },
-                icon = {
-                  Icon(
-                      if (currentRoute == Routes.EXPERIMENTAL) Icons.Rounded.Science
-                      else Icons.Outlined.Science,
-                      "Experimental",
-                  )
-                },
-                label = { Text(stringResource(R.string.experimental)) },
-                colors =
-                    NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-            )
           }
         }
       },
@@ -376,7 +305,7 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
             targetValue = innerPadding.calculateBottomPadding(),
             label = "bottomPadding",
         )
-    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS, Routes.LEGACY, Routes.EXPERIMENTAL)
+    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS)
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -400,9 +329,7 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           } else {
             when (targetRoute) {
               Routes.GALLERY -> slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn()
-              Routes.SETTINGS,
-              Routes.LEGACY,
-              Routes.EXPERIMENTAL -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
+              Routes.SETTINGS -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
               else -> fadeIn()
             }
           }
@@ -422,9 +349,7 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           } else {
             when (targetRoute) {
               Routes.GALLERY -> slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut()
-              Routes.SETTINGS,
-              Routes.LEGACY,
-              Routes.EXPERIMENTAL -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
+              Routes.SETTINGS -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
               else -> fadeOut()
             }
           }
@@ -442,30 +367,12 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
               }
             })
       }
-      composable(Routes.LEGACY) {
-        LegacyScreen(
-            viewModel = viewModel,
-            onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
-            scrollToTopKey = legacyScrollKey,
-            refreshKey = legacyRefreshKey,
-            logoRes = logoRes,
-            scrollState = legacyScrollState,
-            isPickMode = isPickMode,
-        )
-      }
       composable(Routes.SETTINGS) {
         SettingsScreen(
             viewModel = viewModel,
             onStartScreenSaver = { isScreenSaverActive = true },
             logoRes = logoRes,
             onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
-        )
-      }
-      composable(Routes.EXPERIMENTAL) {
-        ExperimentalScreen(
-            viewModel = viewModel,
-            onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
-            logoRes = logoRes,
         )
       }
       composable(Routes.GALLERY) {

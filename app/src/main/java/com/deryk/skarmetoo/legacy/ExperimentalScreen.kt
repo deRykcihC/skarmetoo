@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.legacy
 
 import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
@@ -58,6 +58,12 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlinx.coroutines.delay
+
+import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.ScreenshotViewModel
+import com.deryk.skarmetoo.hapticOnClick
+import com.deryk.skarmetoo.AlbumWithThumbnails
+import com.deryk.skarmetoo.PillScrollbar
 
 private const val EXP_GRID_SPACING_DP = 2
 private const val EXP_INITIAL_RENDER_ROWS = 36
@@ -418,7 +424,7 @@ fun ExperimentalScreen(
           remember(experimentalImageUris, effectiveColumns) {
             experimentalImageUris.chunked(effectiveColumns)
           }
-      var renderedRows by remember { mutableIntStateOf(0) }
+      var renderedRows by remember { mutableStateOf(0) }
 
       LaunchedEffect(rows.size) {
         renderedRows =

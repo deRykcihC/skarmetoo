@@ -2,7 +2,6 @@
 <resources>
     <string name="app_name">Skarmetoo</string>
     <string name="settings">設定</string>
-    <string name="legacy_gallery">Legacy</string>
     <string name="manage_folders">管理資料夾</string>
     <string name="add_media_folder">新增媒體資料夾</string>
     <string name="select_media_folders">選擇媒體資料夾</string>
@@ -136,7 +135,6 @@
     <string name="feedback">回饋</string>
     <string name="feedback_desc">回報錯誤、請求功能或分享建議</string>
     <string name="submit_feedback">提交回饋</string>
-    <string name="experimental">實驗</string>
     <string name="gallery">首頁</string>
     <string name="all">全部</string>
     <string name="advanced_settings">進階設定</string>
