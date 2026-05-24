@@ -118,11 +118,31 @@ fun SettingsScreen(
       remember(savedBackgroundProcess) { mutableStateOf(savedBackgroundProcess) }
   var localPageSize by remember(savedPageSize) { mutableIntStateOf(savedPageSize) }
 
-  // Notification permission launcher
   val notificationPermissionLauncher =
       rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (!isGranted) {
           localBackgroundProcess = false
+        }
+      }
+
+  val jsonSaveFolderUri by viewModel.jsonSaveFolderUri.collectAsState()
+  val jsonSaveFolderName by viewModel.jsonSaveFolderName.collectAsState()
+  val jsonLastBackupFilename by viewModel.jsonLastBackupFilename.collectAsState()
+  val jsonLastBackupTime by viewModel.jsonLastBackupTime.collectAsState()
+
+  // SAF Folder Picker launcher for external save location
+  val jsonFolderPickerLauncher =
+      rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+          try {
+            val takeFlags: Int =
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+            viewModel.setJsonSaveFolderUri(uri)
+          } catch (e: Exception) {
+            e.printStackTrace()
+          }
         }
       }
 
@@ -1929,7 +1949,7 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(16.dp))
 
-      // ===== Import/Export Card =====
+      // ===== External Data Sync Card =====
       Card(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
           shape = RoundedCornerShape(20.dp),
@@ -1954,57 +1974,154 @@ fun SettingsScreen(
               }
             }
             Spacer(modifier = Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
               Text(
-                  stringResource(R.string.import_export),
+                  "External Data Sync",
                   style = MaterialTheme.typography.titleMedium,
                   fontWeight = FontWeight.Medium,
               )
               Text(
-                  stringResource(R.string.transfer_metadata_between_devices),
+                  "Prevent data loss when app is uninstalled or cleared",
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
               )
             }
+
+            // Sync status badge
+            val badgeText = if (jsonSaveFolderUri != null) "Sync Active" else "Internal Only"
+            val badgeBg =
+                if (jsonSaveFolderUri != null) {
+                  if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+                } else {
+                  if (isDark) Color(0xFF3E1F1F) else Color(0xFFFFEBEE)
+                }
+            val badgeColor =
+                if (jsonSaveFolderUri != null) {
+                  if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
+                } else {
+                  if (isDark) Color(0xFFE57373) else Color(0xFFC62828)
+                }
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = badgeBg,
+            ) {
+              Text(
+                  text = badgeText,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.Bold,
+                  color = badgeColor,
+              )
+            }
           }
+
           Spacer(modifier = Modifier.height(16.dp))
 
-          Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(12.dp),
-          ) {
-            OutlinedButton(
-                onClick = hapticOnClick {},
-                modifier = Modifier.weight(1f),
+          if (jsonSaveFolderUri == null) {
+            // Unconnected State
+            Text(
+                "Save your analyzed screenshot summaries and tags into an external folder of your choice. When reinstalling, simply connect the same folder to instantly recover all data.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick =
+                    hapticOnClick {
+                      try {
+                        jsonFolderPickerLauncher.launch(null)
+                      } catch (e: Exception) {
+                        e.printStackTrace()
+                      }
+                    },
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 contentPadding = PaddingValues(vertical = 14.dp),
-                enabled = false,
             ) {
-              Icon(Icons.Rounded.Upload, null, modifier = Modifier.size(18.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text(stringResource(R.string.export))
+              Icon(Icons.Rounded.FolderOpen, null, modifier = Modifier.size(18.dp))
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Select External Sync Folder")
             }
-            FilledTonalButton(
-                onClick = hapticOnClick {},
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(vertical = 14.dp),
-                enabled = false,
-            ) {
-              Icon(Icons.Rounded.Download, null, modifier = Modifier.size(18.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text(stringResource(R.string.import_btn))
+          } else {
+            // Connected State
+            Column {
+              Surface(
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(12.dp),
+                  color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                          Icon(
+                              Icons.Rounded.Folder,
+                              null,
+                              tint = MaterialTheme.colorScheme.primary,
+                              modifier = Modifier.size(24.dp))
+                          Spacer(modifier = Modifier.width(10.dp))
+                          Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = jsonSaveFolderName ?: "Selected Folder",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = "Last saved: ${jsonLastBackupTime ?: "Pending"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color =
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                          }
+                          IconButton(
+                              onClick =
+                                  hapticOnClick {
+                                    try {
+                                      jsonFolderPickerLauncher.launch(null)
+                                    } catch (e: Exception) {
+                                      e.printStackTrace()
+                                    }
+                                  },
+                              modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    Icons.Rounded.Edit,
+                                    contentDescription = "Change Folder",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp))
+                              }
+                        }
+                  }
+
+              Spacer(modifier = Modifier.height(12.dp))
+
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FilledTonalButton(
+                        onClick = hapticOnClick { viewModel.syncWithExternalFolder() },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(vertical = 12.dp)) {
+                          Icon(Icons.Rounded.Sync, null, modifier = Modifier.size(18.dp))
+                          Spacer(modifier = Modifier.width(6.dp))
+                          Text("Sync Now")
+                        }
+
+                    OutlinedButton(
+                        onClick = hapticOnClick { viewModel.setJsonSaveFolderUri(null) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp),
+                        colors =
+                            ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error),
+                        border =
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                        contentPadding = PaddingValues(vertical = 12.dp)) {
+                          Icon(Icons.Rounded.LinkOff, null, modifier = Modifier.size(18.dp))
+                          Spacer(modifier = Modifier.width(6.dp))
+                          Text("Disconnect")
+                        }
+                  }
             }
           }
-
-          Spacer(modifier = Modifier.height(4.dp))
-          Text(
-              stringResource(R.string.coming_soon),
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.outline,
-              modifier = Modifier.fillMaxWidth(),
-              textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-          )
         }
       }
 

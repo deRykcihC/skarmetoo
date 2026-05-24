@@ -256,17 +256,21 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
       summary: String,
       tags: String,
       analyzedAt: Long,
+      note: String = "",
+      modelUsed: String = "",
   ) {
     val existing = getEntryByHash(hash)
     if (existing != null) {
-      // Update existing entry with imported metadata
+      // Update ALL existing entries with this hash in the database
       val values =
           ContentValues().apply {
             put(COL_SUMMARY, summary)
             put(COL_TAGS, tags)
             put(COL_ANALYZED_AT, analyzedAt)
+            put(COL_NOTE, note)
+            put(COL_MODEL_USED, modelUsed)
           }
-      writableDatabase.update(TABLE, values, "$COL_ID = ?", arrayOf(existing.id.toString()))
+      writableDatabase.update(TABLE, values, "$COL_IMAGE_HASH = ?", arrayOf(hash))
     } else {
       // Insert new unlinked entry
       val entry =
@@ -276,7 +280,8 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
               summary = summary,
               tags = tags,
               analyzedAt = analyzedAt,
-              modelUsed = "",
+              note = note,
+              modelUsed = modelUsed,
           )
       insertEntry(entry)
     }

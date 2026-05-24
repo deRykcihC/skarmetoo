@@ -11,10 +11,12 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.deryk.skarmetoo.data.DataManager
 import com.deryk.skarmetoo.data.ImageHasher
+import com.deryk.skarmetoo.data.JsonFolderManager
 import com.deryk.skarmetoo.data.ScreenshotDatabase
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import com.google.mlkit.genai.common.FeatureStatus
@@ -192,6 +194,84 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val _isModelSwitchTransitionLoading = MutableStateFlow(false)
   val isModelSwitchTransitionLoading: StateFlow<Boolean> =
       _isModelSwitchTransitionLoading.asStateFlow()
+
+  private val _jsonSaveFolderUri = MutableStateFlow<Uri?>(null)
+  val jsonSaveFolderUri: StateFlow<Uri?> = _jsonSaveFolderUri.asStateFlow()
+
+  private val _jsonSaveFolderName = MutableStateFlow<String?>(null)
+  val jsonSaveFolderName: StateFlow<String?> = _jsonSaveFolderName.asStateFlow()
+
+  private val _jsonLastBackupFilename = MutableStateFlow<String?>(null)
+  val jsonLastBackupFilename: StateFlow<String?> = _jsonLastBackupFilename.asStateFlow()
+
+  private val _jsonLastBackupTime = MutableStateFlow<String?>(null)
+  val jsonLastBackupTime: StateFlow<String?> = _jsonLastBackupTime.asStateFlow()
+
+  private fun getFolderFriendlyName(uri: Uri): String {
+    val context = getApplication<Application>()
+    return try {
+      val documentFile = DocumentFile.fromTreeUri(context, uri)
+      documentFile?.name ?: uri.path?.substringAfterLast("/") ?: "External Folder"
+    } catch (e: Exception) {
+      uri.path?.substringAfterLast("/") ?: "External Folder"
+    }
+  }
+
+  fun setJsonSaveFolderUri(uri: Uri?) {
+    _jsonSaveFolderUri.value = uri
+    _jsonSaveFolderName.value = uri?.let { getFolderFriendlyName(it) }
+    if (uri != null) {
+      prefs.edit().putString("json_save_folder_uri", uri.toString()).apply()
+      // Trigger a sync immediately
+      syncWithExternalFolder()
+    } else {
+      prefs.edit().remove("json_save_folder_uri").apply()
+      prefs.edit().remove("json_last_backup_filename").apply()
+      prefs.edit().remove("json_last_backup_time").apply()
+      _jsonLastBackupFilename.value = null
+      _jsonLastBackupTime.value = null
+    }
+  }
+
+  fun saveDatabaseToExternalFolder() {
+    val uri = _jsonSaveFolderUri.value ?: return
+    val context = getApplication<Application>()
+    viewModelScope.launch(Dispatchers.IO) {
+      val filename = JsonFolderManager.saveDatabaseToFolder(context, uri, db)
+      if (filename != null) {
+        _jsonLastBackupFilename.value = filename
+        prefs.edit().putString("json_last_backup_filename", filename).apply()
+
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val timeStr = sdf.format(java.util.Date())
+        _jsonLastBackupTime.value = timeStr
+        prefs.edit().putString("json_last_backup_time", timeStr).apply()
+      }
+    }
+  }
+
+  fun syncWithExternalFolder() {
+    val uri = _jsonSaveFolderUri.value ?: return
+    val context = getApplication<Application>()
+    viewModelScope.launch(Dispatchers.IO) {
+      try {
+        JsonFolderManager.importEntriesFromFolder(context, uri, db)
+        val filename = JsonFolderManager.saveDatabaseToFolder(context, uri, db)
+        if (filename != null) {
+          _jsonLastBackupFilename.value = filename
+          prefs.edit().putString("json_last_backup_filename", filename).apply()
+
+          val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+          val timeStr = sdf.format(java.util.Date())
+          _jsonLastBackupTime.value = timeStr
+          prefs.edit().putString("json_last_backup_time", timeStr).apply()
+        }
+        refreshEntries()
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to sync with external folder", e)
+      }
+    }
+  }
 
   private fun setModelStatusImmediate(status: String) {
     loadingStatusJob?.cancel()
@@ -528,6 +608,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     // Restore selected experimental album
     _selectedExperimentalAlbumId.value = prefs.getString("selected_experimental_album_id", null)
+
+    // Restore external save folder for JSON backup
+    val savedJsonFolderUriString = prefs.getString("json_save_folder_uri", null)
+    _jsonSaveFolderUri.value = savedJsonFolderUriString?.let { Uri.parse(it) }
+    _jsonSaveFolderName.value = _jsonSaveFolderUri.value?.let { getFolderFriendlyName(it) }
+    _jsonLastBackupFilename.value = prefs.getString("json_last_backup_filename", null)
+    _jsonLastBackupTime.value = prefs.getString("json_last_backup_time", null)
 
     // Trigger initial scan for AICore status once on very first launch
     if (_aicoreCachedStatus.value == -999) {
@@ -1575,8 +1662,22 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           if (hashExisting.imageUri.isBlank()) {
             db.linkImageToHash(hash, uriString)
             refreshEntries()
+            withContext(Dispatchers.Main) { onResult(hashExisting.id) }
+          } else {
+            // Duplicate image with same hash. Copy already analyzed metadata to avoid re-analysis!
+            val entry =
+                ScreenshotEntry(
+                    imageUri = uriString,
+                    imageHash = hash,
+                    summary = hashExisting.summary,
+                    tags = hashExisting.tags,
+                    analyzedAt = hashExisting.analyzedAt,
+                    note = hashExisting.note,
+                    modelUsed = hashExisting.modelUsed)
+            val newId = db.insertEntry(entry)
+            refreshEntries()
+            withContext(Dispatchers.Main) { onResult(newId) }
           }
-          withContext(Dispatchers.Main) { onResult(hashExisting.id) }
           return@launch
         }
       }
@@ -1618,11 +1719,27 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           val hash = ImageHasher.computeDHash(bitmap)
 
           val existing = db.getEntryByHash(hash)
-          // Link if it's an imported JSON hash that currently has no local image URI
-          if (existing != null && existing.imageUri.isBlank()) {
-            db.linkImageToHash(hash, uriString)
-            Log.d(TAG, "Linked imported entry: $hash")
-            continue
+          if (existing != null) {
+            if (existing.imageUri.isBlank()) {
+              db.linkImageToHash(hash, uriString)
+              Log.d(TAG, "Linked imported entry: $hash")
+              continue
+            } else {
+              // Duplicate image with same hash. Copy already analyzed metadata to avoid
+              // re-analysis!
+              val entry =
+                  ScreenshotEntry(
+                      imageUri = uriString,
+                      imageHash = hash,
+                      summary = existing.summary,
+                      tags = existing.tags,
+                      analyzedAt = existing.analyzedAt,
+                      note = existing.note,
+                      modelUsed = existing.modelUsed)
+              db.insertEntry(entry)
+              Log.d(TAG, "Added duplicate screenshot with copied metadata: $hash")
+              continue
+            }
           }
 
           val entry =
@@ -2127,6 +2244,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           return@launch
         }
         db.updateAnalysis(entry.id, summary, tags, modelUsed)
+        saveDatabaseToExternalFolder()
 
         // Delay clearing UI state slightly so the 100% progress bar has time to be seen
         kotlinx.coroutines.delay(600L)
@@ -2396,6 +2514,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
     viewModelScope.launch(Dispatchers.IO) {
       db.updateSummary(id, summary)
       refreshEntries()
+      saveDatabaseToExternalFolder()
     }
   }
 
@@ -2406,6 +2525,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
     viewModelScope.launch(Dispatchers.IO) {
       db.updateTags(id, tags)
       refreshEntries()
+      saveDatabaseToExternalFolder()
     }
   }
 
@@ -2413,6 +2533,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
     viewModelScope.launch(Dispatchers.IO) {
       db.deleteEntry(id)
       refreshEntries()
+      saveDatabaseToExternalFolder()
     }
   }
 
@@ -2423,6 +2544,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
     viewModelScope.launch(Dispatchers.IO) {
       db.updateNote(id, note)
       refreshEntries()
+      saveDatabaseToExternalFolder()
     }
   }
 
