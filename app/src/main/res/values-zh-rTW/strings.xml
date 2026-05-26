@@ -169,4 +169,18 @@
     <string name="results_count">%d 個結果</string>
     <string name="select_photo_title">選擇照片</string>
     <string name="cancel">取消</string>
+    <string name="external_data_sync_title">外部資料同步</string>
+    <string name="external_data_sync_subtitle">避免解除安裝或清除應用程式時遺失資料</string>
+    <string name="external_data_sync_status_active">同步作用中</string>
+    <string name="external_data_sync_status_internal">僅限內部</string>
+    <string name="external_data_sync_desc">將分析好的螢幕截圖摘要與標籤儲存到您指定的外部資料夾。重新安裝時，只需連結相同的資料夾即可立即還原所有資料。</string>
+    <string name="external_data_sync_select_folder">選擇外部同步資料夾</string>
+    <string name="external_data_sync_last_saved">上次儲存時間：%1$s</string>
+    <string name="external_data_sync_last_saved_pending">待處理</string>
+    <string name="external_data_sync_change_folder_desc">變更資料夾</string>
+    <string name="external_data_sync_sync_now">立即同步</string>
+    <string name="external_data_sync_disconnect">中斷連結</string>
+    <string name="external_data_sync_selected_folder">選取的資料夾</string>
+    <string name="gemini_nano_desc">離線、由系統管理的 Gemini Nano。無需佔用額外的儲存空間，但內容安全規範較為嚴格。</string>
 </resources>
+

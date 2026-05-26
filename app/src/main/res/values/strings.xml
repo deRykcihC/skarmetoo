@@ -169,4 +169,18 @@
     <string name="results_count">%d results</string>
     <string name="select_photo_title">Select a photo</string>
     <string name="cancel">Cancel</string>
+    <string name="external_data_sync_title">External Data Sync</string>
+    <string name="external_data_sync_subtitle">Prevent data loss when app is uninstalled or cleared</string>
+    <string name="external_data_sync_status_active">Sync Active</string>
+    <string name="external_data_sync_status_internal">Internal Only</string>
+    <string name="external_data_sync_desc">Save your analyzed screenshot summaries and tags into an external folder of your choice. When reinstalling, simply connect the same folder to instantly recover all data.</string>
+    <string name="external_data_sync_select_folder">Select External Sync Folder</string>
+    <string name="external_data_sync_last_saved">Last saved: %1$s</string>
+    <string name="external_data_sync_last_saved_pending">Pending</string>
+    <string name="external_data_sync_change_folder_desc">Change Folder</string>
+    <string name="external_data_sync_sync_now">Sync Now</string>
+    <string name="external_data_sync_disconnect">Disconnect</string>
+    <string name="external_data_sync_selected_folder">Selected Folder</string>
+    <string name="gemini_nano_desc">Offline, OS-managed Gemini Nano. Zero storage needed, but content safety guidelines are more restricted.</string>
 </resources>
+

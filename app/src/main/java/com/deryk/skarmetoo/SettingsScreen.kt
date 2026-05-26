@@ -1087,7 +1087,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                         )
                         Text(
-                            "Offline, OS-managed Gemini Nano. Zero storage needed, but content safety guidelines are more restricted.",
+                            stringResource(R.string.gemini_nano_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1976,19 +1976,19 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
               Text(
-                  "External Data Sync",
+                  stringResource(R.string.external_data_sync_title),
                   style = MaterialTheme.typography.titleMedium,
                   fontWeight = FontWeight.Medium,
               )
               Text(
-                  "Prevent data loss when app is uninstalled or cleared",
+                  stringResource(R.string.external_data_sync_subtitle),
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
               )
             }
 
             // Sync status badge
-            val badgeText = if (jsonSaveFolderUri != null) "Sync Active" else "Internal Only"
+            val badgeText = if (jsonSaveFolderUri != null) stringResource(R.string.external_data_sync_status_active) else stringResource(R.string.external_data_sync_status_internal)
             val badgeBg =
                 if (jsonSaveFolderUri != null) {
                   if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
@@ -2020,7 +2020,7 @@ fun SettingsScreen(
           if (jsonSaveFolderUri == null) {
             // Unconnected State
             Text(
-                "Save your analyzed screenshot summaries and tags into an external folder of your choice. When reinstalling, simply connect the same folder to instantly recover all data.",
+                stringResource(R.string.external_data_sync_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2040,7 +2040,7 @@ fun SettingsScreen(
             ) {
               Icon(Icons.Rounded.FolderOpen, null, modifier = Modifier.size(18.dp))
               Spacer(modifier = Modifier.width(8.dp))
-              Text("Select External Sync Folder")
+              Text(stringResource(R.string.external_data_sync_select_folder))
             }
           } else {
             // Connected State
@@ -2061,12 +2061,12 @@ fun SettingsScreen(
                           Spacer(modifier = Modifier.width(10.dp))
                           Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = jsonSaveFolderName ?: "Selected Folder",
+                                text = jsonSaveFolderName ?: stringResource(R.string.external_data_sync_selected_folder),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                text = "Last saved: ${jsonLastBackupTime ?: "Pending"}",
+                                text = stringResource(R.string.external_data_sync_last_saved, jsonLastBackupTime ?: stringResource(R.string.external_data_sync_last_saved_pending)),
                                 style = MaterialTheme.typography.labelSmall,
                                 color =
                                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
@@ -2083,7 +2083,7 @@ fun SettingsScreen(
                               modifier = Modifier.size(32.dp)) {
                                 Icon(
                                     Icons.Rounded.Edit,
-                                    contentDescription = "Change Folder",
+                                    contentDescription = stringResource(R.string.external_data_sync_change_folder_desc),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp))
                               }
@@ -2102,7 +2102,7 @@ fun SettingsScreen(
                         contentPadding = PaddingValues(vertical = 12.dp)) {
                           Icon(Icons.Rounded.Sync, null, modifier = Modifier.size(18.dp))
                           Spacer(modifier = Modifier.width(6.dp))
-                          Text("Sync Now")
+                          Text(stringResource(R.string.external_data_sync_sync_now))
                         }
 
                     OutlinedButton(
@@ -2117,7 +2117,7 @@ fun SettingsScreen(
                         contentPadding = PaddingValues(vertical = 12.dp)) {
                           Icon(Icons.Rounded.LinkOff, null, modifier = Modifier.size(18.dp))
                           Spacer(modifier = Modifier.width(6.dp))
-                          Text("Disconnect")
+                          Text(stringResource(R.string.external_data_sync_disconnect))
                         }
                   }
             }
