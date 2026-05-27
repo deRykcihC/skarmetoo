@@ -352,14 +352,18 @@ fun GalleryScreen(
                 val matchesTag =
                     selectedTag == null ||
                         tags.any { tag -> tag.equals(selectedTag, ignoreCase = true) }
-                val matchesSearch =
-                    query.isBlank() ||
-                        image.displayName.contains(query, ignoreCase = true) ||
-                        uriString.contains(query, ignoreCase = true) ||
-                        entry?.summary?.contains(query, ignoreCase = true) == true ||
-                        tags.any { tag -> tag.contains(query, ignoreCase = true) }
+                 val isAnalyzed = entry != null && entry.summary.isNotBlank()
+                 val matchesSearch =
+                     if (query.isBlank()) {
+                       true
+                     } else {
+                       isAnalyzed &&
+                           (image.displayName.contains(query, ignoreCase = true) ||
+                               entry?.summary?.contains(query, ignoreCase = true) == true ||
+                               tags.any { tag -> tag.contains(query, ignoreCase = true) })
+                     }
 
-                matchesTag && matchesSearch
+                 matchesTag && matchesSearch
               }
 
           if (isSortDescending) {
