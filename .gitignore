@@ -18,3 +18,7 @@ key.properties
 upload_certificate.pem
 deploymentTargetSelector.xml
 
+# IDE and tool-specific exclusions
+.claude/
+.kotlin/
+
