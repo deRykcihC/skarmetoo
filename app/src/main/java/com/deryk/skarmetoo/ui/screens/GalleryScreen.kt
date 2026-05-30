@@ -1,19 +1,19 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ui.screens
 
-import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.CancellationSignal
-import android.provider.MediaStore
 import android.util.LruCache
 import android.util.Size
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -65,7 +65,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,12 +76,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -99,9 +101,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.data.ScreenshotEntry
-import com.deryk.skarmetoo.legacy.SearchPill
 import com.deryk.skarmetoo.legacy.ScreenshotGridItem
+import com.deryk.skarmetoo.legacy.SearchPill
+import com.deryk.skarmetoo.ui.components.PillScrollbar
+import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.findComponentActivity
+import com.deryk.skarmetoo.viewmodel.AlbumWithThumbnails
+import com.deryk.skarmetoo.viewmodel.ClickedImageBounds
+import com.deryk.skarmetoo.viewmodel.MediaStoreImage
+import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -161,54 +171,6 @@ private fun saveToDiskCache(context: Context, imageId: Long, bitmap: Bitmap) {
   }
 }
 
-private fun queryMediaStoreImages(context: Context, bucketId: String?): List<MediaStoreImage> {
-  val projection =
-      arrayOf(
-          MediaStore.Images.Media._ID,
-          MediaStore.Images.Media.DATE_ADDED,
-          MediaStore.Images.Media.DISPLAY_NAME,
-      )
-  val selection = bucketId?.let { "${MediaStore.Images.Media.BUCKET_ID} = ?" }
-  val selectionArgs = bucketId?.let { arrayOf(it) }
-
-  val results = mutableListOf<MediaStoreImage>()
-  context.contentResolver
-      .query(
-          MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-          projection,
-          selection,
-          selectionArgs,
-          "${MediaStore.Images.Media.DATE_ADDED} DESC",
-      )
-      ?.use { cursor ->
-        val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-        val dateAddedCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
-        val displayNameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-        while (cursor.moveToNext()) {
-          val id = cursor.getLong(idCol)
-          val dateAdded = cursor.getLong(dateAddedCol)
-          val displayName = cursor.getString(displayNameCol) ?: ""
-          results.add(
-              MediaStoreImage(
-                  id = id,
-                  uri =
-                      ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id),
-                  displayName = displayName,
-                  dateAdded = dateAdded,
-              ),
-          )
-        }
-      }
-  return results
-}
-
-data class MediaStoreImage(
-    val id: Long,
-    val uri: Uri,
-    val displayName: String = "",
-    val dateAdded: Long = 0L,
-)
-
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 fun GalleryScreen(
@@ -223,8 +185,8 @@ fun GalleryScreen(
   val focusManager = LocalFocusManager.current
   val keyboardController = LocalSoftwareKeyboardController.current
 
-  val images = remember { mutableStateListOf<MediaStoreImage>() }
-  var isLoading by remember { mutableStateOf(true) }
+  val images by viewModel.mediaStoreImages.collectAsState()
+  val isLoading by viewModel.isMediaStoreLoading.collectAsState()
   var isNavigating by remember { mutableStateOf(false) }
   var lastLoadedAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
   var rememberedScrollValue by rememberSaveable { mutableIntStateOf(0) }
@@ -352,18 +314,18 @@ fun GalleryScreen(
                 val matchesTag =
                     selectedTag == null ||
                         tags.any { tag -> tag.equals(selectedTag, ignoreCase = true) }
-                 val isAnalyzed = entry != null && entry.summary.isNotBlank()
-                 val matchesSearch =
-                     if (query.isBlank()) {
-                       true
-                     } else {
-                       isAnalyzed &&
-                           (image.displayName.contains(query, ignoreCase = true) ||
-                               entry?.summary?.contains(query, ignoreCase = true) == true ||
-                               tags.any { tag -> tag.contains(query, ignoreCase = true) })
-                     }
+                val isAnalyzed = entry != null && entry.summary.isNotBlank()
+                val matchesSearch =
+                    if (query.isBlank()) {
+                      true
+                    } else {
+                      isAnalyzed &&
+                          (image.displayName.contains(query, ignoreCase = true) ||
+                              entry?.summary?.contains(query, ignoreCase = true) == true ||
+                              tags.any { tag -> tag.contains(query, ignoreCase = true) })
+                    }
 
-                 matchesTag && matchesSearch
+                matchesTag && matchesSearch
               }
 
           if (isSortDescending) {
@@ -432,12 +394,8 @@ fun GalleryScreen(
         } else {
           rememberedScrollValue
         }
-    isLoading = true
-    val loaded = withContext(Dispatchers.IO) { queryMediaStoreImages(context, selectedAlbumId) }
-    images.clear()
-    images.addAll(loaded)
+    viewModel.loadImagesForBucket(context, selectedAlbumId)
     lastLoadedAlbumId = selectedAlbumId
-    isLoading = false
   }
 
   val rows = remember(filteredImages, effectiveColumns) { filteredImages.chunked(effectiveColumns) }
@@ -1027,39 +985,54 @@ fun GalleryScreen(
                       activeAnalysisIds.contains(entry.id) ||
                           entry.isAnalyzing ||
                           entryProgressMap.containsKey(entry.id)
-                  ScreenshotGridItem(
-                      entry = entry,
-                      currentImageProgress =
-                          entryProgressMap[entry.id]
-                              ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
-                      isActivelyAnalyzing = isActivelyAnalyzing,
-                      isQueueRunning = isAnalysisRunning,
-                      onClick =
-                          hapticOnClick {
-                            if (isPickMode) {
-                              val activity = context.findComponentActivity()
-                              if (activity != null) {
-                                val resultIntent =
-                                    android.content.Intent().apply {
-                                      data = image.uri
-                                      flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                  var itemBounds by remember { mutableStateOf<ClickedImageBounds?>(null) }
+                  Box(
+                      modifier =
+                          Modifier.onGloballyPositioned { coords ->
+                            val pos = coords.positionInWindow()
+                            val size = coords.size
+                            itemBounds =
+                                ClickedImageBounds(
+                                    pos.x, pos.y, size.width.toFloat(), size.height.toFloat())
+                          }) {
+                        ScreenshotGridItem(
+                            entry = entry,
+                            currentImageProgress =
+                                entryProgressMap[entry.id]
+                                    ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
+                            isActivelyAnalyzing = isActivelyAnalyzing,
+                            isQueueRunning = isAnalysisRunning,
+                            onClick =
+                                hapticOnClick {
+                                  viewModel.setClickedImageBounds(itemBounds)
+                                  if (isPickMode) {
+                                    val activity = context.findComponentActivity()
+                                    if (activity != null) {
+                                      val resultIntent =
+                                          android.content.Intent().apply {
+                                            data = image.uri
+                                            flags =
+                                                android.content.Intent
+                                                    .FLAG_GRANT_READ_URI_PERMISSION
+                                          }
+                                      activity.setResult(
+                                          android.app.Activity.RESULT_OK, resultIntent)
+                                      activity.finish()
                                     }
-                                activity.setResult(android.app.Activity.RESULT_OK, resultIntent)
-                                activity.finish()
-                              }
-                            } else {
-                              if (entryId != null) {
-                                onScreenshotClick(entryId)
-                              } else {
-                                isNavigating = true
-                                viewModel.getOrCreateEntryForUri(image.uri) { newId ->
-                                  isNavigating = false
-                                  onScreenshotClick(newId)
-                                }
-                              }
-                            }
-                          },
-                  )
+                                  } else {
+                                    if (entryId != null) {
+                                      onScreenshotClick(entryId)
+                                    } else {
+                                      isNavigating = true
+                                      viewModel.getOrCreateEntryForUri(image.uri) { newId ->
+                                        isNavigating = false
+                                        onScreenshotClick(newId)
+                                      }
+                                    }
+                                  }
+                                },
+                        )
+                      }
                 }
               }
 
@@ -1079,39 +1052,54 @@ fun GalleryScreen(
                       activeAnalysisIds.contains(entry.id) ||
                           entry.isAnalyzing ||
                           entryProgressMap.containsKey(entry.id)
-                  ScreenshotGridItem(
-                      entry = entry,
-                      currentImageProgress =
-                          entryProgressMap[entry.id]
-                              ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
-                      isActivelyAnalyzing = isActivelyAnalyzing,
-                      isQueueRunning = isAnalysisRunning,
-                      onClick =
-                          hapticOnClick {
-                            if (isPickMode) {
-                              val activity = context.findComponentActivity()
-                              if (activity != null) {
-                                val resultIntent =
-                                    android.content.Intent().apply {
-                                      data = image.uri
-                                      flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                  var itemBounds by remember { mutableStateOf<ClickedImageBounds?>(null) }
+                  Box(
+                      modifier =
+                          Modifier.onGloballyPositioned { coords ->
+                            val pos = coords.positionInWindow()
+                            val size = coords.size
+                            itemBounds =
+                                ClickedImageBounds(
+                                    pos.x, pos.y, size.width.toFloat(), size.height.toFloat())
+                          }) {
+                        ScreenshotGridItem(
+                            entry = entry,
+                            currentImageProgress =
+                                entryProgressMap[entry.id]
+                                    ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
+                            isActivelyAnalyzing = isActivelyAnalyzing,
+                            isQueueRunning = isAnalysisRunning,
+                            onClick =
+                                hapticOnClick {
+                                  viewModel.setClickedImageBounds(itemBounds)
+                                  if (isPickMode) {
+                                    val activity = context.findComponentActivity()
+                                    if (activity != null) {
+                                      val resultIntent =
+                                          android.content.Intent().apply {
+                                            data = image.uri
+                                            flags =
+                                                android.content.Intent
+                                                    .FLAG_GRANT_READ_URI_PERMISSION
+                                          }
+                                      activity.setResult(
+                                          android.app.Activity.RESULT_OK, resultIntent)
+                                      activity.finish()
                                     }
-                                activity.setResult(android.app.Activity.RESULT_OK, resultIntent)
-                                activity.finish()
-                              }
-                            } else {
-                              if (entryId != null) {
-                                onScreenshotClick(entryId)
-                              } else {
-                                isNavigating = true
-                                viewModel.getOrCreateEntryForUri(image.uri) { newId ->
-                                  isNavigating = false
-                                  onScreenshotClick(newId)
-                                }
-                              }
-                            }
-                          },
-                  )
+                                  } else {
+                                    if (entryId != null) {
+                                      onScreenshotClick(entryId)
+                                    } else {
+                                      isNavigating = true
+                                      viewModel.getOrCreateEntryForUri(image.uri) { newId ->
+                                        isNavigating = false
+                                        onScreenshotClick(newId)
+                                      }
+                                    }
+                                  }
+                                },
+                        )
+                      }
                 }
               }
             }
@@ -1128,6 +1116,7 @@ fun GalleryScreen(
                   val uriString = image.uri.toString()
                   val entryId =
                       experimentalStatuses[uriString]?.first ?: entryIdByMediaUri[uriString]
+                  var itemBounds by remember { mutableStateOf<ClickedImageBounds?>(null) }
                   ThumbnailCell(
                       image = image,
                       shouldLoad = shouldLoadRow,
@@ -1135,6 +1124,7 @@ fun GalleryScreen(
                       isClickable = true,
                       onClick =
                           hapticOnClick {
+                            viewModel.setClickedImageBounds(itemBounds)
                             if (isPickMode) {
                               val activity = context.findComponentActivity()
                               if (activity != null) {
@@ -1158,7 +1148,14 @@ fun GalleryScreen(
                               }
                             }
                           },
-                      modifier = Modifier.weight(1f),
+                      modifier =
+                          Modifier.weight(1f).onGloballyPositioned { coords ->
+                            val pos = coords.positionInWindow()
+                            val size = coords.size
+                            itemBounds =
+                                ClickedImageBounds(
+                                    pos.x, pos.y, size.width.toFloat(), size.height.toFloat())
+                          },
                   )
                 }
 
@@ -1393,6 +1390,14 @@ private fun ThumbnailCell(
     }
   }
 
+  val isLoaded = bitmap != null
+  val imageAlpha by
+      animateFloatAsState(
+          targetValue = if (isLoaded) 1f else 0f,
+          animationSpec = tween(durationMillis = 350),
+          label = "thumbnailFade",
+      )
+
   Box(
       modifier =
           modifier
@@ -1415,7 +1420,7 @@ private fun ThumbnailCell(
       Image(
           bitmap = bmp.asImageBitmap(),
           contentDescription = null,
-          modifier = Modifier.fillMaxSize(),
+          modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha },
           contentScale = ContentScale.Crop,
       )
     }

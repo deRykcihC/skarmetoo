@@ -1,5 +1,7 @@
 package com.deryk.skarmetoo.legacy
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -29,8 +31,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -45,10 +50,11 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.imageLoader
 import com.deryk.skarmetoo.R
-import com.deryk.skarmetoo.ScreenshotViewModel
 import com.deryk.skarmetoo.data.ScreenshotEntry
-import com.deryk.skarmetoo.findComponentActivity
-import com.deryk.skarmetoo.hapticOnClick
+import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.findComponentActivity
+import com.deryk.skarmetoo.viewmodel.ClickedImageBounds
+import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -440,31 +446,44 @@ fun LegacyScreen(
                     activeAnalysisIds.contains(entry.id) ||
                         entry.isAnalyzing ||
                         entryProgressMap.containsKey(entry.id)
-                ScreenshotGridItem(
-                    entry = entry,
-                    currentImageProgress =
-                        entryProgressMap[entry.id]
-                            ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
-                    isActivelyAnalyzing = isActivelyAnalyzing,
-                    isQueueRunning = isAnalysisRunning,
-                    onClick =
-                        hapticOnClick {
-                          if (isPickMode) {
-                            val activity = context.findComponentActivity()
-                            if (activity != null) {
-                              val resultIntent =
-                                  android.content.Intent().apply {
-                                    data = android.net.Uri.parse(entry.imageUri)
-                                    flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                var itemBounds by remember { mutableStateOf<ClickedImageBounds?>(null) }
+                Box(
+                    modifier =
+                        Modifier.onGloballyPositioned { coords ->
+                          val pos = coords.positionInWindow()
+                          val size = coords.size
+                          itemBounds =
+                              ClickedImageBounds(
+                                  pos.x, pos.y, size.width.toFloat(), size.height.toFloat())
+                        }) {
+                      ScreenshotGridItem(
+                          entry = entry,
+                          currentImageProgress =
+                              entryProgressMap[entry.id]
+                                  ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
+                          isActivelyAnalyzing = isActivelyAnalyzing,
+                          isQueueRunning = isAnalysisRunning,
+                          onClick =
+                              hapticOnClick {
+                                viewModel.setClickedImageBounds(itemBounds)
+                                if (isPickMode) {
+                                  val activity = context.findComponentActivity()
+                                  if (activity != null) {
+                                    val resultIntent =
+                                        android.content.Intent().apply {
+                                          data = android.net.Uri.parse(entry.imageUri)
+                                          flags =
+                                              android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        }
+                                    activity.setResult(android.app.Activity.RESULT_OK, resultIntent)
+                                    activity.finish()
                                   }
-                              activity.setResult(android.app.Activity.RESULT_OK, resultIntent)
-                              activity.finish()
-                            }
-                          } else {
-                            onScreenshotClick(entry.id)
-                          }
-                        },
-                )
+                                } else {
+                                  onScreenshotClick(entry.id)
+                                }
+                              },
+                      )
+                    }
               }
             }
 
@@ -477,31 +496,44 @@ fun LegacyScreen(
                     activeAnalysisIds.contains(entry.id) ||
                         entry.isAnalyzing ||
                         entryProgressMap.containsKey(entry.id)
-                ScreenshotGridItem(
-                    entry = entry,
-                    currentImageProgress =
-                        entryProgressMap[entry.id]
-                            ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
-                    isActivelyAnalyzing = isActivelyAnalyzing,
-                    isQueueRunning = isAnalysisRunning,
-                    onClick =
-                        hapticOnClick {
-                          if (isPickMode) {
-                            val activity = context.findComponentActivity()
-                            if (activity != null) {
-                              val resultIntent =
-                                  android.content.Intent().apply {
-                                    data = android.net.Uri.parse(entry.imageUri)
-                                    flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                var itemBounds by remember { mutableStateOf<ClickedImageBounds?>(null) }
+                Box(
+                    modifier =
+                        Modifier.onGloballyPositioned { coords ->
+                          val pos = coords.positionInWindow()
+                          val size = coords.size
+                          itemBounds =
+                              ClickedImageBounds(
+                                  pos.x, pos.y, size.width.toFloat(), size.height.toFloat())
+                        }) {
+                      ScreenshotGridItem(
+                          entry = entry,
+                          currentImageProgress =
+                              entryProgressMap[entry.id]
+                                  ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
+                          isActivelyAnalyzing = isActivelyAnalyzing,
+                          isQueueRunning = isAnalysisRunning,
+                          onClick =
+                              hapticOnClick {
+                                viewModel.setClickedImageBounds(itemBounds)
+                                if (isPickMode) {
+                                  val activity = context.findComponentActivity()
+                                  if (activity != null) {
+                                    val resultIntent =
+                                        android.content.Intent().apply {
+                                          data = android.net.Uri.parse(entry.imageUri)
+                                          flags =
+                                              android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        }
+                                    activity.setResult(android.app.Activity.RESULT_OK, resultIntent)
+                                    activity.finish()
                                   }
-                              activity.setResult(android.app.Activity.RESULT_OK, resultIntent)
-                              activity.finish()
-                            }
-                          } else {
-                            onScreenshotClick(entry.id)
-                          }
-                        },
-                )
+                                } else {
+                                  onScreenshotClick(entry.id)
+                                }
+                              },
+                      )
+                    }
               }
             }
           }
@@ -639,6 +671,14 @@ fun ScreenshotGridItem(
   val isRestricted =
       remember(entry.tags) { entry.getTagList().any { it.equals("restricted", ignoreCase = true) } }
 
+  var isImageLoaded by remember(entry.id) { mutableStateOf(false) }
+  val imageAlpha by
+      animateFloatAsState(
+          targetValue = if (isImageLoaded) 1f else 0f,
+          animationSpec = tween(durationMillis = 350),
+          label = "screenshotGridImageFade",
+      )
+
   Card(
       onClick = onClick,
       modifier = Modifier.fillMaxWidth(),
@@ -666,8 +706,11 @@ fun ScreenshotGridItem(
         AsyncImage(
             model = imageRequest,
             contentDescription = entry.summary,
+            onSuccess = { isImageLoaded = true },
             modifier =
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .graphicsLayer { alpha = imageAlpha },
             contentScale = ContentScale.FillWidth,
         )
       } else {

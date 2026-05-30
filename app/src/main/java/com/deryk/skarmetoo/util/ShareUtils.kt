@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.util
 
 import android.app.Activity
 import android.content.ContentValues
@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.palette.graphics.Palette
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.ui.SaveToGalleryActivity
 import com.deryk.skarmetoo.ui.theme.SkarmetooTheme
 import kotlinx.coroutines.*
 

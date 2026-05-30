@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ui.screens
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -50,7 +50,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.ai.GgufLlmManager
+import com.deryk.skarmetoo.ai.LFM2_5_MODEL
+import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
+import com.deryk.skarmetoo.viewmodel.ModelType
+import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 

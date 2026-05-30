@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.viewmodel
 
 import android.app.Application
 import android.content.ContentUris
@@ -14,11 +14,18 @@ import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.deryk.skarmetoo.ai.AicoreManager
+import com.deryk.skarmetoo.ai.GgufLlmManager
+import com.deryk.skarmetoo.ai.GgufModelInfo
+import com.deryk.skarmetoo.ai.LFM2_5_VARIANTS
+import com.deryk.skarmetoo.ai.LlmManager
+import com.deryk.skarmetoo.ai.PRESET_GGUF_MODELS
 import com.deryk.skarmetoo.data.DataManager
 import com.deryk.skarmetoo.data.ImageHasher
 import com.deryk.skarmetoo.data.JsonFolderManager
 import com.deryk.skarmetoo.data.ScreenshotDatabase
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.service.AnalysisService
 import com.google.mlkit.genai.common.FeatureStatus
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +47,15 @@ data class AlbumInfo(
     val bucketId: String,
     val count: Int,
 )
+
+data class MediaStoreImage(
+    val id: Long,
+    val uri: Uri,
+    val displayName: String = "",
+    val dateAdded: Long = 0L,
+)
+
+data class ClickedImageBounds(val left: Float, val top: Float, val width: Float, val height: Float)
 
 data class AlbumWithThumbnails(
     val album: AlbumInfo,
@@ -70,6 +86,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val onboardingPrefs =
       application.getSharedPreferences(
           "skarmetoo_onboarding_prefs", android.content.Context.MODE_PRIVATE)
+
+  private val _clickedImageBounds = MutableStateFlow<ClickedImageBounds?>(null)
+  val clickedImageBounds: StateFlow<ClickedImageBounds?> = _clickedImageBounds.asStateFlow()
+
+  fun setClickedImageBounds(bounds: ClickedImageBounds?) {
+    _clickedImageBounds.value = bounds
+  }
 
   private val _entries = MutableStateFlow<List<ScreenshotEntry>>(emptyList())
   val entries: StateFlow<List<ScreenshotEntry>> = _entries.asStateFlow()
@@ -158,6 +181,83 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   // Custom album ordering (list of bucket IDs) — persisted in SharedPreferences
   private val _albumOrder = MutableStateFlow<List<String>>(emptyList())
   val albumOrder: StateFlow<List<String>> = _albumOrder.asStateFlow()
+
+  private val _mediaStoreImages = MutableStateFlow<List<MediaStoreImage>>(emptyList())
+  val mediaStoreImages: StateFlow<List<MediaStoreImage>> = _mediaStoreImages.asStateFlow()
+
+  private val _isMediaStoreLoading = MutableStateFlow(true)
+  val isMediaStoreLoading: StateFlow<Boolean> = _isMediaStoreLoading.asStateFlow()
+
+  private var lastQueriedBucketId: String? = null
+  private var hasLoadedOnce = false
+  private var mediaStoreQueryJob: kotlinx.coroutines.Job? = null
+
+  fun loadImagesForBucket(context: android.content.Context, bucketId: String?) {
+    val isBucketChanged = !hasLoadedOnce || lastQueriedBucketId != bucketId
+    if (isBucketChanged) {
+      _isMediaStoreLoading.value = true
+      _mediaStoreImages.value = emptyList()
+    }
+    hasLoadedOnce = true
+    lastQueriedBucketId = bucketId
+
+    mediaStoreQueryJob?.cancel()
+    mediaStoreQueryJob =
+        viewModelScope.launch(Dispatchers.IO) {
+          val loaded = queryMediaStoreImages(context, bucketId)
+          _mediaStoreImages.value = loaded
+          _isMediaStoreLoading.value = false
+        }
+  }
+
+  private fun queryMediaStoreImages(
+      context: android.content.Context,
+      bucketId: String?
+  ): List<MediaStoreImage> {
+    val projection =
+        arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.DISPLAY_NAME,
+        )
+    val selection = bucketId?.let { "${MediaStore.Images.Media.BUCKET_ID} = ?" }
+    val selectionArgs = bucketId?.let { arrayOf(it) }
+
+    val results = mutableListOf<MediaStoreImage>()
+    try {
+      context.contentResolver
+          .query(
+              MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+              projection,
+              selection,
+              selectionArgs,
+              "${MediaStore.Images.Media.DATE_ADDED} DESC",
+          )
+          ?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val dateAddedCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+            val displayNameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            while (cursor.moveToNext()) {
+              val id = cursor.getLong(idCol)
+              val dateAdded = cursor.getLong(dateAddedCol)
+              val displayName = cursor.getString(displayNameCol) ?: ""
+              results.add(
+                  MediaStoreImage(
+                      id = id,
+                      uri =
+                          ContentUris.withAppendedId(
+                              MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id),
+                      displayName = displayName,
+                      dateAdded = dateAdded,
+                  ),
+              )
+            }
+          }
+    } catch (e: Exception) {
+      Log.e("ScreenshotVM", "Failed to query MediaStore images", e)
+    }
+    return results
+  }
 
   private val _selectedAlbums = MutableStateFlow<Set<String>>(emptySet())
   val selectedAlbums: StateFlow<Set<String>> = _selectedAlbums.asStateFlow()
@@ -398,6 +498,15 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   fun setShowPlayPauseToggle(show: Boolean) {
     _showPlayPauseToggle.value = show
     prefs.edit().putBoolean("show_play_pause", show).apply()
+  }
+
+  private val _isZoomTransitionEnabled =
+      MutableStateFlow(prefs.getBoolean("is_zoom_transition_enabled", true))
+  val isZoomTransitionEnabled: StateFlow<Boolean> = _isZoomTransitionEnabled.asStateFlow()
+
+  fun setZoomTransitionEnabled(enabled: Boolean) {
+    _isZoomTransitionEnabled.value = enabled
+    prefs.edit().putBoolean("is_zoom_transition_enabled", enabled).apply()
   }
 
   private val _backgroundProcessEnabled =

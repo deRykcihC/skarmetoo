@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 
 @Composable
 fun ScreenSaver(viewModel: ScreenshotViewModel, onClose: () -> Unit) {

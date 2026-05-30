@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ui
 
 import android.content.Intent
 import android.os.Bundle
@@ -12,8 +12,6 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -31,8 +29,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.screens.DetailScreen
+import com.deryk.skarmetoo.ui.screens.GalleryScreen
+import com.deryk.skarmetoo.ui.screens.OnboardingScreen
+import com.deryk.skarmetoo.ui.screens.ScreenSaver
+import com.deryk.skarmetoo.ui.screens.SettingsScreen
 import com.deryk.skarmetoo.ui.theme.SkarmetooTheme
 import com.deryk.skarmetoo.ui.theme.uiScaleForDensityDpi
+import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
+import com.deryk.skarmetoo.viewmodel.SemanticSearchViewModel
 
 class MainActivity : ComponentActivity() {
   private val viewModel: ScreenshotViewModel by viewModels()
@@ -83,14 +90,14 @@ class MainActivity : ComponentActivity() {
           }
 
       val localeContext =
-          remember(currentLanguage) {
+          remember(currentLanguage, configuration) {
             val locale =
                 when (currentLanguage) {
                   "zh-rTW" -> java.util.Locale("zh", "TW")
                   else -> java.util.Locale(currentLanguage)
                 }
             java.util.Locale.setDefault(locale)
-            val config = android.content.res.Configuration(context.resources.configuration)
+            val config = android.content.res.Configuration(configuration)
             config.setLocale(locale)
 
             val localeResources = context.createConfigurationContext(config).resources
@@ -149,11 +156,10 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
   val navBackStackEntry by navController.currentBackStackEntryAsState()
   val currentRoute = navBackStackEntry?.destination?.route
   val context = LocalContext.current
+  val semanticViewModel: SemanticSearchViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 
   val showBottomBar =
-      !isPickMode &&
-          (currentRoute == Routes.SETTINGS ||
-              currentRoute == Routes.GALLERY)
+      !isPickMode && (currentRoute == Routes.SETTINGS || currentRoute == Routes.GALLERY)
 
   val galleryScrollState = androidx.compose.foundation.rememberScrollState()
   var isScreenSaverActive by remember { mutableStateOf(false) }
@@ -320,18 +326,16 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           val initialIndex = routeOrder.indexOf(initialRoute)
           val targetIndex = routeOrder.indexOf(targetRoute)
 
-          if (initialIndex != -1 && targetIndex != -1) {
+          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+            slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
+          } else if (initialIndex != -1 && targetIndex != -1 && targetRoute != Routes.GALLERY) {
             if (targetIndex > initialIndex) {
               slideInHorizontally(initialOffsetX = { it }) + fadeIn()
             } else {
               slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
             }
           } else {
-            when (targetRoute) {
-              Routes.GALLERY -> slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn()
-              Routes.SETTINGS -> slideInHorizontally(initialOffsetX = { 1000 }) + fadeIn()
-              else -> fadeIn()
-            }
+            fadeIn()
           }
         },
         exitTransition = {
@@ -340,22 +344,36 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           val initialIndex = routeOrder.indexOf(initialRoute)
           val targetIndex = routeOrder.indexOf(targetRoute)
 
-          if (initialIndex != -1 && targetIndex != -1) {
+          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+            slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+          } else if (initialIndex != -1 && targetIndex != -1 && targetRoute != Routes.GALLERY) {
             if (targetIndex > initialIndex) {
               slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
             } else {
               slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
             }
           } else {
-            when (targetRoute) {
-              Routes.GALLERY -> slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut()
-              Routes.SETTINGS -> slideOutHorizontally(targetOffsetX = { -1000 }) + fadeOut()
-              else -> fadeOut()
-            }
+            fadeOut()
           }
         },
-        popEnterTransition = { slideInHorizontally(initialOffsetX = { -1000 }) + fadeIn() },
-        popExitTransition = { slideOutHorizontally(targetOffsetX = { 1000 }) + fadeOut() },
+        popEnterTransition = {
+          val initialRoute = initialState.destination.route
+          val targetRoute = targetState.destination.route
+          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+            slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
+          } else {
+            fadeIn()
+          }
+        },
+        popExitTransition = {
+          val initialRoute = initialState.destination.route
+          val targetRoute = targetState.destination.route
+          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+            slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+          } else {
+            fadeOut()
+          }
+        },
     ) {
       composable(Routes.ONBOARDING) {
         OnboardingScreen(
@@ -370,6 +388,7 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
       composable(Routes.SETTINGS) {
         SettingsScreen(
             viewModel = viewModel,
+            semanticViewModel = semanticViewModel,
             onStartScreenSaver = { isScreenSaverActive = true },
             logoRes = logoRes,
             onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
@@ -384,7 +403,6 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
             isPickMode = isPickMode,
         )
       }
-
       composable(
           Routes.DETAIL,
           arguments = listOf(navArgument("id") { type = NavType.LongType }),
@@ -392,13 +410,14 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
         val id = backStackEntry.arguments?.getLong("id") ?: return@composable
         DetailScreen(
             viewModel = viewModel,
+            semanticViewModel = semanticViewModel,
             entryId = id,
             onBack = { navController.popBackStack() },
             onTagClick = { tag ->
               viewModel.setSearchQuery(tag)
               navController.popBackStack()
             },
-        )
+            onScreenshotClick = { matchedId -> navController.navigate(Routes.detail(matchedId)) })
       }
     }
   }

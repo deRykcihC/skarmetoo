@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ai
 
 import android.content.Context
 import android.graphics.Bitmap

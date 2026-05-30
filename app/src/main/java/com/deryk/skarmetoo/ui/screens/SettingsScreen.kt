@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ui.screens
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -38,15 +38,25 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.ai.GgufLlmManager
+import com.deryk.skarmetoo.ai.LFM2_5_MODEL
+import com.deryk.skarmetoo.ai.LlmManager
+import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
+import com.deryk.skarmetoo.viewmodel.ModelType
+import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
+import com.deryk.skarmetoo.viewmodel.SemanticSearchViewModel
 import com.google.mlkit.genai.common.FeatureStatus
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: ScreenshotViewModel,
+    semanticViewModel: SemanticSearchViewModel,
     onStartScreenSaver: () -> Unit,
     logoRes: Int = R.drawable.app_logo,
     onRevisitTutorial: () -> Unit = {},
@@ -92,6 +102,11 @@ fun SettingsScreen(
   val availableAlbums by viewModel.availableAlbums.collectAsState()
   val selectedAlbums by viewModel.selectedAlbums.collectAsState()
   val folderImageCounts by viewModel.folderImageCounts.collectAsState()
+  val sourceAllScreenshots by viewModel.entries.collectAsState()
+  val sourceIsSemanticModelReady by semanticViewModel.isModelReady.collectAsState()
+  val sourceIsSemanticIndexing by semanticViewModel.isIndexing.collectAsState()
+  val sourceSemanticIndexedCount by semanticViewModel.indexedCount.collectAsState()
+  var autoIndexPending by remember { mutableStateOf(false) }
 
   // Media permission launcher
   val mediaPermissionLauncher =
@@ -164,6 +179,29 @@ fun SettingsScreen(
       }
     }
   }
+
+  LaunchedEffect(
+      autoIndexPending,
+      sourceAllScreenshots.size,
+      sourceIsSemanticModelReady,
+      sourceIsSemanticIndexing) {
+        if (!autoIndexPending ||
+            !sourceIsSemanticModelReady ||
+            sourceIsSemanticIndexing ||
+            sourceAllScreenshots.isEmpty()) {
+          return@LaunchedEffect
+        }
+
+        // Wait until folder import settles before kicking off one indexing run.
+        delay(700)
+        if (autoIndexPending &&
+            sourceIsSemanticModelReady &&
+            !sourceIsSemanticIndexing &&
+            sourceAllScreenshots.isNotEmpty()) {
+          semanticViewModel.startIndexing(sourceAllScreenshots)
+          autoIndexPending = false
+        }
+      }
 
   val totalImages by viewModel.totalImageCount.collectAsState()
   val analyzedImages by viewModel.analyzedImageCount.collectAsState()
@@ -494,7 +532,117 @@ fun SettingsScreen(
                       exit =
                           androidx.compose.animation.shrinkVertically() +
                               androidx.compose.animation.fadeOut()) {
+                        val shownIndexedCount =
+                            sourceSemanticIndexedCount.coerceIn(0, sourceAllScreenshots.size)
+                        val uniqueHashCount =
+                            remember(sourceAllScreenshots) {
+                              sourceAllScreenshots
+                                  .map { it.imageHash }
+                                  .filter { it.isNotBlank() }
+                                  .toSet()
+                                  .size
+                            }
                         Column {
+                          Surface(
+                              modifier = Modifier.fillMaxWidth(),
+                              shape = RoundedCornerShape(12.dp),
+                              color =
+                                  MaterialTheme.colorScheme.surfaceVariant.copy(
+                                      alpha = if (isDark) 0.22f else 0.45f)) {
+                                Row(
+                                    modifier =
+                                        Modifier.fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                      Box(modifier = Modifier.size(20.dp)) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Search,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(20.dp))
+                                        Icon(
+                                            imageVector = Icons.Rounded.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier =
+                                                Modifier.size(10.dp)
+                                                    .align(Alignment.TopEnd)
+                                                    .offset(x = 1.dp, y = (-1).dp))
+                                      }
+                                      Spacer(modifier = Modifier.width(12.dp))
+                                      Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                          Text(
+                                              stringResource(R.string.look_similar_title_caps),
+                                              style = MaterialTheme.typography.labelMedium,
+                                              fontWeight = FontWeight.SemiBold,
+                                              color = MaterialTheme.colorScheme.onSurface)
+                                          Spacer(modifier = Modifier.width(6.dp))
+                                          Surface(
+                                              color =
+                                                  MaterialTheme.colorScheme.primary.copy(
+                                                      alpha = 0.15f),
+                                              shape = RoundedCornerShape(4.dp)) {
+                                                Text(
+                                                    text = stringResource(R.string.beta),
+                                                    modifier =
+                                                        Modifier.padding(
+                                                            horizontal = 6.dp, vertical = 2.dp),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold)
+                                              }
+                                        }
+                                        Text(
+                                            text =
+                                                "$shownIndexedCount / ${sourceAllScreenshots.size}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                      }
+                                      Spacer(modifier = Modifier.weight(1f))
+                                      TextButton(
+                                          onClick =
+                                              hapticOnClick {
+                                                semanticViewModel.startIndexing(
+                                                    sourceAllScreenshots)
+                                              },
+                                          enabled =
+                                              sourceIsSemanticModelReady &&
+                                                  sourceAllScreenshots.isNotEmpty() &&
+                                                  !sourceIsSemanticIndexing,
+                                          contentPadding =
+                                              PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                          modifier = Modifier.heightIn(min = 26.dp)) {
+                                            if (sourceIsSemanticIndexing) {
+                                              CircularProgressIndicator(
+                                                  modifier = Modifier.size(14.dp),
+                                                  strokeWidth = 1.8.dp,
+                                                  color = MaterialTheme.colorScheme.primary)
+                                            } else {
+                                              Text(
+                                                  text = stringResource(R.string.refresh_index),
+                                                  style = MaterialTheme.typography.labelSmall,
+                                                  fontWeight = FontWeight.SemiBold)
+                                            }
+                                          }
+                                      IconButton(
+                                          onClick =
+                                              hapticOnClick {
+                                                semanticViewModel.resetEmbeddingsDatabase()
+                                              },
+                                          enabled = !sourceIsSemanticIndexing,
+                                          modifier = Modifier.size(28.dp)) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.DeleteSweep,
+                                                contentDescription =
+                                                    stringResource(R.string.clear_index),
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(16.dp))
+                                          }
+                                    }
+                              }
+                          Spacer(modifier = Modifier.height(8.dp))
                           albumCounts.forEachIndexed { index, album ->
                             if (index > 0) Spacer(modifier = Modifier.height(6.dp))
                             val rawPercentage = (album.count.toFloat() / totalInMap * 100)
@@ -1374,6 +1522,468 @@ fun SettingsScreen(
         }
       }
 
+      Spacer(modifier = Modifier.height(16.dp))
+
+      if (false) {
+        // ===== Look similar Card =====
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors =
+                CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+          Column(modifier = Modifier.padding(16.dp)) {
+            val isSemanticModelReady by semanticViewModel.isModelReady.collectAsState()
+            val isSemanticDownloading by semanticViewModel.isDownloading.collectAsState()
+            val semanticDownloadProgress by semanticViewModel.downloadProgress.collectAsState()
+            val isSemanticIndexing by semanticViewModel.isIndexing.collectAsState()
+            val semanticIndexingProgress by semanticViewModel.indexingProgress.collectAsState()
+            val semanticIndexedCount by semanticViewModel.indexedCount.collectAsState()
+            val allScreenshots by viewModel.entries.collectAsState()
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Surface(
+                  shape = CircleShape,
+                  color =
+                      if (isSemanticModelReady)
+                          (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                      else (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)),
+                  modifier = Modifier.size(34.dp),
+              ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                  val badgeIconColor =
+                      if (isSemanticModelReady)
+                          (if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32))
+                      else (if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100))
+
+                  Box(modifier = Modifier.size(18.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = null,
+                        tint = badgeIconColor,
+                        modifier = Modifier.size(18.dp))
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = badgeIconColor,
+                        modifier =
+                            Modifier.size(9.dp)
+                                .align(Alignment.TopEnd)
+                                .offset(x = 1.dp, y = (-1).dp))
+                  }
+                }
+              }
+              Spacer(modifier = Modifier.width(12.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.look_similar_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    stringResource(R.string.look_similar_settings_desc),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+              }
+
+              val statusText =
+                  when {
+                    isSemanticModelReady -> "Ready"
+                    isSemanticDownloading -> "Loading"
+                    else -> "No Model"
+                  }
+              val statusBg =
+                  when {
+                    isSemanticModelReady -> if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+                    isSemanticDownloading -> if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)
+                    else -> MaterialTheme.colorScheme.errorContainer
+                  }
+              val statusColor =
+                  when {
+                    isSemanticModelReady -> if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
+                    isSemanticDownloading -> if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)
+                    else -> MaterialTheme.colorScheme.onErrorContainer
+                  }
+
+              Surface(
+                  shape = RoundedCornerShape(12.dp),
+                  color = statusBg,
+              ) {
+                Text(
+                    text = statusText,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = statusColor,
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (!isSemanticModelReady) {
+              OutlinedCard(
+                  onClick =
+                      hapticOnClick {
+                        if (!isSemanticDownloading) {
+                          semanticViewModel.downloadModel()
+                        }
+                      },
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(14.dp),
+                  border = CardDefaults.outlinedCardBorder(),
+              ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Visual Search Model",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        "efficientnet_lite0.tflite (18.5 MB)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Local visual classifier used to map screenshots to visual coordinates.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                  Spacer(modifier = Modifier.width(12.dp))
+                  Surface(
+                      shape = RoundedCornerShape(8.dp),
+                      color =
+                          if (isSemanticDownloading)
+                              (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                          else MaterialTheme.colorScheme.surfaceContainerHighest,
+                      modifier = Modifier.size(32.dp)) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()) {
+                              if (isSemanticDownloading) {
+                                Text(
+                                    text = "${(semanticDownloadProgress * 100).toInt()}%",
+                                    style =
+                                        MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                                )
+                              } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Download,
+                                    contentDescription = "Download Model",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                              }
+                            }
+                      }
+                }
+              }
+            } else {
+              Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                      Column {
+                        Text(
+                            "Semantic Indexing",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        val unindexedDebugEntries by
+                            semanticViewModel.unindexedDebugEntries.collectAsState()
+                        val isInspectingUnindexed by
+                            semanticViewModel.isInspectingUnindexed.collectAsState()
+                        var showUnindexedDialog by remember { mutableStateOf(false) }
+                        val unindexedCount =
+                            (allScreenshots.size - semanticIndexedCount).coerceAtLeast(0)
+                        val uniqueHashCount =
+                            remember(allScreenshots) {
+                              allScreenshots
+                                  .map { it.imageHash }
+                                  .filter { it.isNotBlank() }
+                                  .toSet()
+                                  .size
+                            }
+                        val duplicateHashCount =
+                            (allScreenshots.size - uniqueHashCount).coerceAtLeast(0)
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(
+                              text = "Indexed: $semanticIndexedCount / ${allScreenshots.size}",
+                              style = MaterialTheme.typography.bodyMedium,
+                              color = MaterialTheme.colorScheme.onSurface,
+                          )
+                          if (unindexedCount > 0 && !isSemanticIndexing) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier =
+                                    Modifier.clickable(
+                                        onClick =
+                                            hapticOnClick {
+                                              if (!isInspectingUnindexed) {
+                                                semanticViewModel.inspectUnindexedEntries(
+                                                    allScreenshots)
+                                                showUnindexedDialog = true
+                                              }
+                                            })) {
+                                  Row(
+                                      modifier =
+                                          Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                      verticalAlignment = Alignment.CenterVertically) {
+                                        if (isInspectingUnindexed) {
+                                          CircularProgressIndicator(
+                                              modifier = Modifier.size(10.dp),
+                                              strokeWidth = 1.5.dp,
+                                              color =
+                                                  MaterialTheme.colorScheme.onSecondaryContainer)
+                                        } else {
+                                          Icon(
+                                              imageVector = Icons.Rounded.BugReport,
+                                              contentDescription = "Debug unindexed",
+                                              tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                              modifier = Modifier.size(12.dp))
+                                          Spacer(modifier = Modifier.width(4.dp))
+                                          Text(
+                                              text = "Debug $unindexedCount",
+                                              style =
+                                                  MaterialTheme.typography.labelSmall.copy(
+                                                      fontSize = 10.sp),
+                                              fontWeight = FontWeight.Bold,
+                                              color =
+                                                  MaterialTheme.colorScheme.onSecondaryContainer)
+                                        }
+                                      }
+                                }
+                          }
+                        }
+
+                        if (showUnindexedDialog) {
+                          AlertDialog(
+                              onDismissRequest = { showUnindexedDialog = false },
+                              title = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                  Icon(
+                                      imageVector = Icons.Rounded.BugReport,
+                                      contentDescription = null,
+                                      tint = MaterialTheme.colorScheme.secondary,
+                                      modifier = Modifier.size(24.dp))
+                                  Spacer(modifier = Modifier.width(8.dp))
+                                  Text("Unindexed Debug (${unindexedDebugEntries.size})")
+                                }
+                              },
+                              text = {
+                                Column {
+                                  Text(
+                                      "Index vectors are stored by image URI. Hash collisions can happen, so duplicate hashes are indexed as separate images.",
+                                      style = MaterialTheme.typography.bodySmall,
+                                      color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                  Spacer(modifier = Modifier.height(4.dp))
+                                  Text(
+                                      "Unique hashes: $uniqueHashCount • Duplicate entries: $duplicateHashCount",
+                                      style = MaterialTheme.typography.labelSmall,
+                                      color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                  Spacer(modifier = Modifier.height(8.dp))
+                                  androidx.compose.foundation.lazy.LazyColumn(
+                                      modifier = Modifier.heightIn(max = 240.dp),
+                                      verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        items(unindexedDebugEntries.size) { index ->
+                                          val debugEntry = unindexedDebugEntries[index]
+                                          val entry = debugEntry.entry
+                                          Card(
+                                              modifier = Modifier.fillMaxWidth(),
+                                              colors =
+                                                  CardDefaults.cardColors(
+                                                      containerColor =
+                                                          MaterialTheme.colorScheme.surfaceVariant
+                                                              .copy(alpha = 0.5f))) {
+                                                Column(modifier = Modifier.padding(8.dp)) {
+                                                  Text(
+                                                      text =
+                                                          "ID: ${entry.id} • ${debugEntry.reason}",
+                                                      style = MaterialTheme.typography.labelSmall,
+                                                      fontWeight = FontWeight.Bold)
+                                                  Text(
+                                                      text =
+                                                          "Hash: ${entry.imageHash.ifBlank { "(blank)" }}",
+                                                      style =
+                                                          MaterialTheme.typography.bodySmall.copy(
+                                                              fontSize = 10.sp),
+                                                      color =
+                                                          MaterialTheme.colorScheme
+                                                              .onSurfaceVariant,
+                                                      maxLines = 1,
+                                                      overflow =
+                                                          androidx.compose.ui.text.style
+                                                              .TextOverflow
+                                                              .Ellipsis)
+                                                  Text(
+                                                      text =
+                                                          "URI: ${entry.imageUri.ifBlank { "(blank)" }}",
+                                                      style =
+                                                          MaterialTheme.typography.bodySmall.copy(
+                                                              fontSize = 10.sp),
+                                                      color =
+                                                          MaterialTheme.colorScheme
+                                                              .onSurfaceVariant,
+                                                      maxLines = 1,
+                                                      overflow =
+                                                          androidx.compose.ui.text.style
+                                                              .TextOverflow
+                                                              .Ellipsis)
+                                                  if (debugEntry.detail.isNotBlank()) {
+                                                    Text(
+                                                        text = debugEntry.detail,
+                                                        style =
+                                                            MaterialTheme.typography.bodySmall.copy(
+                                                                fontSize = 10.sp),
+                                                        color =
+                                                            MaterialTheme.colorScheme
+                                                                .onSurfaceVariant)
+                                                  }
+                                                }
+                                              }
+                                        }
+                                      }
+                                  if (isInspectingUnindexed) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                      CircularProgressIndicator(
+                                          modifier = Modifier.size(14.dp), strokeWidth = 1.8.dp)
+                                      Spacer(modifier = Modifier.width(8.dp))
+                                      Text(
+                                          text = "Inspecting entries...",
+                                          style = MaterialTheme.typography.labelSmall,
+                                          color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                  }
+                                }
+                              },
+                              dismissButton = {
+                                TextButton(
+                                    onClick =
+                                        hapticOnClick {
+                                          if (!isInspectingUnindexed) {
+                                            semanticViewModel.inspectUnindexedEntries(
+                                                allScreenshots)
+                                          }
+                                        }) {
+                                      Text("Refresh")
+                                    }
+                              },
+                              confirmButton = {
+                                TextButton(onClick = { showUnindexedDialog = false }) {
+                                  Text("Close")
+                                }
+                              })
+                        }
+                      }
+
+                      Row(
+                          verticalAlignment = Alignment.CenterVertically,
+                          horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Button(
+                                onClick =
+                                    hapticOnClick {
+                                      if (isSemanticIndexing) {
+                                        semanticViewModel.stopIndexing()
+                                      } else {
+                                        semanticViewModel.startIndexing(allScreenshots)
+                                      }
+                                    },
+                                shape = RoundedCornerShape(10.dp),
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor =
+                                            if (isSemanticIndexing)
+                                                MaterialTheme.colorScheme.errorContainer
+                                            else MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor =
+                                            if (isSemanticIndexing)
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            else MaterialTheme.colorScheme.onPrimaryContainer),
+                                contentPadding =
+                                    PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
+                                  Icon(
+                                      imageVector =
+                                          if (isSemanticIndexing) Icons.Rounded.Pause
+                                          else Icons.Rounded.PlayArrow,
+                                      contentDescription = null,
+                                      modifier = Modifier.size(16.dp))
+                                  Spacer(modifier = Modifier.width(6.dp))
+                                  Text(
+                                      text =
+                                          if (isSemanticIndexing) {
+                                            stringResource(R.string.pause)
+                                          } else {
+                                            stringResource(R.string.index_gallery)
+                                          },
+                                      style = MaterialTheme.typography.labelMedium,
+                                      fontWeight = FontWeight.Bold)
+                                }
+
+                            IconButton(
+                                onClick =
+                                    hapticOnClick { semanticViewModel.resetEmbeddingsDatabase() },
+                                modifier = Modifier.size(36.dp)) {
+                                  Icon(
+                                      imageVector = Icons.Rounded.DeleteSweep,
+                                      contentDescription = stringResource(R.string.clear_index),
+                                      tint = MaterialTheme.colorScheme.error)
+                                }
+                          }
+                    }
+
+                if (semanticIndexingProgress != null || isSemanticIndexing) {
+                  val (completed, total) = semanticIndexingProgress ?: Pair(0, 0)
+                  val progress = if (total > 0) completed.toFloat() / total.toFloat() else 0f
+                  Spacer(modifier = Modifier.height(12.dp))
+                  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                          Text(
+                              text = stringResource(R.string.scanning_layout_vectors),
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant)
+                          Text(
+                              text = "${(progress * 100).toInt()}% ($completed/$total)",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.primary,
+                              fontWeight = FontWeight.Bold)
+                        }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+      }
+
       if (showHfLogin) {
         val loginRepoUrl =
             when (hfLoginModelType) {
@@ -1988,7 +2598,10 @@ fun SettingsScreen(
             }
 
             // Sync status badge
-            val badgeText = if (jsonSaveFolderUri != null) stringResource(R.string.external_data_sync_status_active) else stringResource(R.string.external_data_sync_status_internal)
+            val badgeText =
+                if (jsonSaveFolderUri != null)
+                    stringResource(R.string.external_data_sync_status_active)
+                else stringResource(R.string.external_data_sync_status_internal)
             val badgeBg =
                 if (jsonSaveFolderUri != null) {
                   if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
@@ -2061,12 +2674,20 @@ fun SettingsScreen(
                           Spacer(modifier = Modifier.width(10.dp))
                           Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = jsonSaveFolderName ?: stringResource(R.string.external_data_sync_selected_folder),
+                                text =
+                                    jsonSaveFolderName
+                                        ?: stringResource(
+                                            R.string.external_data_sync_selected_folder),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                text = stringResource(R.string.external_data_sync_last_saved, jsonLastBackupTime ?: stringResource(R.string.external_data_sync_last_saved_pending)),
+                                text =
+                                    stringResource(
+                                        R.string.external_data_sync_last_saved,
+                                        jsonLastBackupTime
+                                            ?: stringResource(
+                                                R.string.external_data_sync_last_saved_pending)),
                                 style = MaterialTheme.typography.labelSmall,
                                 color =
                                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
@@ -2083,7 +2704,9 @@ fun SettingsScreen(
                               modifier = Modifier.size(32.dp)) {
                                 Icon(
                                     Icons.Rounded.Edit,
-                                    contentDescription = stringResource(R.string.external_data_sync_change_folder_desc),
+                                    contentDescription =
+                                        stringResource(
+                                            R.string.external_data_sync_change_folder_desc),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp))
                               }
@@ -2384,6 +3007,10 @@ fun SettingsScreen(
             Button(
                 onClick =
                     hapticOnClick {
+                      val newlySelected = tempSelectedAlbums - selectedAlbums
+                      if (newlySelected.isNotEmpty()) {
+                        autoIndexPending = true
+                      }
                       viewModel.applySelectedMediaAlbums(tempSelectedAlbums)
                       showMediaFolderDialog = false
                     }) {

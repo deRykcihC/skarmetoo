@@ -1,9 +1,10 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.viewmodel
 
 import android.app.Application
 import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.deryk.skarmetoo.ai.LlmManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

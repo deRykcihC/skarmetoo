@@ -52,18 +52,17 @@ import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import coil.size.Scale
 import coil.size.Size
+import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.ui.components.PillScrollbar
+import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.viewmodel.AlbumWithThumbnails
+import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlinx.coroutines.delay
-
-import com.deryk.skarmetoo.R
-import com.deryk.skarmetoo.ScreenshotViewModel
-import com.deryk.skarmetoo.hapticOnClick
-import com.deryk.skarmetoo.AlbumWithThumbnails
-import com.deryk.skarmetoo.PillScrollbar
 
 private const val EXP_GRID_SPACING_DP = 2
 private const val EXP_INITIAL_RENDER_ROWS = 36

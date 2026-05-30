@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ui.components
 
 import android.view.HapticFeedbackConstants
 import androidx.compose.runtime.Composable

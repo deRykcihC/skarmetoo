@@ -12,11 +12,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.deryk.skarmetoo"
+    applicationId = "com.deryk.skarmetoo.alt"
     minSdk = 29
     targetSdk = 36
-    versionCode = 21
-    versionName = "1.093"
+    versionCode = 22
+    versionName = "1.10"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -82,9 +82,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.material3)
   implementation(libs.litertlm)
-  implementation(libs.tflite)
-  implementation(libs.tflite.gpu)
-  implementation(libs.tflite.support)
+  implementation("com.google.ai.edge.litert:litert:2.1.5")
   implementation(libs.androidx.compose.navigation)
   implementation(libs.material.icon.extended)
   implementation("androidx.documentfile:documentfile:1.0.1")

@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ai
 
 data class GgufModelInfo(
     val displayName: String,

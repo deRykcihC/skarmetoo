@@ -1,4 +1,4 @@
-package com.deryk.skarmetoo
+package com.deryk.skarmetoo.ui
 
 import android.app.Activity
 import android.content.Intent
