@@ -1026,7 +1026,9 @@ fun GalleryScreen(
                                       isNavigating = true
                                       viewModel.getOrCreateEntryForUri(image.uri) { newId ->
                                         isNavigating = false
-                                        onScreenshotClick(newId)
+                                        if (newId > 0L) {
+                                          onScreenshotClick(newId)
+                                        }
                                       }
                                     }
                                   }
@@ -1093,7 +1095,9 @@ fun GalleryScreen(
                                       isNavigating = true
                                       viewModel.getOrCreateEntryForUri(image.uri) { newId ->
                                         isNavigating = false
-                                        onScreenshotClick(newId)
+                                        if (newId > 0L) {
+                                          onScreenshotClick(newId)
+                                        }
                                       }
                                     }
                                   }
@@ -1143,7 +1147,9 @@ fun GalleryScreen(
                                 isNavigating = true
                                 viewModel.getOrCreateEntryForUri(image.uri) { newId ->
                                   isNavigating = false
-                                  onScreenshotClick(newId)
+                                  if (newId > 0L) {
+                                    onScreenshotClick(newId)
+                                  }
                                 }
                               }
                             }

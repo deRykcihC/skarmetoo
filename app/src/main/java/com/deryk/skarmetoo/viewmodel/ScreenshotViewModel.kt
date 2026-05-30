@@ -192,6 +192,28 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private var hasLoadedOnce = false
   private var mediaStoreQueryJob: kotlinx.coroutines.Job? = null
 
+  private val supportedMediaStoreMimeTypes =
+      arrayOf("image/jpeg", "image/jpg", "image/png", "image/webp")
+  private val supportedMediaStoreNamePatterns = arrayOf("%.jpg", "%.jpeg", "%.png", "%.webp")
+
+  private fun supportedMediaStoreSelection(bucketId: String? = null): Pair<String, Array<String>> {
+    val mimePlaceholders = supportedMediaStoreMimeTypes.joinToString(", ") { "?" }
+    val nameSelection =
+        supportedMediaStoreNamePatterns.joinToString(" OR ") {
+          "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?"
+        }
+    val formatSelection =
+        "(${MediaStore.Images.Media.MIME_TYPE} IN ($mimePlaceholders) OR $nameSelection)"
+    val formatArgs = supportedMediaStoreMimeTypes + supportedMediaStoreNamePatterns
+
+    return if (bucketId == null) {
+      formatSelection to formatArgs
+    } else {
+      "${MediaStore.Images.Media.BUCKET_ID} = ? AND $formatSelection" to
+          (arrayOf(bucketId) + formatArgs)
+    }
+  }
+
   fun loadImagesForBucket(context: android.content.Context, bucketId: String?) {
     val isBucketChanged = !hasLoadedOnce || lastQueriedBucketId != bucketId
     if (isBucketChanged) {
@@ -220,8 +242,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             MediaStore.Images.Media.DATE_ADDED,
             MediaStore.Images.Media.DISPLAY_NAME,
         )
-    val selection = bucketId?.let { "${MediaStore.Images.Media.BUCKET_ID} = ?" }
-    val selectionArgs = bucketId?.let { arrayOf(it) }
+    val (selection, selectionArgs) = supportedMediaStoreSelection(bucketId)
 
     val results = mutableListOf<MediaStoreImage>()
     try {
@@ -861,6 +882,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     viewModelScope.launch(Dispatchers.IO) {
       try {
         db.resetAllAnalyzingFlags()
+        val removedInvalid = db.deleteEntriesWithEmptyHash()
+        if (removedInvalid > 0) {
+          Log.d(TAG, "Removed $removedInvalid entries with empty hash")
+        }
       } catch (e: Exception) {
         Log.e(TAG, "Error resetting flags", e)
       }
@@ -1045,16 +1070,17 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   fun refreshEntries() {
     viewModelScope.launch(Dispatchers.IO) {
       val all = db.getAllEntries()
-      _totalImageCount.value = all.size
-      _analyzedImageCount.value = all.count { it.summary.isNotBlank() }
-      _pendingImageCount.value = all.count { it.summary.isBlank() && !it.isAnalyzing }
-      _analyzingImageCount.value = all.count { it.isAnalyzing }
+      val validEntries = all.filter { it.imageUri.isNotBlank() && it.imageHash.isNotBlank() }
+      _totalImageCount.value = validEntries.size
+      _analyzedImageCount.value = validEntries.count { it.summary.isNotBlank() }
+      _pendingImageCount.value = validEntries.count { it.summary.isBlank() && !it.isAnalyzing }
+      _analyzingImageCount.value = validEntries.count { it.isAnalyzing }
       val query = _searchQuery.value
       val result =
           if (query.isBlank()) {
-            all
+            validEntries
           } else {
-            db.searchEntries(query)
+            db.searchEntries(query).filter { it.imageUri.isNotBlank() && it.imageHash.isNotBlank() }
           }
       _entries.value = result
       rebuildExperimentalStatuses()
@@ -1072,16 +1098,19 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
           kotlinx.coroutines.delay(500L)
           val all = db.getAllEntries()
-          _totalImageCount.value = all.size
-          _analyzedImageCount.value = all.count { it.summary.isNotBlank() }
-          _pendingImageCount.value = all.count { it.summary.isBlank() && !it.isAnalyzing }
-          _analyzingImageCount.value = all.count { it.isAnalyzing }
+          val validEntries = all.filter { it.imageUri.isNotBlank() && it.imageHash.isNotBlank() }
+          _totalImageCount.value = validEntries.size
+          _analyzedImageCount.value = validEntries.count { it.summary.isNotBlank() }
+          _pendingImageCount.value = validEntries.count { it.summary.isBlank() && !it.isAnalyzing }
+          _analyzingImageCount.value = validEntries.count { it.isAnalyzing }
           val query = _searchQuery.value
           val result =
               if (query.isBlank()) {
-                all
+                validEntries
               } else {
-                db.searchEntries(query)
+                db.searchEntries(query).filter {
+                  it.imageUri.isNotBlank() && it.imageHash.isNotBlank()
+                }
               }
           _entries.value = result
           rebuildExperimentalStatuses()
@@ -1247,12 +1276,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           )
 
       try {
+        val (selection, selectionArgs) = supportedMediaStoreSelection()
         context.contentResolver
             .query(
                 uri,
                 projection,
-                null,
-                null,
+                selection,
+                selectionArgs,
                 null,
             )
             ?.use { cursor ->
@@ -1479,12 +1509,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           val externalRoot = Environment.getExternalStorageDirectory().absolutePath
 
           try {
-            val (selection, selectionArgs) =
-                if (bucketId != null) {
-                  "${MediaStore.Images.Media.BUCKET_ID} = ?" to arrayOf(bucketId)
-                } else {
-                  null to null
-                }
+            val (selection, selectionArgs) = supportedMediaStoreSelection(bucketId)
 
             context.contentResolver
                 .query(
@@ -1614,7 +1639,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 MediaStore.Images.Media.BUCKET_ID,
                 MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
             )
-        context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+        val (selection, selectionArgs) = supportedMediaStoreSelection()
+        context.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor
+          ->
           val bucketIdCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
           val bucketNameCol =
               cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
@@ -1639,8 +1666,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       for (album in sortedAlbums) {
         val thumbnailUris = mutableListOf<Uri>()
         try {
-          val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
-          val selectionArgs = arrayOf(album.bucketId)
+          val (selection, selectionArgs) = supportedMediaStoreSelection(album.bucketId)
           val projection = arrayOf(MediaStore.Images.Media._ID)
           val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
 
@@ -1674,12 +1700,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       val allThumbnailUris = mutableListOf<Uri>()
       try {
         val projection = arrayOf(MediaStore.Images.Media._ID)
+        val (selection, selectionArgs) = supportedMediaStoreSelection()
         context.contentResolver
             .query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 projection,
-                null,
-                null,
+                selection,
+                selectionArgs,
                 "${MediaStore.Images.Media.DATE_ADDED} DESC",
             )
             ?.use { cursor ->
@@ -1719,8 +1746,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     for (bucketId in bucketIds) {
       try {
-        val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
-        val selectionArgs = arrayOf(bucketId)
+        val (selection, selectionArgs) = supportedMediaStoreSelection(bucketId)
 
         context.contentResolver
             .query(
@@ -1763,32 +1789,41 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       }
 
       val bitmap = loadBitmap(uri)
-      val hash = if (bitmap != null) ImageHasher.computeDHash(bitmap) else ""
+      if (bitmap == null) {
+        Log.w(TAG, "Skipping unsupported or unreadable image: $uri")
+        withContext(Dispatchers.Main) { onResult(-1L) }
+        return@launch
+      }
 
-      if (hash.isNotEmpty()) {
-        val hashExisting = db.getEntryByHash(hash)
-        if (hashExisting != null) {
-          if (hashExisting.imageUri.isBlank()) {
-            db.linkImageToHash(hash, uriString)
-            refreshEntries()
-            withContext(Dispatchers.Main) { onResult(hashExisting.id) }
-          } else {
-            // Duplicate image with same hash. Copy already analyzed metadata to avoid re-analysis!
-            val entry =
-                ScreenshotEntry(
-                    imageUri = uriString,
-                    imageHash = hash,
-                    summary = hashExisting.summary,
-                    tags = hashExisting.tags,
-                    analyzedAt = hashExisting.analyzedAt,
-                    note = hashExisting.note,
-                    modelUsed = hashExisting.modelUsed)
-            val newId = db.insertEntry(entry)
-            refreshEntries()
-            withContext(Dispatchers.Main) { onResult(newId) }
-          }
-          return@launch
+      val hash = ImageHasher.computeDHash(bitmap)
+      if (hash.isBlank()) {
+        Log.w(TAG, "Skipping image with empty hash: $uri")
+        withContext(Dispatchers.Main) { onResult(-1L) }
+        return@launch
+      }
+
+      val hashExisting = db.getEntryByHash(hash)
+      if (hashExisting != null) {
+        if (hashExisting.imageUri.isBlank()) {
+          db.linkImageToHash(hash, uriString)
+          refreshEntries()
+          withContext(Dispatchers.Main) { onResult(hashExisting.id) }
+        } else {
+          // Duplicate image with same hash. Copy already analyzed metadata to avoid re-analysis!
+          val entry =
+              ScreenshotEntry(
+                  imageUri = uriString,
+                  imageHash = hash,
+                  summary = hashExisting.summary,
+                  tags = hashExisting.tags,
+                  analyzedAt = hashExisting.analyzedAt,
+                  note = hashExisting.note,
+                  modelUsed = hashExisting.modelUsed)
+          val newId = db.insertEntry(entry)
+          refreshEntries()
+          withContext(Dispatchers.Main) { onResult(newId) }
         }
+        return@launch
       }
 
       val entry =

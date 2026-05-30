@@ -568,7 +568,9 @@ fun ExperimentalScreen(
                             isNavigating = true
                             viewModel.getOrCreateEntryForUri(uri) { newId ->
                               isNavigating = false
-                              onScreenshotClick(newId)
+                              if (newId > 0L) {
+                                onScreenshotClick(newId)
+                              }
                             }
                           }
                         },

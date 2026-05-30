@@ -12,10 +12,10 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.deryk.skarmetoo.alt"
+    applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 22
+    versionCode = 25
     versionName = "1.10"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -83,6 +83,7 @@ dependencies {
   implementation(libs.androidx.compose.material3)
   implementation(libs.litertlm)
   implementation("com.google.ai.edge.litert:litert:2.1.5")
+  implementation("androidx.work:work-runtime-ktx:2.11.1")
   implementation(libs.androidx.compose.navigation)
   implementation(libs.material.icon.extended)
   implementation("androidx.documentfile:documentfile:1.0.1")

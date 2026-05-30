@@ -104,6 +104,8 @@ fun SettingsScreen(
   val folderImageCounts by viewModel.folderImageCounts.collectAsState()
   val sourceAllScreenshots by viewModel.entries.collectAsState()
   val sourceIsSemanticModelReady by semanticViewModel.isModelReady.collectAsState()
+  val sourceIsSemanticDownloading by semanticViewModel.isDownloading.collectAsState()
+  val sourceSemanticDownloadProgress by semanticViewModel.downloadProgress.collectAsState()
   val sourceIsSemanticIndexing by semanticViewModel.isIndexing.collectAsState()
   val sourceSemanticIndexedCount by semanticViewModel.indexedCount.collectAsState()
   var autoIndexPending by remember { mutableStateOf(false) }
@@ -601,16 +603,32 @@ fun SettingsScreen(
                                         )
                                       }
                                       Spacer(modifier = Modifier.weight(1f))
+                                      val semanticActionText =
+                                          when {
+                                            sourceIsSemanticDownloading ->
+                                                "${(sourceSemanticDownloadProgress * 100).toInt()}%"
+                                            !sourceIsSemanticModelReady ->
+                                                stringResource(R.string.download)
+                                            else -> stringResource(R.string.refresh_index)
+                                          }
+                                      val semanticActionEnabled =
+                                          when {
+                                            sourceIsSemanticDownloading ||
+                                                sourceIsSemanticIndexing -> false
+                                            !sourceIsSemanticModelReady -> true
+                                            else -> sourceAllScreenshots.isNotEmpty()
+                                          }
                                       TextButton(
                                           onClick =
                                               hapticOnClick {
-                                                semanticViewModel.startIndexing(
-                                                    sourceAllScreenshots)
+                                                if (!sourceIsSemanticModelReady) {
+                                                  semanticViewModel.downloadModel()
+                                                } else {
+                                                  semanticViewModel.startIndexing(
+                                                      sourceAllScreenshots)
+                                                }
                                               },
-                                          enabled =
-                                              sourceIsSemanticModelReady &&
-                                                  sourceAllScreenshots.isNotEmpty() &&
-                                                  !sourceIsSemanticIndexing,
+                                          enabled = semanticActionEnabled,
                                           contentPadding =
                                               PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                           modifier = Modifier.heightIn(min = 26.dp)) {
@@ -621,7 +639,7 @@ fun SettingsScreen(
                                                   color = MaterialTheme.colorScheme.primary)
                                             } else {
                                               Text(
-                                                  text = stringResource(R.string.refresh_index),
+                                                  text = semanticActionText,
                                                   style = MaterialTheme.typography.labelSmall,
                                                   fontWeight = FontWeight.SemiBold)
                                             }

@@ -164,6 +164,10 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     return deleted
   }
 
+  fun deleteEntriesWithEmptyHash(): Int {
+    return writableDatabase.delete(TABLE, "TRIM($COL_IMAGE_HASH) = ''", null)
+  }
+
   fun getEntryByHash(hash: String): ScreenshotEntry? {
     val cursor =
         readableDatabase.query(
