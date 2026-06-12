@@ -2445,6 +2445,11 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
+                        text = stringResource(R.string.search_index_technology_subtitle),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    )
+                    Text(
                         text = "$embeddingGemmaIndexedCount / $embeddingGemmaTextReadyCount",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2597,6 +2602,11 @@ fun SettingsScreen(
                       )
                     }
                   }
+                  Text(
+                      text = stringResource(R.string.look_similar_technology_subtitle),
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                  )
                   Text(
                       text = "$shownIndexedCount / ${sourceAllScreenshots.size}",
                       style = MaterialTheme.typography.labelSmall,

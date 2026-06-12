@@ -216,6 +216,8 @@
     <string name="embeddinggemma_failed_count_detail">EmbeddingGemma 失敗 %1$d 次。%2$s</string>
     <string name="embeddinggemma_indexing_failed">EmbeddingGemma 索引建立失敗。</string>
     <string name="search_index_title">搜尋索引</string>
+    <string name="search_index_technology_subtitle">EmbeddingGemma</string>
+    <string name="look_similar_technology_subtitle">EfficientNet-Lite</string>
     <string name="index_cleared">索引已清除。</string>
     <string name="generating_text_embeddings">正在產生文字嵌入</string>
     <string name="local_embeddings_index">本機向量索引</string>

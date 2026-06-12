@@ -216,6 +216,8 @@
     <string name="embeddinggemma_failed_count_detail">EmbeddingGemma failed %1$d. %2$s</string>
     <string name="embeddinggemma_indexing_failed">EmbeddingGemma indexing failed.</string>
     <string name="search_index_title">SEARCH INDEX</string>
+    <string name="search_index_technology_subtitle">EmbeddingGemma</string>
+    <string name="look_similar_technology_subtitle">EfficientNet-Lite</string>
     <string name="index_cleared">Index cleared.</string>
     <string name="generating_text_embeddings">Generating text embeddings</string>
     <string name="local_embeddings_index">Local Embeddings Index</string>
