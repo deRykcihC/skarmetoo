@@ -2,6 +2,7 @@
 <resources>
     <string name="app_name">Skarmetoo</string>
     <string name="settings">設定</string>
+    <string name="timeline">Timeline</string>
     <string name="manage_folders">管理資料夾</string>
     <string name="add_media_folder">新增媒體資料夾</string>
     <string name="select_media_folders">選擇媒體資料夾</string>
@@ -12,7 +13,7 @@
     <string name="buy_me_a_coffee">請我喝杯咖啡</string>
     <string name="analyzed">已分析</string>
     <string name="total_images">總圖片數</string>
-    <string name="ai_model">AI 模型</string>
+    <string name="ai_model">分析模型</string>
     <string name="on_device_analysis_model">裝置端分析模型</string>
     <string name="download_model">下載模型 (Gemma 3n)</string>
     <string name="analyzing">分析中</string>
@@ -179,7 +180,7 @@
     <string name="index_gallery">索引圖庫</string>
     <string name="pause">暫停</string>
     <string name="clear_index">清除索引</string>
-    <string name="refresh_index">重新整理索引</string>
+    <string name="refresh_index">重新載入</string>
     <string name="scanning_layout_vectors">正在掃描版面向量...</string>
     <string name="no_highly_similar_screenshots">在本機索引中找不到高度相似的螢幕截圖。</string>
     <string name="searching_similar_to">搜尋相似目標：</string>

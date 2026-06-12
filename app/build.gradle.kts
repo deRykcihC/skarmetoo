@@ -12,11 +12,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.deryk.skarmetoo"
+    applicationId = "com.deryk.skarmetoo.alt"
     minSdk = 29
     targetSdk = 36
     versionCode = 25
-    versionName = "1.10"
+    versionName = "1.11"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -55,7 +55,10 @@ android {
 
   splits {
     abi {
-      isEnable = true
+      // Dynamic feature modules are installed as split APKs too; enabling local APK ABI splits
+      // makes feature resource processing look for a processed-res output that is not emitted.
+      // Android App Bundles still handle ABI targeting for Play delivery.
+      isEnable = false
       reset()
       // List the architectures you want to build for
       include("arm64-v8a", "x86_64")
@@ -80,17 +83,21 @@ dependencies {
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
+  implementation(libs.androidx.compose.foundation.layout)
   implementation(libs.androidx.compose.material3)
   implementation(libs.litertlm)
-  implementation("com.google.ai.edge.litert:litert:2.1.5")
+  implementation(libs.tensorflow.lite)
   implementation("androidx.work:work-runtime-ktx:2.11.1")
   implementation(libs.androidx.compose.navigation)
   implementation(libs.material.icon.extended)
   implementation("androidx.documentfile:documentfile:1.0.1")
   implementation("io.coil-kt:coil-compose:2.5.0")
   implementation(libs.androidx.palette)
+  implementation(libs.localagents.rag)
   implementation(libs.llamatik.library)
   implementation(libs.mlkit.genai)
+  implementation(libs.protobuf.javalite)
+  implementation("com.google.android.play:feature-delivery:2.1.0")
   testImplementation(libs.junit)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.espresso.core)

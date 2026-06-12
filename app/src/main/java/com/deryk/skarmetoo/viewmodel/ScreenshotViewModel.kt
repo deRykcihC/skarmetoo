@@ -15,6 +15,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.deryk.skarmetoo.ai.AicoreManager
+import com.deryk.skarmetoo.ai.EmbeddingGemma
 import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.GgufModelInfo
 import com.deryk.skarmetoo.ai.LFM2_5_VARIANTS
@@ -25,6 +26,7 @@ import com.deryk.skarmetoo.data.ImageHasher
 import com.deryk.skarmetoo.data.JsonFolderManager
 import com.deryk.skarmetoo.data.ScreenshotDatabase
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
 import com.deryk.skarmetoo.service.AnalysisService
 import com.google.mlkit.genai.common.FeatureStatus
 import kotlin.coroutines.resume
@@ -37,6 +39,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -74,6 +78,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   val llmManager = LlmManager.getInstance(application)
   private val ggufManager = GgufLlmManager.getInstance(application)
   private val aicoreManager = AicoreManager.getInstance(application)
+  private val embeddingGemma = EmbeddingGemma(application)
+  private val textEmbeddingDb = ScreenshotTextEmbeddingDatabase(application)
+  private val embeddingGemmaIndexMutex = Mutex()
+  private var isEmbeddingGemmaInitialized = false
+  private val _embeddingGemmaIndexRevision = MutableStateFlow(0)
+  val embeddingGemmaIndexRevision: StateFlow<Int> = _embeddingGemmaIndexRevision.asStateFlow()
   private val currentAppVersionCode =
       try {
         val packageInfo = application.packageManager.getPackageInfo(application.packageName, 0)
@@ -508,6 +518,62 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
     if (isAnalyzing.get() || _isAnalysisPaused.value) return
     analysisJob = viewModelScope.launch(Dispatchers.IO) { startAnalysisQueue() }
+  }
+
+  private fun queueEmbeddingGemmaIndex(
+      entry: ScreenshotEntry,
+      summary: String,
+      tags: String,
+      modelUsed: String,
+  ) {
+    val context = getApplication<Application>()
+    if (!EmbeddingGemma.hasRequiredFiles(context)) return
+
+    val updatedEntry =
+        entry.copy(
+            summary = summary,
+            tags = tags,
+            analyzedAt = System.currentTimeMillis(),
+            isAnalyzing = false,
+            modelUsed = modelUsed,
+        )
+    val searchText = EmbeddingGemma.buildSearchText(updatedEntry)
+    if (updatedEntry.imageUri.isBlank() || searchText.isBlank()) return
+
+    viewModelScope.launch(Dispatchers.IO) {
+      embeddingGemmaIndexMutex.withLock {
+        try {
+          val contentHash = searchText.hashCode()
+          val storedHash = textEmbeddingDb.getStoredContentHashes()[updatedEntry.imageUri]
+          if (storedHash == contentHash) return@withLock
+
+          if (!isEmbeddingGemmaInitialized) {
+            isEmbeddingGemmaInitialized = embeddingGemma.initialize()
+          }
+          if (!isEmbeddingGemmaInitialized) {
+            Log.w(TAG, "Skipped EmbeddingGemma auto-index: ${embeddingGemma.getLastError()}")
+            return@withLock
+          }
+
+          val embedding = embeddingGemma.embedDocument(searchText)
+          if (embedding == null) {
+            Log.w(TAG, "Skipped EmbeddingGemma auto-index: ${embeddingGemma.getLastError()}")
+            return@withLock
+          }
+
+          if (!textEmbeddingDb.saveEmbedding(updatedEntry, contentHash, embedding)) {
+            Log.w(
+                TAG, "Failed to save EmbeddingGemma auto-index: ${textEmbeddingDb.getLastError()}")
+          } else {
+            _embeddingGemmaIndexRevision.value = _embeddingGemmaIndexRevision.value + 1
+            Log.d(TAG, "Auto-indexed EmbeddingGemma text for id=${updatedEntry.id}")
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to auto-index EmbeddingGemma text for id=${updatedEntry.id}", e)
+          isEmbeddingGemmaInitialized = false
+        }
+      }
+    }
   }
 
   private val _imageResolution = MutableStateFlow(prefs.getInt("image_resolution", 1024))
@@ -1085,6 +1151,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       _entries.value = result
       rebuildExperimentalStatuses()
     }
+  }
+
+  fun getAllValidEntriesSnapshot(): List<ScreenshotEntry> {
+    return db.getAllEntries().filter { it.imageUri.isNotBlank() && it.imageHash.isNotBlank() }
   }
 
   /**
@@ -2388,6 +2458,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           return@launch
         }
         db.updateAnalysis(entry.id, summary, tags, modelUsed)
+        queueEmbeddingGemmaIndex(entry, summary, tags, modelUsed)
         saveDatabaseToExternalFolder()
 
         // Delay clearing UI state slightly so the 100% progress bar has time to be seen
@@ -2767,5 +2838,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
     clearModelSwitchStatus()
     llmManager.close()
     ggufManager.close()
+    embeddingGemma.close()
+    textEmbeddingDb.close()
   }
 }

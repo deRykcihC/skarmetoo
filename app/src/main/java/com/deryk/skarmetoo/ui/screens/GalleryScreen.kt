@@ -3,12 +3,15 @@ package com.deryk.skarmetoo.ui.screens
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BlurMaskFilter
 import android.net.Uri
 import android.os.CancellationSignal
+import android.util.Log
 import android.util.LruCache
 import android.util.Size
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -28,6 +31,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,7 +47,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -51,6 +54,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -58,14 +64,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,16 +85,15 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.RoundRect
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -103,7 +111,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -111,11 +122,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.ai.EmbeddingGemma
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
 import com.deryk.skarmetoo.legacy.ScreenshotGridItem
-import com.deryk.skarmetoo.legacy.SearchPill
 import com.deryk.skarmetoo.ui.components.PillScrollbar
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.findComponentActivity
@@ -153,6 +166,8 @@ private const val INITIAL_RENDER_ROWS = 36
 private const val RENDER_ROWS_CHUNK = 24
 private const val LOAD_MORE_THRESHOLD_ROWS = 8
 private const val PRELOAD_ROWS = 8
+private const val EMBEDDING_GEMMA_SEARCH_THRESHOLD = 0.25f
+private const val EMBEDDING_GEMMA_SEARCH_LIMIT = 240
 
 private fun getDiskCacheDir(context: Context): File {
   val dir = File(context.cacheDir, DISK_CACHE_DIR)
@@ -226,13 +241,121 @@ fun GalleryScreen(
 
   val viewModelSearchQuery by viewModel.searchQuery.collectAsState()
   var searchQuery by rememberSaveable { mutableStateOf(viewModelSearchQuery) }
+  var allSearchEntries by remember { mutableStateOf<List<ScreenshotEntry>>(emptyList()) }
 
   // Sync inbound query changes from the ViewModel (e.g. tag clicked in DetailScreen)
   LaunchedEffect(viewModelSearchQuery) {
-    if (viewModelSearchQuery != searchQuery) {
+    if (viewModelSearchQuery.isNotBlank() && viewModelSearchQuery != searchQuery) {
       searchQuery = viewModelSearchQuery
     }
   }
+
+  LaunchedEffect(entries, images.size) {
+    allSearchEntries = withContext(Dispatchers.IO) { viewModel.getAllValidEntriesSnapshot() }
+  }
+  val embeddingGemma = remember(context) { EmbeddingGemma(context.applicationContext) }
+  val textEmbeddingDb =
+      remember(context) { ScreenshotTextEmbeddingDatabase(context.applicationContext) }
+  var isEmbeddingGemmaReady by remember { mutableStateOf(false) }
+  var isEmbeddingSearching by remember { mutableStateOf(false) }
+  var isEmbeddingSearchSettled by remember { mutableStateOf(false) }
+  var isEmbeddingSearchMode by rememberSaveable { mutableStateOf(true) }
+  var semanticSearchScores by remember { mutableStateOf<Map<String, Float>>(emptyMap()) }
+  var isEmbeddingGlowVisible by remember { mutableStateOf(false) }
+  var embeddingSearchCompletion by remember { mutableFloatStateOf(0f) }
+  val isEmbeddingSearchActive =
+      isEmbeddingSearchMode &&
+          (isEmbeddingGlowVisible ||
+              (searchQuery.isNotBlank() &&
+                  isEmbeddingGemmaReady &&
+                  semanticSearchScores.isNotEmpty()))
+
+  LaunchedEffect(searchQuery, semanticSearchScores, isEmbeddingGemmaReady, isEmbeddingSearchMode) {
+    val shouldShowGlow =
+        isEmbeddingSearchMode &&
+            searchQuery.isNotBlank() &&
+            isEmbeddingGemmaReady &&
+            semanticSearchScores.isNotEmpty()
+    if (shouldShowGlow) {
+      isEmbeddingGlowVisible = true
+    } else if (isEmbeddingGlowVisible) {
+      delay(450)
+      val stillShouldShowGlow =
+          isEmbeddingSearchMode &&
+              searchQuery.isNotBlank() &&
+              isEmbeddingGemmaReady &&
+              semanticSearchScores.isNotEmpty()
+      if (!stillShouldShowGlow) {
+        isEmbeddingGlowVisible = false
+        embeddingSearchCompletion = 0f
+      }
+    }
+  }
+
+  DisposableEffect(embeddingGemma, textEmbeddingDb) {
+    onDispose {
+      embeddingGemma.close()
+      textEmbeddingDb.close()
+    }
+  }
+
+  LaunchedEffect(embeddingGemma) {
+    isEmbeddingGemmaReady = withContext(Dispatchers.IO) { embeddingGemma.initialize() }
+  }
+
+  LaunchedEffect(
+      searchQuery,
+      allSearchEntries,
+      selectedAlbumId,
+      images,
+      isEmbeddingGemmaReady,
+      isEmbeddingSearchMode) {
+        val query = searchQuery.trim()
+        if (query.isBlank() || !isEmbeddingGemmaReady || !isEmbeddingSearchMode) {
+          semanticSearchScores = emptyMap()
+          isEmbeddingSearching = false
+          isEmbeddingSearchSettled = false
+          embeddingSearchCompletion = 0f
+          return@LaunchedEffect
+        }
+
+        try {
+          isEmbeddingSearching = true
+          isEmbeddingSearchSettled = false
+          isEmbeddingGlowVisible = true
+          embeddingSearchCompletion = 0.30f
+          semanticSearchScores = emptyMap()
+          delay(300)
+          embeddingSearchCompletion = 0.35f
+          val queryVector = embeddingGemma.embed(query)
+          if (queryVector == null) {
+            semanticSearchScores = emptyMap()
+            return@LaunchedEffect
+          }
+          embeddingSearchCompletion = 0.80f
+          Log.d("GalleryScreen", "EmbeddingGemma query vector dimensions=${queryVector.size}")
+          delay(180)
+          embeddingSearchCompletion = 0.90f
+          val visibleAlbumUris = images.map { it.uri.toString() }.toSet()
+          val scores =
+              textEmbeddingDb
+                  .findSimilar(
+                      queryVector,
+                      similarityThreshold = EMBEDDING_GEMMA_SEARCH_THRESHOLD,
+                      limit = EMBEDDING_GEMMA_SEARCH_LIMIT,
+                  )
+                  .filter { (record, _) -> record.imageUri in visibleAlbumUris }
+                  .associate { (record, score) -> record.imageUri to score }
+          embeddingSearchCompletion = 1f
+          semanticSearchScores = scores
+          isEmbeddingSearchSettled = true
+          Log.d(
+              "GalleryScreen",
+              "EmbeddingGemma album search active for query='$query', matches=${scores.size}, album=$selectedAlbumId")
+        } finally {
+          isEmbeddingSearching = false
+        }
+      }
   var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
   var isAlbumRowVisible by rememberSaveable { mutableStateOf(true) }
   val isGalleryStylePersisted by viewModel.galleryIsGalleryStyle.collectAsState()
@@ -288,8 +411,8 @@ fun GalleryScreen(
 
   val allImageCount = remember(albumThumbnails) { albumThumbnails.sumOf { it.album.count } }
   val entryByMediaUri =
-      remember(entries) {
-        entries
+      remember(allSearchEntries) {
+        allSearchEntries
             .asSequence()
             .filter { it.imageUri.startsWith("content://media/") }
             .associateBy { it.imageUri }
@@ -313,41 +436,69 @@ fun GalleryScreen(
         }
       }
   val filteredImages by
-      remember(entryByMediaUri, searchQuery, selectedTag, isSortDescending, images.size) {
-        derivedStateOf {
-          val query = searchQuery.trim()
-          val filtered =
-              images.filter { image ->
-                val uriString = image.uri.toString()
-                val entry = entryByMediaUri[uriString]
-                val tags = entry?.getTagList().orEmpty()
+      remember(
+          entryByMediaUri,
+          searchQuery,
+          selectedTag,
+          isEmbeddingGemmaReady,
+          isEmbeddingSearchMode,
+          isEmbeddingSearching,
+          isEmbeddingSearchSettled,
+          semanticSearchScores,
+          isSortDescending,
+          images.size) {
+            derivedStateOf {
+              val query = searchQuery.trim()
+              val shouldUseEmbeddingSearch =
+                  query.isNotBlank() && isEmbeddingGemmaReady && isEmbeddingSearchMode
+              val hasSemanticResults = query.isNotBlank() && semanticSearchScores.isNotEmpty()
+              val filtered =
+                  images.filter { image ->
+                    val uriString = image.uri.toString()
+                    val entry = entryByMediaUri[uriString]
+                    val tags = entry?.getTagList().orEmpty()
+                    val semanticScore = semanticSearchScores[uriString]
 
-                val matchesTag =
-                    selectedTag == null ||
-                        tags.any { tag -> tag.equals(selectedTag, ignoreCase = true) }
-                val isAnalyzed = entry != null && entry.summary.isNotBlank()
-                val matchesSearch =
-                    if (query.isBlank()) {
-                      true
-                    } else {
-                      isAnalyzed &&
-                          (image.displayName.contains(query, ignoreCase = true) ||
-                              entry?.summary?.contains(query, ignoreCase = true) == true ||
-                              tags.any { tag -> tag.contains(query, ignoreCase = true) })
-                    }
+                    val matchesTag =
+                        selectedTag == null ||
+                            tags.any { tag -> tag.equals(selectedTag, ignoreCase = true) }
+                    val isAnalyzed = entry != null && entry.summary.isNotBlank()
+                    val matchesKeyword =
+                        image.displayName.contains(query, ignoreCase = true) ||
+                            entry?.summary?.contains(query, ignoreCase = true) == true ||
+                            tags.any { tag -> tag.contains(query, ignoreCase = true) } ||
+                            entry?.note?.contains(query, ignoreCase = true) == true
+                    val matchesSearch =
+                        if (query.isBlank()) {
+                          true
+                        } else if (shouldUseEmbeddingSearch) {
+                          isEmbeddingSearchSettled && semanticScore != null
+                        } else {
+                          isAnalyzed && matchesKeyword
+                        }
 
-                matchesTag && matchesSearch
+                    matchesTag && matchesSearch
+                  }
+
+              if (hasSemanticResults) {
+                filtered.sortedWith(
+                    compareByDescending<MediaStoreImage> { image ->
+                          semanticSearchScores[image.uri.toString()] ?: Float.NEGATIVE_INFINITY
+                        }
+                        .thenByDescending { image ->
+                          if (image.dateAdded > 0) image.dateAdded else image.id
+                        })
+              } else if (isSortDescending) {
+                filtered.sortedByDescending { image ->
+                  if (image.dateAdded > 0) image.dateAdded else image.id
+                }
+              } else {
+                filtered.sortedBy { image ->
+                  if (image.dateAdded > 0) image.dateAdded else image.id
+                }
               }
-
-          if (isSortDescending) {
-            filtered.sortedByDescending { image ->
-              if (image.dateAdded > 0) image.dateAdded else image.id
             }
-          } else {
-            filtered.sortedBy { image -> if (image.dateAdded > 0) image.dateAdded else image.id }
           }
-        }
-      }
   LaunchedEffect(allTags, selectedTag) {
     if (selectedTag != null && allTags.none { it.equals(selectedTag, ignoreCase = true) }) {
       selectedTag = null
@@ -591,14 +742,55 @@ fun GalleryScreen(
         )
       }
       item {
-        SearchPill(
-            searchQuery = searchQuery,
-            onSearchQueryChange = { q ->
-              searchQuery = q
-              // Keep ViewModel in sync so it doesn't re-push stale tag queries
-              if (viewModel.searchQuery.value != q) viewModel.setSearchQuery(q)
-            },
-        )
+        val targetGlowAlpha =
+            when {
+              isEmbeddingSearching -> embeddingSearchCompletion.coerceIn(0.30f, 1f)
+              isEmbeddingSearchActive -> 1f
+              else -> 0f
+            }
+
+        val glowAlpha by
+            animateFloatAsState(
+                targetValue = targetGlowAlpha,
+                animationSpec =
+                    tween(
+                        durationMillis = if (targetGlowAlpha >= 0.80f) 650 else 350,
+                        easing = FastOutSlowInEasing,
+                    ),
+                label = "EmbeddingSearchGlow")
+
+        val glowColor = Color(0xFF2196F3)
+        Box(
+            modifier =
+                Modifier.zIndex(-1f)
+                    .dispersedGlow(
+                        color = glowColor,
+                        alpha = 0.25f * glowAlpha,
+                        glowRadius = 20.dp,
+                        borderRadius = 20.dp,
+                        horizontalInset = -8.dp)
+                    .dispersedGlow(
+                        color = glowColor,
+                        alpha = 0.45f * glowAlpha,
+                        glowRadius = 8.dp,
+                        borderRadius = 20.dp,
+                        horizontalInset = -4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+          SearchPill(
+              searchQuery = searchQuery,
+              onSearchQueryChange = { q -> searchQuery = q },
+              isEmbeddingSearchMode = isEmbeddingSearchMode,
+              onSearchModeToggle = {
+                isEmbeddingSearchMode = !isEmbeddingSearchMode
+                semanticSearchScores = emptyMap()
+                isEmbeddingSearching = false
+                isEmbeddingSearchSettled = false
+                isEmbeddingGlowVisible = false
+                embeddingSearchCompletion = 0f
+              },
+          )
+        }
       }
       item {
         FilterChip(
@@ -830,6 +1022,38 @@ fun GalleryScreen(
               stringResource(R.string.no_screenshots_yet),
               style = MaterialTheme.typography.titleMedium,
               color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+          )
+        }
+      }
+    } else if (isEmbeddingSearchMode &&
+        isEmbeddingGemmaReady &&
+        searchQuery.isNotBlank() &&
+        (isEmbeddingSearching || !isEmbeddingSearchSettled)) {
+      Box(
+          modifier = Modifier.weight(1f).fillMaxWidth(),
+          contentAlignment = Alignment.Center,
+      ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+          CircularProgressIndicator(
+              modifier = Modifier.size(36.dp),
+              strokeWidth = 3.dp,
+              color = MaterialTheme.colorScheme.primary,
+              trackColor = MaterialTheme.colorScheme.primaryContainer,
+          )
+          Spacer(modifier = Modifier.height(16.dp))
+          Text(
+              "Searching...",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.SemiBold,
+              color = MaterialTheme.colorScheme.onSurface,
+          )
+          Spacer(modifier = Modifier.height(6.dp))
+          Text(
+              searchQuery.trim(),
+              style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
           )
         }
       }
@@ -1270,91 +1494,16 @@ fun GalleryScreen(
             color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
             shadowElevation = 2.dp) {
               Box(modifier = Modifier.padding(4.dp).width(112.dp).height(40.dp)) {
-                // 1. Base Layer: Icons with the default unselected color
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalAlignment = Alignment.CenterVertically) {
-                      Box(
-                          modifier = Modifier.weight(1f).fillMaxHeight(),
-                          contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.ViewQuilt,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp))
-                          }
-
-                      Box(
-                          modifier = Modifier.weight(1f).fillMaxHeight(),
-                          contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.GridView,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp))
-                          }
-                    }
-
-                // 2. Sliding Overlay Layer: Primary color background + White icons
-                // Clipped to the dynamic bounds and shape of the sliding pill
+                // Animated background pill sliding behind the icons
                 Box(
                     modifier =
-                        Modifier.fillMaxSize()
-                            .graphicsLayer {
-                              clip = true
-                              shape = object : Shape {
-                                override fun createOutline(
-                                    size: androidx.compose.ui.geometry.Size,
-                                    layoutDirection: LayoutDirection,
-                                    density: Density
-                                ): Outline {
-                                  val widthPx = with(density) { 56.dp.toPx() }
-                                  val heightPx = size.height
-                                  val offsetPx = with(density) { selectedOffsetAnim.value.toPx() }
-                                  val rect = Rect(
-                                      left = offsetPx,
-                                      top = 0f,
-                                      right = offsetPx + widthPx,
-                                      bottom = heightPx
-                                  )
-                                  val roundRect = RoundRect(
-                                      rect = rect,
-                                      cornerRadius = CornerRadius(heightPx / 2f, heightPx / 2f)
-                                  )
-                                  return Outline.Rounded(roundRect)
-                                }
-                              }
-                            }
-                            .background(MaterialTheme.colorScheme.primary)
-                ) {
-                  // Inside the sliding pill, we draw the white icons row
-                  // in the exact same position as the base layer (no offsets needed!)
-                  Row(
-                      modifier = Modifier.fillMaxSize(),
-                      verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                            contentAlignment = Alignment.Center) {
-                              Icon(
-                                  imageVector = Icons.Rounded.ViewQuilt,
-                                  contentDescription = "Gallery Layout",
-                                  tint = Color.White,
-                                  modifier = Modifier.size(20.dp))
-                            }
+                        Modifier.offset(x = selectedOffsetAnim.value)
+                            .width(56.dp)
+                            .fillMaxHeight()
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(MaterialTheme.colorScheme.primary))
 
-                        Box(
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                            contentAlignment = Alignment.Center) {
-                              Icon(
-                                  imageVector = Icons.Rounded.GridView,
-                                  contentDescription = "Grid Layout",
-                                  tint = Color.White,
-                                  modifier = Modifier.size(20.dp))
-                            }
-                      }
-                }
-
-                // 3. Top Layer: Transparent clickable regions to handle user input
+                // Row containing the icon click areas
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     verticalAlignment = Alignment.CenterVertically) {
@@ -1365,7 +1514,13 @@ fun GalleryScreen(
                                   .clip(androidx.compose.foundation.shape.CircleShape)
                                   .clickable(onClick = hapticOnClick { isGalleryStyle = true }),
                           contentAlignment = Alignment.Center) {
-                            // Transparent click target for Gallery layout
+                            Icon(
+                                imageVector = Icons.Rounded.ViewQuilt,
+                                contentDescription = "Gallery Layout",
+                                tint =
+                                    if (isGalleryStyle) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp))
                           }
 
                       Box(
@@ -1375,7 +1530,13 @@ fun GalleryScreen(
                                   .clip(androidx.compose.foundation.shape.CircleShape)
                                   .clickable(onClick = hapticOnClick { isGalleryStyle = false }),
                           contentAlignment = Alignment.Center) {
-                            // Transparent click target for Grid layout
+                            Icon(
+                                imageVector = Icons.Rounded.GridView,
+                                contentDescription = "Grid Layout",
+                                tint =
+                                    if (!isGalleryStyle) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp))
                           }
                     }
               }
@@ -1419,6 +1580,148 @@ private fun galleryPinchDistance(pointers: List<PointerInputChange>): Float {
   val a = pointers[0].position
   val b = pointers[1].position
   return sqrt((a.x - b.x).pow(2) + (a.y - b.y).pow(2))
+}
+
+@Composable
+private fun SearchPill(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    isEmbeddingSearchMode: Boolean = false,
+    onSearchModeToggle: (() -> Unit)? = null,
+) {
+  val focusRequester = remember { FocusRequester() }
+  val focusManager = LocalFocusManager.current
+  val keyboardController = LocalSoftwareKeyboardController.current
+  var isFocused by remember { mutableStateOf(false) }
+  var textFieldValue by remember {
+    mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length)))
+  }
+
+  LaunchedEffect(searchQuery) {
+    if (searchQuery != textFieldValue.text) {
+      textFieldValue = TextFieldValue(searchQuery, TextRange(searchQuery.length))
+    }
+  }
+
+  val hasText = searchQuery.isNotBlank()
+  val placeholder = stringResource(R.string.search_placeholder)
+  val textStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+  val modeIconScale by
+      animateFloatAsState(
+          targetValue = if (isEmbeddingSearchMode) 1.12f else 1f,
+          animationSpec = tween(durationMillis = 220),
+          label = "SearchModeIconScale")
+  val modeIconAlpha by
+      animateFloatAsState(
+          targetValue = if (onSearchModeToggle != null) 1f else 0.72f,
+          animationSpec = tween(durationMillis = 220),
+          label = "SearchModeIconAlpha")
+
+  Surface(
+      shape = RoundedCornerShape(20.dp),
+      color =
+          if (isFocused) MaterialTheme.colorScheme.secondaryContainer
+          else MaterialTheme.colorScheme.surfaceContainerHighest,
+      onClick = hapticOnClick { focusRequester.requestFocus() },
+  ) {
+    Row(
+        modifier = Modifier.height(32.dp).padding(start = 10.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Box(
+          modifier =
+              Modifier.size(22.dp)
+                  .then(
+                      if (onSearchModeToggle != null) {
+                        Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = hapticOnClick { onSearchModeToggle.invoke() },
+                        )
+                      } else {
+                        Modifier
+                      }),
+          contentAlignment = Alignment.Center,
+      ) {
+        Icon(
+            if (isEmbeddingSearchMode) Icons.Rounded.AutoAwesome else Icons.Rounded.Search,
+            contentDescription =
+                if (isEmbeddingSearchMode) "Embedding search" else "Keyword search",
+            tint =
+                if (isEmbeddingSearchMode) MaterialTheme.colorScheme.primary
+                else if (isFocused) MaterialTheme.colorScheme.onSecondaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier =
+                Modifier.size(18.dp).graphicsLayer {
+                  alpha = modeIconAlpha
+                  scaleX = modeIconScale
+                  scaleY = modeIconScale
+                },
+        )
+      }
+      Spacer(modifier = Modifier.width(4.dp))
+      Box(contentAlignment = Alignment.CenterStart) {
+        BasicTextField(
+            value = textFieldValue,
+            onValueChange = { newValue ->
+              textFieldValue = newValue
+              onSearchQueryChange(newValue.text)
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions =
+                KeyboardActions(
+                    onDone = {
+                      focusManager.clearFocus()
+                      keyboardController?.hide()
+                    }),
+            modifier =
+                Modifier.widthIn(min = 56.dp).focusRequester(focusRequester).onFocusChanged {
+                  isFocused = it.isFocused
+                },
+            textStyle =
+                textStyle.copy(
+                    color =
+                        if (isFocused) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        )
+        if (!hasText && !isFocused) {
+          Text(
+              placeholder,
+              style = textStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+              softWrap = false,
+              maxLines = 1,
+          )
+        }
+      }
+      Spacer(modifier = Modifier.width(2.dp))
+      Box(
+          modifier = Modifier.size(16.dp),
+          contentAlignment = Alignment.Center,
+      ) {
+        if (hasText) {
+          IconButton(
+              onClick =
+                  hapticOnClick {
+                    textFieldValue = TextFieldValue("")
+                    onSearchQueryChange("")
+                  },
+              modifier = Modifier.size(16.dp),
+          ) {
+            Icon(
+                Icons.Rounded.Close,
+                "Clear",
+                modifier = Modifier.size(14.dp),
+                tint =
+                    if (isFocused) MaterialTheme.colorScheme.onSecondaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        }
+      }
+    }
+  }
 }
 
 @Composable
@@ -1646,3 +1949,34 @@ private fun GalleryAlbumThumbnailCard(
     )
   }
 }
+
+fun Modifier.dispersedGlow(
+    color: Color,
+    alpha: Float,
+    glowRadius: Dp,
+    borderRadius: Dp = 22.dp,
+    horizontalInset: Dp = 0.dp,
+    verticalInset: Dp = 0.dp
+): Modifier =
+    this.drawBehind {
+      if (alpha <= 0f || glowRadius <= 0.dp) return@drawBehind
+
+      drawIntoCanvas { canvas ->
+        val paint = androidx.compose.ui.graphics.Paint()
+        val frameworkPaint = paint.asFrameworkPaint()
+        frameworkPaint.color = color.copy(alpha = alpha).toArgb()
+        frameworkPaint.maskFilter = BlurMaskFilter(glowRadius.toPx(), BlurMaskFilter.Blur.NORMAL)
+
+        val hInsetPx = horizontalInset.toPx()
+        val vInsetPx = verticalInset.toPx()
+
+        canvas.nativeCanvas.drawRoundRect(
+            hInsetPx,
+            vInsetPx,
+            size.width - hInsetPx,
+            size.height - vInsetPx,
+            borderRadius.toPx(),
+            borderRadius.toPx(),
+            frameworkPaint)
+      }
+    }
