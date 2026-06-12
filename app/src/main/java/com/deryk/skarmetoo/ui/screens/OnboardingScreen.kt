@@ -10,6 +10,7 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -39,7 +40,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -53,6 +56,7 @@ import androidx.core.content.ContextCompat
 import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.LFM2_5_MODEL
+import com.deryk.skarmetoo.ai.LlmManager
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import com.deryk.skarmetoo.viewmodel.ModelType
@@ -63,6 +67,9 @@ import kotlinx.coroutines.launch
 data class OnboardingPage(
     val title: String,
     val description: String,
+    val useWidePreviewFrame: Boolean = false,
+    val useFixedPreviewFrameHeight: Boolean = false,
+    val previewFrameHeight: androidx.compose.ui.unit.Dp? = null,
     val content: @Composable () -> Unit
 )
 
@@ -81,6 +88,17 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
   val selectedAlbums by viewModel.selectedAlbums.collectAsState()
   val availableAlbums by viewModel.availableAlbums.collectAsState()
+  val analysisLang by viewModel.analysisLanguage.collectAsState()
+  val currentDetailLevel by viewModel.detailLevel.collectAsState()
+
+  LaunchedEffect(selectedModel) {
+    if (selectedModel == ModelType.GGUF) {
+      viewModel.setAnalysisLanguage("en")
+      if (currentDetailLevel == LlmManager.DetailLevel.COMPREHENSIVE) {
+        viewModel.setDetailLevel(LlmManager.DetailLevel.DETAILED)
+      }
+    }
+  }
 
   var showMoreModels by remember { mutableStateOf(false) }
   val ggufManager = remember { GgufLlmManager.getInstance(context) }
@@ -105,7 +123,10 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
           // ── Page 0: Download AI Model ──
           OnboardingPage(
               title = stringResource(R.string.select_model),
-              description = stringResource(R.string.onboarding_page0_desc)) {
+              description = stringResource(R.string.onboarding_page0_desc),
+              useWidePreviewFrame = true,
+              useFixedPreviewFrameHeight = true,
+              previewFrameHeight = 250.dp) {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
                   val isGemma4Selected = selectedModel == ModelType.GEMMA_4 && isGemma4Downloaded
                   val isDownloadingGemma4 =
@@ -141,14 +162,18 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                       Column(modifier = Modifier.weight(1f)) {
-                        FlowRow {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                           Text(
                               stringResource(R.string.model_gemma4),
                               style = MaterialTheme.typography.titleSmall,
                               fontWeight =
                                   if (isGemma4Selected) FontWeight.Bold else FontWeight.Medium,
+                              maxLines = 1,
+                              overflow = TextOverflow.Ellipsis,
                           )
-                          Spacer(modifier = Modifier.width(8.dp))
                           Surface(
                               color = (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)),
                               shape = RoundedCornerShape(4.dp)) {
@@ -158,9 +183,10 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = (if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)),
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                               }
-                          Spacer(modifier = Modifier.width(4.dp))
                           Surface(
                               color = MaterialTheme.colorScheme.surfaceVariant,
                               shape = RoundedCornerShape(4.dp)) {
@@ -170,6 +196,8 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                               }
                         }
@@ -363,6 +391,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       style = MaterialTheme.typography.headlineSmall,
                       fontWeight = FontWeight.Bold,
                   )
+                  Spacer(modifier = Modifier.width(16.dp))
                   Spacer(modifier = Modifier.weight(1f))
                   CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
                     Surface(
@@ -413,6 +442,8 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
           OnboardingPage(
               title = stringResource(R.string.language),
               description = stringResource(R.string.onboarding_page2_desc)) {
+                var showMoreLanguages by remember { mutableStateOf(false) }
+
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
                   Text(
                       stringResource(R.string.language),
@@ -426,47 +457,195 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                   ) {
                     // "English" selected
                     OutlinedCard(
-                        onClick = hapticOnClick {},
+                        onClick = hapticOnClick {
+                          viewModel.setAnalysisLanguage("en")
+                          showMoreLanguages = false
+                        },
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors =
                             CardDefaults.outlinedCardColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                containerColor = if (analysisLang == "en") MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                contentColor = if (analysisLang == "en") MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
                             ),
-                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                        border = if (analysisLang == "en") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
                     ) {
                       Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                         Text(
                             text = stringResource(R.string.language_en),
                             style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = if (analysisLang == "en") FontWeight.Bold else FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                       }
                     }
-                    // "More" not selected
+                    // "More"
+                    val moreLabel = if (analysisLang != "en" && !showMoreLanguages) {
+                      when (analysisLang) {
+                        "zh-rTW" -> stringResource(R.string.language_zh)
+                        "hi" -> stringResource(R.string.language_hi)
+                        "es" -> stringResource(R.string.language_es)
+                        "ar" -> stringResource(R.string.language_ar)
+                        "fr" -> stringResource(R.string.language_fr)
+                        "ru" -> stringResource(R.string.language_ru)
+                        else -> stringResource(R.string.language_more)
+                      }
+                    } else {
+                      stringResource(R.string.language_more)
+                    }
+                    val isMoreSelected = analysisLang != "en"
                     OutlinedCard(
-                        onClick = hapticOnClick {},
+                        onClick = hapticOnClick { showMoreLanguages = !showMoreLanguages },
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors =
                             CardDefaults.outlinedCardColors(
-                                containerColor = Color.Transparent,
-                                contentColor = MaterialTheme.colorScheme.onSurface,
+                                containerColor = if (isMoreSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                contentColor = if (isMoreSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
                             ),
-                        border = CardDefaults.outlinedCardBorder(),
+                        border = if (isMoreSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
                     ) {
                       Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                         Text(
-                            text = stringResource(R.string.language_more),
+                            text = moreLabel,
                             style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = if (isMoreSelected) FontWeight.Bold else FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                       }
+                    }
+                  }
+
+                  androidx.compose.animation.AnimatedVisibility(
+                      visible = showMoreLanguages,
+                      enter =
+                          androidx.compose.animation.expandVertically() +
+                              androidx.compose.animation.fadeIn(),
+                      exit =
+                          androidx.compose.animation.shrinkVertically() +
+                              androidx.compose.animation.fadeOut(),
+                  ) {
+                    Column {
+                      Spacer(modifier = Modifier.height(8.dp))
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Chinese
+                            OutlinedCard(
+                                onClick = hapticOnClick {
+                                  viewModel.setAnalysisLanguage("zh-rTW")
+                                  showMoreLanguages = false
+                                },
+                                modifier = Modifier.weight(1f).height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (analysisLang == "zh-rTW") MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                    contentColor = if (analysisLang == "zh-rTW") MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+                                ),
+                                border = if (analysisLang == "zh-rTW") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
+                            ) {
+                              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text(stringResource(R.string.language_zh), style = MaterialTheme.typography.labelLarge, fontWeight = if (analysisLang == "zh-rTW") FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              }
+                            }
+                            // Hindi
+                            OutlinedCard(
+                                onClick = hapticOnClick {
+                                  viewModel.setAnalysisLanguage("hi")
+                                  showMoreLanguages = false
+                                },
+                                modifier = Modifier.weight(1f).height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (analysisLang == "hi") MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                    contentColor = if (analysisLang == "hi") MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+                                ),
+                                border = if (analysisLang == "hi") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
+                            ) {
+                              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text(stringResource(R.string.language_hi), style = MaterialTheme.typography.labelLarge, fontWeight = if (analysisLang == "hi") FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              }
+                            }
+                            // Spanish
+                            OutlinedCard(
+                                onClick = hapticOnClick {
+                                  viewModel.setAnalysisLanguage("es")
+                                  showMoreLanguages = false
+                                },
+                                modifier = Modifier.weight(1f).height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (analysisLang == "es") MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                    contentColor = if (analysisLang == "es") MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+                                ),
+                                border = if (analysisLang == "es") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
+                            ) {
+                              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text(stringResource(R.string.language_es), style = MaterialTheme.typography.labelLarge, fontWeight = if (analysisLang == "es") FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              }
+                            }
+                          }
+                      Spacer(modifier = Modifier.height(8.dp))
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Arabic
+                            OutlinedCard(
+                                onClick = hapticOnClick {
+                                  viewModel.setAnalysisLanguage("ar")
+                                  showMoreLanguages = false
+                                },
+                                modifier = Modifier.weight(1f).height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (analysisLang == "ar") MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                    contentColor = if (analysisLang == "ar") MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+                                ),
+                                border = if (analysisLang == "ar") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
+                            ) {
+                              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text(stringResource(R.string.language_ar), style = MaterialTheme.typography.labelLarge, fontWeight = if (analysisLang == "ar") FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              }
+                            }
+                            // French
+                            OutlinedCard(
+                                onClick = hapticOnClick {
+                                  viewModel.setAnalysisLanguage("fr")
+                                  showMoreLanguages = false
+                                },
+                                modifier = Modifier.weight(1f).height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (analysisLang == "fr") MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                    contentColor = if (analysisLang == "fr") MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+                                ),
+                                border = if (analysisLang == "fr") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
+                            ) {
+                              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text(stringResource(R.string.language_fr), style = MaterialTheme.typography.labelLarge, fontWeight = if (analysisLang == "fr") FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              }
+                            }
+                            // Russian
+                            OutlinedCard(
+                                onClick = hapticOnClick {
+                                  viewModel.setAnalysisLanguage("ru")
+                                  showMoreLanguages = false
+                                },
+                                modifier = Modifier.weight(1f).height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (analysisLang == "ru") MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                    contentColor = if (analysisLang == "ru") MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+                                ),
+                                border = if (analysisLang == "ru") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
+                            ) {
+                              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text(stringResource(R.string.language_ru), style = MaterialTheme.typography.labelLarge, fontWeight = if (analysisLang == "ru") FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              }
+                            }
+                          }
                     }
                   }
                 }
@@ -488,17 +667,18 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                      // Brief — not selected
+                      // Brief
+                      val isBriefSelected = currentDetailLevel == LlmManager.DetailLevel.BRIEF
                       OutlinedCard(
-                          onClick = hapticOnClick {},
+                          onClick = hapticOnClick { viewModel.setDetailLevel(LlmManager.DetailLevel.BRIEF) },
                           modifier = Modifier.weight(1f).height(52.dp),
                           shape = RoundedCornerShape(12.dp),
                           colors =
                               CardDefaults.outlinedCardColors(
-                                  containerColor = Color.Transparent,
-                                  contentColor = MaterialTheme.colorScheme.onSurface,
+                                  containerColor = if (isBriefSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                  contentColor = if (isBriefSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
                               ),
-                          border = CardDefaults.outlinedCardBorder(),
+                          border = if (isBriefSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
                       ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -506,22 +686,23 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                               Text(
                                   stringResource(R.string.brief),
                                   style = MaterialTheme.typography.labelLarge,
-                                  fontWeight = FontWeight.Medium,
+                                  fontWeight = if (isBriefSelected) FontWeight.Bold else FontWeight.Medium,
                                   maxLines = 1,
                                   overflow = TextOverflow.Ellipsis)
                             }
                       }
-                      // Detailed — selected
+                      // Detailed
+                      val isDetailedSelected = currentDetailLevel == LlmManager.DetailLevel.DETAILED
                       OutlinedCard(
-                          onClick = hapticOnClick {},
+                          onClick = hapticOnClick { viewModel.setDetailLevel(LlmManager.DetailLevel.DETAILED) },
                           modifier = Modifier.weight(1f).height(52.dp),
                           shape = RoundedCornerShape(12.dp),
                           colors =
                               CardDefaults.outlinedCardColors(
-                                  containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                  contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                  containerColor = if (isDetailedSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                  contentColor = if (isDetailedSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
                               ),
-                          border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                          border = if (isDetailedSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
                       ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -529,7 +710,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                               Text(
                                   stringResource(R.string.detailed),
                                   style = MaterialTheme.typography.labelLarge,
-                                  fontWeight = FontWeight.Bold,
+                                  fontWeight = if (isDetailedSelected) FontWeight.Bold else FontWeight.Medium,
                                   maxLines = 1,
                                   overflow = TextOverflow.Ellipsis)
                             }
@@ -539,17 +720,26 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                      // Comprehensive — not selected
+                      // Comprehensive
+                      val isComprehensiveSelected = currentDetailLevel == LlmManager.DetailLevel.COMPREHENSIVE
+                      val isComprehensiveEnabled = selectedModel != ModelType.GGUF
                       OutlinedCard(
-                          onClick = hapticOnClick {},
-                          modifier = Modifier.weight(1f).height(52.dp),
+                          onClick = hapticOnClick {
+                            if (isComprehensiveEnabled) {
+                              viewModel.setDetailLevel(LlmManager.DetailLevel.COMPREHENSIVE)
+                            }
+                          },
+                          modifier = Modifier
+                              .weight(1f)
+                              .height(52.dp)
+                              .then(if (isComprehensiveEnabled) Modifier else Modifier.alpha(0.5f)),
                           shape = RoundedCornerShape(12.dp),
                           colors =
                               CardDefaults.outlinedCardColors(
-                                  containerColor = Color.Transparent,
-                                  contentColor = MaterialTheme.colorScheme.onSurface,
+                                  containerColor = if (isComprehensiveSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                  contentColor = if (isComprehensiveSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
                               ),
-                          border = CardDefaults.outlinedCardBorder(),
+                          border = if (isComprehensiveSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
                       ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -557,22 +747,23 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                               Text(
                                   stringResource(R.string.full),
                                   style = MaterialTheme.typography.labelLarge,
-                                  fontWeight = FontWeight.Medium,
+                                  fontWeight = if (isComprehensiveSelected) FontWeight.Bold else FontWeight.Medium,
                                   maxLines = 1,
                                   overflow = TextOverflow.Ellipsis)
                             }
                       }
-                      // Custom — not selected
+                      // Custom
+                      val isCustomSelected = currentDetailLevel == LlmManager.DetailLevel.CUSTOM
                       OutlinedCard(
-                          onClick = hapticOnClick {},
+                          onClick = hapticOnClick { viewModel.setDetailLevel(LlmManager.DetailLevel.CUSTOM) },
                           modifier = Modifier.weight(1f).height(52.dp),
                           shape = RoundedCornerShape(12.dp),
                           colors =
                               CardDefaults.outlinedCardColors(
-                                  containerColor = Color.Transparent,
-                                  contentColor = MaterialTheme.colorScheme.onSurface,
+                                  containerColor = if (isCustomSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                  contentColor = if (isCustomSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
                               ),
-                          border = CardDefaults.outlinedCardBorder(),
+                          border = if (isCustomSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else CardDefaults.outlinedCardBorder(),
                       ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -580,7 +771,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                               Text(
                                   stringResource(R.string.custom),
                                   style = MaterialTheme.typography.labelLarge,
-                                  fontWeight = FontWeight.Medium,
+                                  fontWeight = if (isCustomSelected) FontWeight.Bold else FontWeight.Medium,
                                   maxLines = 1,
                                   overflow = TextOverflow.Ellipsis)
                             }
@@ -593,11 +784,14 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
           // ── Page 4: Select Image Folders ──
           OnboardingPage(
               title = stringResource(R.string.add_folder),
-              description = stringResource(R.string.onboarding_page4_desc)) {
+              description = stringResource(R.string.onboarding_page4_desc),
+              useWidePreviewFrame = true,
+              useFixedPreviewFrameHeight = true,
+              previewFrameHeight = 130.dp) {
                 Column(
                     modifier =
                         Modifier.fillMaxWidth()
-                            .padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 12.dp)) {
+                            .padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 6.dp)) {
                       Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             shape = CircleShape,
@@ -630,7 +824,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         }
                       }
 
-                      Spacer(modifier = Modifier.height(14.dp))
+                      Spacer(modifier = Modifier.height(8.dp))
 
                       val albumCounts = availableAlbums.filter { it.bucketId in selectedAlbums }
                       val primaryColor = MaterialTheme.colorScheme.primary
@@ -1229,22 +1423,129 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         }
                       }
                     }
+              },
+
+          // -- Page 10: Better Searching --
+          OnboardingPage(
+              title = stringResource(R.string.onboarding_extra_features_title),
+              description = stringResource(R.string.onboarding_extra_features_desc)) {
+                val infiniteTransition = rememberInfiniteTransition(label = "ExtraFeaturesGlow")
+                val glowAlpha by
+                    infiniteTransition.animateFloat(
+                        initialValue = 0.55f,
+                        targetValue = 1f,
+                        animationSpec =
+                            infiniteRepeatable(
+                                animation = tween(1400, easing = FastOutSlowInEasing),
+                                repeatMode = RepeatMode.Reverse),
+                        label = "ExtraFeaturesGlowAlpha")
+                var isEmbeddingSearchMode by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                  while (true) {
+                    delay(3200L)
+                    isEmbeddingSearchMode = !isEmbeddingSearchMode
+                  }
+                }
+                val modeIconScale by
+                    animateFloatAsState(
+                        targetValue = if (isEmbeddingSearchMode) 1.12f else 1f,
+                        animationSpec = tween(durationMillis = 220),
+                        label = "ExtraFeaturesSearchModeIconScale")
+                val semanticGlowAlpha by
+                    animateFloatAsState(
+                        targetValue = if (isEmbeddingSearchMode) glowAlpha else 0f,
+                        animationSpec = tween(durationMillis = 220),
+                        label = "ExtraFeaturesSemanticGlowAlpha")
+
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                  Box(
+                      modifier =
+                          Modifier.dispersedGlow(
+                                  color = Color(0xFF2196F3),
+                                  alpha = 0.20f * semanticGlowAlpha,
+                                  glowRadius = 24.dp,
+                                  borderRadius = 24.dp,
+                                  horizontalInset = -10.dp,
+                                  verticalInset = -6.dp)
+                              .dispersedGlow(
+                                  color = Color(0xFF2196F3),
+                                  alpha = 0.38f * semanticGlowAlpha,
+                                  glowRadius = 9.dp,
+                                  borderRadius = 22.dp,
+                                  horizontalInset = -4.dp,
+                                  verticalInset = -2.dp),
+                      contentAlignment = Alignment.Center,
+                  ) {
+                    Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    ) {
+                      Row(
+                          modifier =
+                              Modifier.height(40.dp)
+                                  .widthIn(min = 250.dp)
+                                  .padding(horizontal = 12.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                        Icon(
+                            if (isEmbeddingSearchMode) Icons.Rounded.AutoAwesome
+                            else Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint =
+                                if (isEmbeddingSearchMode) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier =
+                                Modifier.size(20.dp).graphicsLayer {
+                                  scaleX = modeIconScale
+                                  scaleY = modeIconScale
+                                },
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.onboarding_extra_features_search_hint),
+                            style =
+                                MaterialTheme.typography.labelLarge.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                      }
+                    }
+                  }
+                }
+              },
+
+          // -- Page 11: Look Similar --
+          OnboardingPage(
+              title = stringResource(R.string.onboarding_look_similar_title),
+              description = stringResource(R.string.onboarding_look_similar_desc),
+              useWidePreviewFrame = true,
+              useFixedPreviewFrameHeight = true) {
+                OnboardingLookSimilarPreview()
               })
 
-  // ── Page 10: Advanced Settings ──
+  // ── Page 12: Advanced Settings ──
   val advancedSettingsPage =
       OnboardingPage(
           title = stringResource(R.string.onboarding_page10_title),
-          description = stringResource(R.string.onboarding_page10_desc)) {
+          description = stringResource(R.string.onboarding_page10_desc),
+          useWidePreviewFrame = true,
+          useFixedPreviewFrameHeight = true,
+          previewFrameHeight = 220.dp) {
             Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
                 colors =
                     CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
-              Column(modifier = Modifier.padding(20.dp)) {
+              Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Surface(
                       shape = CircleShape,
@@ -1273,7 +1574,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                     )
                   }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Image Resolution mock
                 Column {
@@ -1287,7 +1588,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant,
                   )
-                  Spacer(modifier = Modifier.height(8.dp))
+                  Spacer(modifier = Modifier.height(6.dp))
 
                   var resolutionValue by remember { mutableStateOf(0.5f) }
                   Slider(
@@ -1295,7 +1596,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       onValueChange = { resolutionValue = it },
                       valueRange = 0f..1f)
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 // Play/Pause toggle mock
                 Row(
@@ -1346,23 +1647,13 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
       bottomBar = {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp).padding(bottom = 24.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-              Row(
-                  horizontalArrangement = Arrangement.spacedBy(8.dp),
-                  modifier = Modifier.padding(start = 16.dp)) {
-                    repeat(allPages.size) { iteration ->
-                      val color =
-                          if (pagerState.currentPage == iteration) MaterialTheme.colorScheme.primary
-                          else MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+              OnboardingPageIndicator(
+                  currentPage = pagerState.currentPage,
+                  pageCount = allPages.size,
+                  modifier = Modifier.padding(start = 8.dp))
 
-                      Box(
-                          modifier =
-                              Modifier.clip(CircleShape)
-                                  .background(color)
-                                  .size(if (pagerState.currentPage == iteration) 12.dp else 8.dp))
-                    }
-                  }
+              Spacer(modifier = Modifier.weight(1f))
 
               Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AnimatedVisibility(visible = pagerState.currentPage < allPages.size - 1) {
@@ -1422,10 +1713,26 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         shape = RoundedCornerShape(24.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerLow,
                         tonalElevation = 0.dp,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                        modifier =
+                            if (page.useWidePreviewFrame) {
+                              val wideModifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                              if (page.previewFrameHeight != null) wideModifier.height(page.previewFrameHeight)
+                              else if (page.useFixedPreviewFrameHeight) wideModifier.height(360.dp)
+                              else wideModifier
+                            } else {
+                              Modifier.wrapContentWidth()
+                                  .widthIn(max = 420.dp)
+                                  .padding(horizontal = 16.dp)
+                            }) {
                           Box(
                               contentAlignment = Alignment.Center,
-                              modifier = Modifier.padding(vertical = 24.dp)) {
+                              modifier =
+                                  if (page.useWidePreviewFrame) {
+                                    val verticalPadding = if (page.previewFrameHeight != null) 10.dp else 24.dp
+                                    Modifier.fillMaxSize().padding(vertical = verticalPadding)
+                                  } else {
+                                    Modifier.padding(horizontal = 20.dp, vertical = 20.dp)
+                                  }) {
                                 page.content()
                               }
                         }
@@ -1525,6 +1832,324 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
           }
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun OnboardingPageIndicator(
+    currentPage: Int,
+    pageCount: Int,
+    modifier: Modifier = Modifier,
+) {
+  val visibleDotCount = minOf(pageCount, 5)
+  val firstVisiblePage =
+      when {
+        pageCount <= visibleDotCount -> 0
+        currentPage <= 2 -> 0
+        currentPage >= pageCount - 3 -> pageCount - visibleDotCount
+        else -> currentPage - 2
+      }
+
+  Row(
+      modifier = modifier,
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      repeat(visibleDotCount) { offset ->
+        val page = firstVisiblePage + offset
+        val isSelected = page == currentPage
+        val dotSize by
+            animateDpAsState(
+                targetValue = if (isSelected) 12.dp else 7.dp,
+                animationSpec = tween(durationMillis = 180),
+                label = "OnboardingPageDotSize",
+            )
+        Box(
+            modifier =
+                Modifier.clip(CircleShape)
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
+                    .size(dotSize))
+      }
+    }
+
+    Spacer(modifier = Modifier.width(8.dp))
+
+    Text(
+        text = "${currentPage + 1}/$pageCount",
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+    )
+  }
+}
+
+@Composable
+private fun OnboardingLookSimilarPreview() {
+  val pullProgress = remember { Animatable(0f) }
+  LaunchedEffect(Unit) {
+    while (true) {
+      pullProgress.snapTo(0f)
+      delay(520L)
+      pullProgress.animateTo(
+          targetValue = 1f,
+          animationSpec = tween(durationMillis = 980, easing = FastOutSlowInEasing),
+      )
+      delay(1500L)
+    }
+  }
+
+  val progress = pullProgress.value.coerceIn(0f, 1f)
+  val showSimilar = progress >= 0.98f
+  val detailAlpha by
+      animateFloatAsState(
+          targetValue = if (showSimilar) 0.62f else 1f,
+          animationSpec = tween(durationMillis = 220),
+          label = "LookSimilarDetailAlpha",
+      )
+  val loaderAlpha by
+      animateFloatAsState(
+          targetValue = if (showSimilar) 0f else 1f,
+          animationSpec = tween(durationMillis = 180),
+          label = "LookSimilarLoaderAlpha",
+      )
+  val similarAlpha by
+      animateFloatAsState(
+          targetValue = if (showSimilar) 1f else 0f,
+          animationSpec = tween(durationMillis = 220),
+          label = "LookSimilarResultsAlpha",
+      )
+  val similarOffsetY by
+      animateFloatAsState(
+          targetValue = if (showSimilar) 0f else -18f,
+          animationSpec = tween(durationMillis = 260),
+          label = "LookSimilarResultsOffset",
+      )
+  val similarAreaHeight by
+      animateDpAsState(
+          targetValue = if (showSimilar) 126.dp else 68.dp,
+          animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+          label = "LookSimilarAreaHeight",
+      )
+
+  Surface(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).wrapContentHeight().animateContentSize(),
+      shape = RoundedCornerShape(18.dp),
+      color = MaterialTheme.colorScheme.surfaceContainerHighest,
+  ) {
+    Column(modifier = Modifier.wrapContentHeight().padding(14.dp)) {
+      Column(
+          modifier =
+              Modifier.graphicsLayer {
+                alpha = detailAlpha
+                translationY = -18f * progress
+              },
+      ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(
+              Icons.AutoMirrored.Rounded.ArrowBack,
+              contentDescription = null,
+              modifier = Modifier.size(18.dp),
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+              stringResource(R.string.details_title),
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = FontWeight.SemiBold,
+          )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Box(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .height(88.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+          Column(
+              modifier = Modifier.fillMaxSize().padding(10.dp),
+              verticalArrangement = Arrangement.SpaceBetween,
+          ) {
+            repeat(3) { index ->
+              Box(
+                  modifier =
+                      Modifier.fillMaxWidth(if (index == 2) 0.62f else 1f)
+                          .height(12.dp)
+                          .clip(RoundedCornerShape(4.dp))
+                          .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)),
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        OnboardingMockLine(widthFraction = 0.84f)
+        Spacer(modifier = Modifier.height(5.dp))
+        OnboardingMockLine(widthFraction = 0.66f)
+      }
+
+      Spacer(modifier = Modifier.height(8.dp))
+
+      Box(
+          modifier = Modifier.fillMaxWidth().height(similarAreaHeight),
+          contentAlignment = Alignment.TopCenter,
+      ) {
+        Box(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .height(68.dp)
+                    .align(Alignment.Center)
+                    .graphicsLayer { alpha = loaderAlpha },
+            contentAlignment = Alignment.Center,
+        ) {
+          Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)) {
+            CircularProgressIndicator(
+                progress = { progress },
+                modifier =
+                    Modifier.fillMaxSize().graphicsLayer {
+                      val loaderScale = 0.86f + (progress * 0.14f)
+                      scaleX = loaderScale
+                      scaleY = loaderScale
+                    },
+                strokeWidth = 4.dp,
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+            Text(
+                text = "${(progress * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+          }
+        }
+
+        Column(
+            modifier =
+                Modifier.align(Alignment.TopCenter)
+                    .graphicsLayer {
+                      alpha = similarAlpha
+                      translationY = similarOffsetY
+                    },
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(18.dp)) {
+              Icon(
+                  Icons.Rounded.Search,
+                  contentDescription = null,
+                  tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.size(18.dp),
+              )
+              Icon(
+                  Icons.Rounded.AutoAwesome,
+                  contentDescription = null,
+                  tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier =
+                      Modifier.size(9.dp).align(Alignment.TopEnd).offset(x = 1.dp, y = (-1).dp),
+              )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                stringResource(R.string.look_similar_title_caps),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                letterSpacing = 1.sp,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(4.dp),
+            ) {
+              Text(
+                  text = stringResource(R.string.beta),
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.primary,
+                  fontWeight = FontWeight.Bold,
+              )
+            }
+          }
+
+          Spacer(modifier = Modifier.height(4.dp))
+          Text(
+              stringResource(R.string.look_similar_disclaimer),
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+          )
+
+          Spacer(modifier = Modifier.height(8.dp))
+          Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(2.dp),
+          ) {
+            listOf("91%", "84%", "78%", "72%").forEachIndexed { index, score ->
+              OnboardingSimilarTile(
+                  score = score,
+                  tone = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f + index * 0.04f),
+                  modifier = Modifier.weight(1f),
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun OnboardingMockLine(widthFraction: Float) {
+  Box(
+      modifier =
+          Modifier.fillMaxWidth(widthFraction)
+              .height(8.dp)
+              .clip(RoundedCornerShape(4.dp))
+              .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.14f)),
+  )
+}
+
+@Composable
+private fun OnboardingSimilarTile(
+    score: String,
+    tone: Color,
+    modifier: Modifier = Modifier,
+) {
+  Box(
+      modifier =
+          modifier
+              .aspectRatio(1f)
+              .clip(RoundedCornerShape(6.dp))
+              .background(tone),
+  ) {
+    Box(
+        modifier =
+            Modifier.align(Alignment.Center)
+                .fillMaxWidth(0.58f)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(5.dp))
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.10f)),
+    )
+    Surface(
+        modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+        color = Color.Black.copy(alpha = 0.65f),
+        shape = RoundedCornerShape(6.dp),
+    ) {
+      Text(
+          text = score,
+          modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+          style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+          color = Color.White,
+          fontWeight = FontWeight.Bold,
+      )
     }
   }
 }

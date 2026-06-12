@@ -2087,6 +2087,466 @@ fun SettingsScreen(
       }
       Spacer(modifier = Modifier.height(16.dp))
 
+      // ===== Search Model Card =====
+      Card(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+          shape = RoundedCornerShape(20.dp),
+          colors =
+              CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+      ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                shape = CircleShape,
+                color =
+                    if (isEmbeddingGemmaDownloaded)
+                        (if (isDark) Color(0xFF0D253F) else Color(0xFFE3F2FD))
+                    else (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)),
+                modifier = Modifier.size(34.dp),
+            ) {
+              Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Icon(
+                    Icons.Rounded.Search,
+                    null,
+                    tint =
+                        if (isEmbeddingGemmaDownloaded)
+                            (if (isDark) Color(0xFF64B5F6) else Color(0xFF1976D2))
+                        else (if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)),
+                    modifier = Modifier.size(20.dp),
+                )
+              }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                  "Search Model",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontWeight = FontWeight.Medium,
+              )
+              Text(
+                  "On-device semantic search models",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+              )
+            }
+            val statusText =
+                when {
+                  isEmbeddingGemmaDownloading -> "Loading"
+                  isEmbeddingGemmaDownloaded -> "Ready"
+                  else -> "No Model"
+                }
+            val statusBg =
+                when {
+                  isEmbeddingGemmaDownloaded -> if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+                  isEmbeddingGemmaDownloading ->
+                      if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)
+                  else -> MaterialTheme.colorScheme.errorContainer
+                }
+            val statusColor =
+                when {
+                  isEmbeddingGemmaDownloaded -> if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
+                  isEmbeddingGemmaDownloading ->
+                      if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)
+                  else -> MaterialTheme.colorScheme.onErrorContainer
+                }
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = statusBg,
+            ) {
+              Text(
+                  text = statusText,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.Bold,
+                  color = statusColor,
+              )
+            }
+          }
+
+          Spacer(modifier = Modifier.height(12.dp))
+
+          OutlinedCard(
+              onClick =
+                  hapticOnClick {
+                    if (!isEmbeddingGemmaDownloaded && !isEmbeddingGemmaDownloading) {
+                      val cookies =
+                          android.webkit.CookieManager.getInstance()
+                              .getCookie("https://huggingface.co")
+                      if (cookies.isNullOrBlank()) {
+                        showEmbeddingGemmaHfLogin = true
+                      } else {
+                        startEmbeddingGemmaDownload(cookies)
+                      }
+                    }
+                  },
+              modifier = Modifier.fillMaxWidth(),
+              shape = RoundedCornerShape(14.dp),
+              colors =
+                  CardDefaults.outlinedCardColors(
+                      containerColor =
+                          if (isEmbeddingGemmaDownloaded)
+                              MaterialTheme.colorScheme.secondaryContainer
+                          else Color.Transparent,
+                  ),
+              border =
+                  if (isEmbeddingGemmaDownloaded)
+                      BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                  else CardDefaults.outlinedCardBorder(),
+          ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Text(
+                      EmbeddingGemma.MODEL_DISPLAY_NAME,
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight =
+                          if (isEmbeddingGemmaDownloaded) FontWeight.Bold else FontWeight.Medium,
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Surface(
+                      color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                      shape = RoundedCornerShape(4.dp)) {
+                        Text(
+                            text = "SEARCH",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold)
+                      }
+                }
+                Text(
+                    "litert-community/embeddinggemma-300m",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                )
+                Text(
+                    "Natural language & smarter search. Authorization & login required.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (embeddingGemmaError != null) {
+                  Spacer(modifier = Modifier.height(4.dp))
+                  Text(
+                      embeddingGemmaError.orEmpty(),
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.error,
+                  )
+                }
+              }
+              Spacer(modifier = Modifier.width(12.dp))
+              Surface(
+                  shape = RoundedCornerShape(8.dp),
+                  color =
+                      if (isEmbeddingGemmaDownloading)
+                          (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                      else if (isEmbeddingGemmaDownloaded)
+                          (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                      else MaterialTheme.colorScheme.surfaceContainerHighest,
+                  modifier = Modifier.size(32.dp)) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                      if (isEmbeddingGemmaDownloading) {
+                        Text(
+                            text = "${(embeddingGemmaDownloadProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                        )
+                      } else if (isEmbeddingGemmaDownloaded) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = "Downloaded",
+                            tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                            modifier = Modifier.size(20.dp))
+                      } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Download,
+                            contentDescription = "Download EmbeddingGemma",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp))
+                      }
+                    }
+                  }
+            }
+          }
+
+          if (isEmbeddingGemmaDownloaded) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color =
+                    MaterialTheme.colorScheme.surfaceVariant.copy(
+                        alpha = if (isDark) 0.22f else 0.45f),
+            ) {
+              Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Box(modifier = Modifier.size(20.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier =
+                            Modifier.size(10.dp)
+                                .align(Alignment.TopEnd)
+                                .offset(x = 1.dp, y = (-1).dp),
+                    )
+                  }
+                  Spacer(modifier = Modifier.width(12.dp))
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "SEARCH INDEX",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "by EmbeddingGemma",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    )
+                    Text(
+                        text = "$embeddingGemmaIndexedCount / $embeddingGemmaTextReadyCount",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (embeddingGemmaIndexingStatus != null) {
+                      Text(
+                          text = embeddingGemmaIndexingStatus.orEmpty(),
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.primary,
+                      )
+                    }
+                  }
+                  Row(
+                      modifier = Modifier.width(104.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                  ) {
+                    val reloadActionEnabled =
+                        !isEmbeddingGemmaDownloading && !isEmbeddingGemmaIndexing
+                    TextButton(
+                        onClick = hapticOnClick { startEmbeddingGemmaIndexing() },
+                        enabled = reloadActionEnabled,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.width(68.dp).heightIn(min = 26.dp),
+                    ) {
+                      if (isEmbeddingGemmaIndexing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.8.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                      } else {
+                        Text(
+                            text = "Reload",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                      }
+                    }
+                    IconButton(
+                        onClick =
+                            hapticOnClick {
+                              settingsScope.launch(Dispatchers.IO) {
+                                val db = ScreenshotTextEmbeddingDatabase(context.applicationContext)
+                                db.clearAll()
+                                db.close()
+                                withContext(Dispatchers.Main) {
+                                  embeddingGemmaIndexedCount = 0
+                                  embeddingGemmaIndexingStatus = "Index cleared."
+                                }
+                              }
+                            },
+                        enabled = !isEmbeddingGemmaIndexing,
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                      Icon(
+                          imageVector = Icons.Rounded.DeleteSweep,
+                          contentDescription = stringResource(R.string.clear_index),
+                          tint = MaterialTheme.colorScheme.error,
+                          modifier = Modifier.size(16.dp),
+                      )
+                    }
+                  }
+                }
+                if (embeddingGemmaIndexingProgress != null || isEmbeddingGemmaIndexing) {
+                  val (completed, total) = embeddingGemmaIndexingProgress ?: Pair(0, 0)
+                  val progress = if (total > 0) completed.toFloat() / total.toFloat() else 0f
+                  Spacer(modifier = Modifier.height(16.dp))
+                  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                      Text(
+                          text = "Generating text embeddings",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                      Text(
+                          text = "${(progress * 100).toInt()}%",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.primary,
+                          fontWeight = FontWeight.Bold,
+                      )
+                    }
+                  }
+                }
+              }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            val shownIndexedCount =
+                sourceSemanticIndexedCount.coerceIn(0, sourceAllScreenshots.size)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color =
+                    MaterialTheme.colorScheme.surfaceVariant.copy(
+                        alpha = if (isDark) 0.22f else 0.45f),
+            ) {
+              Row(
+                  modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Box(modifier = Modifier.size(20.dp)) {
+                  Icon(
+                      imageVector = Icons.Rounded.Search,
+                      contentDescription = null,
+                      tint = MaterialTheme.colorScheme.onSurface,
+                      modifier = Modifier.size(20.dp),
+                  )
+                  Icon(
+                      imageVector = Icons.Rounded.AutoAwesome,
+                      contentDescription = null,
+                      tint = MaterialTheme.colorScheme.onSurface,
+                      modifier =
+                          Modifier.size(10.dp)
+                              .align(Alignment.TopEnd)
+                              .offset(x = 1.dp, y = (-1).dp),
+                  )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.look_similar_title_caps),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                      Text(
+                          text = stringResource(R.string.beta),
+                          modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.primary,
+                          fontWeight = FontWeight.Bold,
+                      )
+                    }
+                  }
+                  Text(
+                      text = "by EfficientNet-Lite0",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                  )
+                  Text(
+                      text = "$shownIndexedCount / ${sourceAllScreenshots.size}",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+                val semanticActionText =
+                    when {
+                      sourceIsSemanticDownloading ->
+                          "${(sourceSemanticDownloadProgress * 100).toInt()}%"
+                      !sourceIsSemanticModelReady -> stringResource(R.string.download)
+                      else -> stringResource(R.string.refresh_index)
+                    }
+                val semanticActionEnabled =
+                    when {
+                      sourceIsSemanticDownloading || sourceIsSemanticIndexing -> false
+                      !sourceIsSemanticModelReady -> true
+                      else -> sourceAllScreenshots.isNotEmpty()
+                    }
+                Row(
+                    modifier = Modifier.width(104.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                ) {
+                  TextButton(
+                      onClick =
+                          hapticOnClick {
+                            if (!sourceIsSemanticModelReady) {
+                              semanticViewModel.downloadModel()
+                            } else {
+                              semanticViewModel.startIndexing(sourceAllScreenshots)
+                            }
+                          },
+                      enabled = semanticActionEnabled,
+                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                      modifier = Modifier.width(68.dp).heightIn(min = 26.dp),
+                  ) {
+                    if (sourceIsSemanticIndexing) {
+                      CircularProgressIndicator(
+                          modifier = Modifier.size(14.dp),
+                          strokeWidth = 1.8.dp,
+                          color = MaterialTheme.colorScheme.primary,
+                      )
+                    } else {
+                      Text(
+                          text = semanticActionText,
+                          style = MaterialTheme.typography.labelSmall,
+                          fontWeight = FontWeight.SemiBold,
+                      )
+                    }
+                  }
+                  IconButton(
+                      onClick = hapticOnClick { semanticViewModel.resetEmbeddingsDatabase() },
+                      enabled = !sourceIsSemanticIndexing,
+                      modifier = Modifier.size(28.dp),
+                  ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteSweep,
+                        contentDescription = stringResource(R.string.clear_index),
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp),
+                    )
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      Spacer(modifier = Modifier.height(16.dp))
+
       // ===== Advanced Settings Card =====
       var isAdvancedExpanded by remember { mutableStateOf(false) }
       var showAdvancedConfirmDialog by remember { mutableStateOf(false) }

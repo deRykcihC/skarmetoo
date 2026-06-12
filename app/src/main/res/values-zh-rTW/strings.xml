@@ -132,6 +132,11 @@
     <string name="onboarding_hide_albums_desc">點擊篩選列中的箭頭按鈕，即可摺疊或展開相簿列，在瀏覽圖庫時節省更多螢幕空間。</string>
     <string name="onboarding_page9_title">重新分析</string>
     <string name="onboarding_page9_desc">如果您想讓 AI 重新分析圖片，只需在圖庫或詳情畫面雙擊其狀態按鈕即可。</string>
+    <string name="onboarding_extra_features_title">更好的搜尋</string>
+    <string name="onboarding_extra_features_desc">使用 Embedding Gemma 語意搜尋，以想法而不是精確字詞尋找圖片。點擊搜尋圖示即可在語意搜尋與關鍵字搜尋模式之間切換。</string>
+    <string name="onboarding_extra_features_search_hint">用語意搜尋...</string>
+    <string name="onboarding_look_similar_title">看起來相似</string>
+    <string name="onboarding_look_similar_desc">在詳情頁面捲到底部後繼續向上滑，即可顯示「看起來相似」。它會搜尋本機索引，找出視覺上相似的截圖。</string>
     <string name="feedback">回饋</string>
     <string name="feedback_desc">回報錯誤、請求功能或分享建議</string>
     <string name="submit_feedback">提交回饋</string>

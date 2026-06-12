@@ -132,6 +132,11 @@
     <string name="onboarding_hide_albums_desc">Tap the arrow button in the filter bar to collapse or expand the albums row, saving screen space when browsing your gallery.</string>
     <string name="onboarding_page9_title">Reanalyze</string>
     <string name="onboarding_page9_desc">If you want the AI to analyze an image again, simply double-click its status button in the gallery or the detail screen.</string>
+    <string name="onboarding_extra_features_title">Better Searching</string>
+    <string name="onboarding_extra_features_desc">Use Embedding Gemma semantic search to find images by idea instead of exact words. Tap the search icon to switch between semantic and keyword search modes.</string>
+    <string name="onboarding_extra_features_search_hint">Search by meaning...</string>
+    <string name="onboarding_look_similar_title">Look Similar</string>
+    <string name="onboarding_look_similar_desc">On the Details page, scroll to the bottom and keep swiping up to reveal Look Similar. It searches your local index for visually similar screenshots.</string>
     <string name="feedback">Feedback</string>
     <string name="feedback_desc">Report bugs, request features, or share suggestions</string>
     <string name="submit_feedback">Submit Feedback</string>

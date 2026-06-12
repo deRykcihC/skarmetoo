@@ -43,6 +43,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -77,6 +79,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -1259,16 +1270,91 @@ fun GalleryScreen(
             color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
             shadowElevation = 2.dp) {
               Box(modifier = Modifier.padding(4.dp).width(112.dp).height(40.dp)) {
-                // Animated background pill sliding behind the icons
+                // 1. Base Layer: Icons with the default unselected color
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically) {
+                      Box(
+                          modifier = Modifier.weight(1f).fillMaxHeight(),
+                          contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.ViewQuilt,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp))
+                          }
+
+                      Box(
+                          modifier = Modifier.weight(1f).fillMaxHeight(),
+                          contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.GridView,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp))
+                          }
+                    }
+
+                // 2. Sliding Overlay Layer: Primary color background + White icons
+                // Clipped to the dynamic bounds and shape of the sliding pill
                 Box(
                     modifier =
-                        Modifier.offset(x = selectedOffsetAnim.value)
-                            .width(56.dp)
-                            .fillMaxHeight()
-                            .clip(androidx.compose.foundation.shape.CircleShape)
-                            .background(MaterialTheme.colorScheme.primary))
+                        Modifier.fillMaxSize()
+                            .graphicsLayer {
+                              clip = true
+                              shape = object : Shape {
+                                override fun createOutline(
+                                    size: androidx.compose.ui.geometry.Size,
+                                    layoutDirection: LayoutDirection,
+                                    density: Density
+                                ): Outline {
+                                  val widthPx = with(density) { 56.dp.toPx() }
+                                  val heightPx = size.height
+                                  val offsetPx = with(density) { selectedOffsetAnim.value.toPx() }
+                                  val rect = Rect(
+                                      left = offsetPx,
+                                      top = 0f,
+                                      right = offsetPx + widthPx,
+                                      bottom = heightPx
+                                  )
+                                  val roundRect = RoundRect(
+                                      rect = rect,
+                                      cornerRadius = CornerRadius(heightPx / 2f, heightPx / 2f)
+                                  )
+                                  return Outline.Rounded(roundRect)
+                                }
+                              }
+                            }
+                            .background(MaterialTheme.colorScheme.primary)
+                ) {
+                  // Inside the sliding pill, we draw the white icons row
+                  // in the exact same position as the base layer (no offsets needed!)
+                  Row(
+                      modifier = Modifier.fillMaxSize(),
+                      verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            contentAlignment = Alignment.Center) {
+                              Icon(
+                                  imageVector = Icons.Rounded.ViewQuilt,
+                                  contentDescription = "Gallery Layout",
+                                  tint = Color.White,
+                                  modifier = Modifier.size(20.dp))
+                            }
 
-                // Row containing the icon click areas
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            contentAlignment = Alignment.Center) {
+                              Icon(
+                                  imageVector = Icons.Rounded.GridView,
+                                  contentDescription = "Grid Layout",
+                                  tint = Color.White,
+                                  modifier = Modifier.size(20.dp))
+                            }
+                      }
+                }
+
+                // 3. Top Layer: Transparent clickable regions to handle user input
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     verticalAlignment = Alignment.CenterVertically) {
@@ -1279,13 +1365,7 @@ fun GalleryScreen(
                                   .clip(androidx.compose.foundation.shape.CircleShape)
                                   .clickable(onClick = hapticOnClick { isGalleryStyle = true }),
                           contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.ViewQuilt,
-                                contentDescription = "Gallery Layout",
-                                tint =
-                                    if (isGalleryStyle) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp))
+                            // Transparent click target for Gallery layout
                           }
 
                       Box(
@@ -1295,13 +1375,7 @@ fun GalleryScreen(
                                   .clip(androidx.compose.foundation.shape.CircleShape)
                                   .clickable(onClick = hapticOnClick { isGalleryStyle = false }),
                           contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.GridView,
-                                contentDescription = "Grid Layout",
-                                tint =
-                                    if (!isGalleryStyle) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp))
+                            // Transparent click target for Grid layout
                           }
                     }
               }
