@@ -1042,7 +1042,7 @@ fun GalleryScreen(
           )
           Spacer(modifier = Modifier.height(16.dp))
           Text(
-              "Searching...",
+              stringResource(R.string.searching),
               style = MaterialTheme.typography.titleMedium,
               fontWeight = FontWeight.SemiBold,
               color = MaterialTheme.colorScheme.onSurface,
