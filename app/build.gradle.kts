@@ -55,14 +55,9 @@ android {
 
   splits {
     abi {
-      // Dynamic feature modules are installed as split APKs too; enabling local APK ABI splits
-      // makes feature resource processing look for a processed-res output that is not emitted.
-      // Android App Bundles still handle ABI targeting for Play delivery.
-      isEnable = false
+      isEnable = true
       reset()
-      // List the architectures you want to build for
       include("arm64-v8a", "x86_64")
-      // 'false' prevents Gradle from also building the giant universal APK
       isUniversalApk = false
     }
   }
