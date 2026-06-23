@@ -7,6 +7,8 @@ plugins {
   alias(libs.plugins.spotless)
 }
 
+val buildingBundle = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+
 android {
   namespace = "com.deryk.skarmetoo"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -15,10 +17,16 @@ android {
     applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 26
+    versionCode = 27
     versionName = "1.11"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    if (buildingBundle) {
+      ndk {
+        abiFilters += setOf("arm64-v8a", "x86_64")
+      }
+    }
   }
 
   val keystorePropertiesFile = rootProject.file("key.properties")
@@ -55,7 +63,7 @@ android {
 
   splits {
     abi {
-      isEnable = true
+      isEnable = !buildingBundle
       reset()
       include("arm64-v8a", "x86_64")
       isUniversalApk = false
@@ -63,6 +71,11 @@ android {
   }
 
   bundle { language { enableSplit = false } }
+
+  packaging {
+    jniLibs.pickFirsts += "**/libLiteRt.so"
+    jniLibs.pickFirsts += "**/libLiteRtClGlAccelerator.so"
+  }
 
   lint {
     checkReleaseBuilds = false
@@ -80,8 +93,8 @@ dependencies {
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.foundation.layout)
   implementation(libs.androidx.compose.material3)
+  implementation(libs.tflite)
   implementation(libs.litertlm)
-  implementation(libs.tensorflow.lite)
   implementation("androidx.work:work-runtime-ktx:2.11.1")
   implementation(libs.androidx.compose.navigation)
   implementation(libs.material.icon.extended)
@@ -113,8 +126,3 @@ spotless {
   }
 }
 
-// Disable APK splits when building an Android App Bundle (AAB)
-// because AABs handle ABI splitting natively and splits cause a build conflict.
-if (gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }) {
-  android.splits.abi.isEnable = false
-}

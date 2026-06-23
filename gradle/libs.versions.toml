@@ -9,6 +9,7 @@ activityCompose = "1.8.0"
 kotlin = "2.0.21"
 composeBom = "2025.09.00"
 litertlm = "0.13.1"
+litert = "2.1.5"
 playServicesTfliteJava = "16.4.0"
 playServicesTfliteGpu = "16.4.0"
 tensorflowLite = "2.17.0"
@@ -38,7 +39,7 @@ androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-te
 androidx-compose-foundation-layout = { group = "androidx.compose.foundation", name = "foundation-layout" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 litertlm = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertlm" }
-tflite = { group = "com.google.android.gms", name = "play-services-tflite-java", version.ref = "playServicesTfliteJava" }
+tflite = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
 tflite-gpu = { group = "com.google.android.gms", name = "play-services-tflite-gpu", version.ref = "playServicesTfliteGpu" }
 tflite-support = { group = "com.google.android.gms", name = "play-services-tflite-support", version.ref = "playServicesTfliteJava" }
 tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tensorflowLite" }
