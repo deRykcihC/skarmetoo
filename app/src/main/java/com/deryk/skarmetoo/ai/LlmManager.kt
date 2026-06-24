@@ -16,6 +16,7 @@ import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -55,7 +56,65 @@ class LlmManager(private val context: Context) {
 
   private val enginePool = ConcurrentLinkedQueue<PooledEngine>()
   private val poolGeneration = AtomicLong(0L)
+  private val pooledEngineCount = AtomicInteger(0)
+  private val activeInferenceCount = AtomicInteger(0)
+  private val maxConcurrentInstances = AtomicInteger(1)
   private var engineConfigForPool: EngineConfig? = null
+
+  fun setMaxConcurrentInstances(value: Int) {
+    val maxInstances = value.coerceIn(1, 5)
+    maxConcurrentInstances.set(maxInstances)
+    trimIdlePool()
+    Log.d(
+        TAG,
+        "Configured inference instances: active=${activeInferenceCount.get()}, " +
+            "engines=${pooledEngineCount.get()}, max=$maxInstances")
+  }
+
+  fun getActiveInferenceCount(): Int = activeInferenceCount.get()
+
+  fun getPooledEngineCount(): Int = pooledEngineCount.get()
+
+  private fun poolCapacity(): Int {
+    val maxInstances = maxConcurrentInstances.get()
+    return if (maxInstances <= 1) 0 else maxInstances
+  }
+
+  private fun decrementPooledEngineCount() {
+    pooledEngineCount.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+  }
+
+  private fun trimIdlePool() {
+    val capacity = poolCapacity()
+    while (pooledEngineCount.get() > capacity) {
+      val pooled = enginePool.poll() ?: break
+      try {
+        pooled.engine.close()
+      } catch (e: Exception) {
+        Log.w(TAG, "Error closing excess pooled engine: ${e.message}")
+      } finally {
+        decrementPooledEngineCount()
+      }
+    }
+  }
+
+  private suspend fun acquireInferenceSlot(): Boolean {
+    while (engine != null && engineConfigForPool != null) {
+      val active = activeInferenceCount.get()
+      val maxInstances = maxConcurrentInstances.get()
+      if (active < maxInstances && activeInferenceCount.compareAndSet(active, active + 1)) {
+        Log.d(TAG, "Acquired inference slot: active=${active + 1}/$maxInstances")
+        return true
+      }
+      kotlinx.coroutines.delay(50L)
+    }
+    return false
+  }
+
+  private fun releaseInferenceSlot() {
+    val active = activeInferenceCount.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+    Log.d(TAG, "Released inference slot: active=$active/${maxConcurrentInstances.get()}")
+  }
 
   private val _uiState = MutableStateFlow<LlmState>(LlmState.Initial)
   val uiState: StateFlow<LlmState> = _uiState.asStateFlow()
@@ -101,6 +160,8 @@ class LlmManager(private val context: Context) {
               closedPoolCount++
             } catch (e: Exception) {
               Log.w(TAG, "Error closing pooled engine during model init: ${e.message}")
+            } finally {
+              decrementPooledEngineCount()
             }
           }
           if (closedPoolCount > 0) {
@@ -289,159 +350,167 @@ class LlmManager(private val context: Context) {
     }
 
     scope.launch {
-      engineMutex.withLock {
-        try {
+      if (!acquireInferenceSlot()) {
+        onError("Model is no longer available")
+        return@launch
+      }
+      try {
+        engineMutex.withLock {
           try {
-            conversation?.close()
-            conversation = null
-            Log.d(TAG, "Closed existing conversation")
-          } catch (e: Exception) {
-            Log.w(TAG, "Error closing conversation: ${e.message}")
-          }
+            try {
+              conversation?.close()
+              conversation = null
+              Log.d(TAG, "Closed existing conversation")
+            } catch (e: Exception) {
+              Log.w(TAG, "Error closing conversation: ${e.message}")
+            }
 
-          val convConfig =
-              ConversationConfig(
-                  samplerConfig =
-                      SamplerConfig(
-                          topK = 64,
-                          topP = 0.95,
-                          temperature = 0.7,
-                      ),
-              )
-          val conv =
-              engine?.createConversation(convConfig)
-                  ?: run {
-                    onError("Failed to create conversation")
-                    return@withLock
-                  }
-          conversation = conv
-          Log.d(TAG, "Created new conversation for analysis (level: ${detailLevel.label})")
+            val convConfig =
+                ConversationConfig(
+                    samplerConfig =
+                        SamplerConfig(
+                            topK = 64,
+                            topP = 0.95,
+                            temperature = 0.7,
+                        ),
+                )
+            val conv =
+                engine?.createConversation(convConfig)
+                    ?: run {
+                      onError("Failed to create conversation")
+                      return@withLock
+                    }
+            conversation = conv
+            Log.d(TAG, "Created new conversation for analysis (level: ${detailLevel.label})")
 
-          val resized = resizeBitmap(bitmap, imageResolution)
-          val argbBitmap =
-              if (resized.config != Bitmap.Config.ARGB_8888) {
-                resized.copy(Bitmap.Config.ARGB_8888, false)
-              } else {
-                resized
-              }
+            val resized = resizeBitmap(bitmap, imageResolution)
+            val argbBitmap =
+                if (resized.config != Bitmap.Config.ARGB_8888) {
+                  resized.copy(Bitmap.Config.ARGB_8888, false)
+                } else {
+                  resized
+                }
 
-          val langName = targetLanguage
-          val prompt =
-              when (detailLevel) {
-                DetailLevel.BRIEF ->
-                    """Describe this image briefly in $langName. Respond with EXACTLY this format and nothing else:
+            val langName = targetLanguage
+            val prompt =
+                when (detailLevel) {
+                  DetailLevel.BRIEF ->
+                      """Describe this image briefly in $langName. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your one sentence description]
 TAGS: [tag1, tag2, tag3]"""
-                DetailLevel.DETAILED ->
-                    """Describe this image in detail in $langName. Write 2-3 sentences. Respond with EXACTLY this format and nothing else:
+                  DetailLevel.DETAILED ->
+                      """Describe this image in detail in $langName. Write 2-3 sentences. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your detailed 2-3 sentence description]
 TAGS: [tag1, tag2, tag3, tag4, tag5]"""
-                DetailLevel.COMPREHENSIVE ->
-                    """Describe this image with maximum detail in $langName, using a single paragraph. Respond with EXACTLY this format and nothing else:
+                  DetailLevel.COMPREHENSIVE ->
+                      """Describe this image with maximum detail in $langName, using a single paragraph. Respond with EXACTLY this format and nothing else:
 SUMMARY: [your comprehensive paragraph describing absolutely everything visible in the image]
 TAGS: [tag1, tag2, tag3, tag4, tag5, tag6, tag7, tag8]"""
-                DetailLevel.CUSTOM ->
-                    """${customPrompt ?: "Describe this screenshot."} Output your summary in $langName.
+                  DetailLevel.CUSTOM ->
+                      """${customPrompt ?: "Describe this screenshot."} Output your summary in $langName.
 Respond with EXACTLY this format and nothing else:
 SUMMARY: [your response based on the instruction]
 TAGS: [extracted tag1, tag2, tag3]"""
-              }
+                }
 
-          val estimatedTotalChars =
-              when (detailLevel) {
-                DetailLevel.BRIEF -> 150f
-                DetailLevel.DETAILED -> 400f
-                DetailLevel.COMPREHENSIVE -> 800f
-                DetailLevel.CUSTOM -> 300f
-              }
+            val estimatedTotalChars =
+                when (detailLevel) {
+                  DetailLevel.BRIEF -> 150f
+                  DetailLevel.DETAILED -> 400f
+                  DetailLevel.COMPREHENSIVE -> 800f
+                  DetailLevel.CUSTOM -> 300f
+                }
 
-          val jpegBytes = argbBitmap.toJpegByteArray()
+            val jpegBytes = argbBitmap.toJpegByteArray()
 
-          // Recycle intermediate bitmaps to prevent OOM
-          if (argbBitmap != bitmap) argbBitmap.recycle()
-          if (resized != bitmap && resized != argbBitmap) resized.recycle()
+            // Recycle intermediate bitmaps to prevent OOM
+            if (argbBitmap != bitmap) argbBitmap.recycle()
+            if (resized != bitmap && resized != argbBitmap) resized.recycle()
 
-          val contents = mutableListOf<Content>()
-          contents.add(Content.ImageBytes(jpegBytes))
-          contents.add(Content.Text(prompt))
+            val contents = mutableListOf<Content>()
+            contents.add(Content.ImageBytes(jpegBytes))
+            contents.add(Content.Text(prompt))
 
-          val fullResponse = StringBuilder()
-          Log.d(TAG, "Sending image for analysis...")
+            val fullResponse = StringBuilder()
+            Log.d(TAG, "Sending image for analysis...")
 
-          // Uses suspendCancellableCoroutine to block the Mutex until the engine is fully done,
-          // guaranteeing callbacks are completely resolved before the next coroutine opens a new
-          // session.
-          val resultPair =
-              kotlin.coroutines.suspendCoroutine<Pair<String, String>?> { continuation ->
-                var isResumed = false
-                try {
-                  conv.sendMessageAsync(
-                      Contents.of(contents),
-                      object : MessageCallback {
-                        override fun onMessage(message: Message) {
-                          val token = message.toString()
-                          fullResponse.append(token)
-                          var progress = fullResponse.length / estimatedTotalChars
-                          if (progress > 0.95f) progress = 0.95f
-                          onProgress(progress)
-                        }
+            // Uses suspendCancellableCoroutine to block the Mutex until the engine is fully done,
+            // guaranteeing callbacks are completely resolved before the next coroutine opens a new
+            // session.
+            val resultPair =
+                kotlin.coroutines.suspendCoroutine<Pair<String, String>?> { continuation ->
+                  var isResumed = false
+                  try {
+                    conv.sendMessageAsync(
+                        Contents.of(contents),
+                        object : MessageCallback {
+                          override fun onMessage(message: Message) {
+                            val token = message.toString()
+                            fullResponse.append(token)
+                            var progress = fullResponse.length / estimatedTotalChars
+                            if (progress > 0.95f) progress = 0.95f
+                            onProgress(progress)
+                          }
 
-                        override fun onDone() {
-                          try {
-                            onProgress(1.0f)
-                            val result = fullResponse.toString().trim()
-                            Log.d(TAG, "Raw model output length: ${result.length}")
-                            Log.d(TAG, "Raw model output (first 500): ${result.take(500)}")
-                            val parsedResult = parseAnalysisResult(result)
-                            Log.d(TAG, "Parsed - Summary: ${parsedResult.first.take(200)}")
-                            Log.d(TAG, "Parsed - Tags: ${parsedResult.second}")
-                            if (!isResumed) {
-                              isResumed = true
-                              continuation.resume(parsedResult)
-                            }
-                          } catch (e: Exception) {
-                            Log.e(TAG, "Error in onDone parsing/returning results", e)
-                            if (!isResumed) {
-                              isResumed = true
-                              continuation.resumeWithException(e)
+                          override fun onDone() {
+                            try {
+                              onProgress(1.0f)
+                              val result = fullResponse.toString().trim()
+                              Log.d(TAG, "Raw model output length: ${result.length}")
+                              Log.d(TAG, "Raw model output (first 500): ${result.take(500)}")
+                              val parsedResult = parseAnalysisResult(result)
+                              Log.d(TAG, "Parsed - Summary: ${parsedResult.first.take(200)}")
+                              Log.d(TAG, "Parsed - Tags: ${parsedResult.second}")
+                              if (!isResumed) {
+                                isResumed = true
+                                continuation.resume(parsedResult)
+                              }
+                            } catch (e: Exception) {
+                              Log.e(TAG, "Error in onDone parsing/returning results", e)
+                              if (!isResumed) {
+                                isResumed = true
+                                continuation.resumeWithException(e)
+                              }
                             }
                           }
-                        }
 
-                        override fun onError(throwable: Throwable) {
-                          Log.e(TAG, "Analysis callback error: ${throwable.message}")
-                          if (!isResumed) {
-                            isResumed = true
-                            continuation.resumeWithException(throwable)
+                          override fun onError(throwable: Throwable) {
+                            Log.e(TAG, "Analysis callback error: ${throwable.message}")
+                            if (!isResumed) {
+                              isResumed = true
+                              continuation.resumeWithException(throwable)
+                            }
                           }
-                        }
-                      },
-                  )
-                } catch (e: Exception) {
-                  if (!isResumed) {
-                    isResumed = true
-                    continuation.resumeWithException(e)
+                        },
+                    )
+                  } catch (e: Exception) {
+                    if (!isResumed) {
+                      isResumed = true
+                      continuation.resumeWithException(e)
+                    }
                   }
                 }
-              }
 
-          if (resultPair != null) {
-            onResult(resultPair.first, resultPair.second, currentModelName ?: "Unknown Model")
-          } else {
-            onError("Analysis returned null result")
-          }
-        } catch (e: Exception) {
-          Log.e(TAG, "Screenshot analysis failed", e)
-          onError(e.message ?: "Analysis failed")
-        } finally {
-          // Ensure native loop cleanup happens BEFORE Mutex is unlocked
-          try {
-            conversation?.close()
-            conversation = null
+            if (resultPair != null) {
+              onResult(resultPair.first, resultPair.second, currentModelName ?: "Unknown Model")
+            } else {
+              onError("Analysis returned null result")
+            }
           } catch (e: Exception) {
-            Log.e(TAG, "Failed to forcefully close conversation in finally loop", e)
+            Log.e(TAG, "Screenshot analysis failed", e)
+            onError(e.message ?: "Analysis failed")
+          } finally {
+            // Ensure native loop cleanup happens BEFORE Mutex is unlocked
+            try {
+              conversation?.close()
+              conversation = null
+            } catch (e: Exception) {
+              Log.e(TAG, "Failed to forcefully close conversation in finally loop", e)
+            }
           }
         }
+      } finally {
+        releaseInferenceSlot()
       }
     }
   }
@@ -554,30 +623,56 @@ TAGS: [extracted tag1, tag2, tag3]"""
    * Get or create a pooled engine for concurrent analysis. Returns null if the primary engine isn't
    * ready.
    */
-  private fun acquirePoolEngine(): AcquiredEngine? {
-    if (engine == null) return null
-    val generation = poolGeneration.get()
-    while (true) {
-      val pooled = enginePool.poll() ?: break
-      if (pooled.generation != generation) {
-        try {
-          pooled.engine.close()
-        } catch (_: Exception) {}
-        continue
+  private suspend fun acquirePoolEngine(): AcquiredEngine? {
+    while (engine != null && engineConfigForPool != null) {
+      val generation = poolGeneration.get()
+      while (true) {
+        val pooled = enginePool.poll() ?: break
+        if (pooled.generation != generation) {
+          try {
+            pooled.engine.close()
+          } catch (_: Exception) {} finally {
+            decrementPooledEngineCount()
+          }
+          continue
+        }
+        return AcquiredEngine(engine = pooled.engine, generation = pooled.generation)
       }
-      return AcquiredEngine(engine = pooled.engine, generation = pooled.generation)
+
+      val capacity = poolCapacity()
+      val currentCount = pooledEngineCount.get()
+      if (currentCount < capacity &&
+          pooledEngineCount.compareAndSet(currentCount, currentCount + 1)) {
+        val config =
+            engineConfigForPool
+                ?: run {
+                  decrementPooledEngineCount()
+                  return null
+                }
+        return try {
+          Log.d(TAG, "Creating pool engine ${currentCount + 1}/$capacity")
+          val poolEngine = Engine(config)
+          poolEngine.initialize()
+          if (generation != poolGeneration.get()) {
+            poolEngine.close()
+            decrementPooledEngineCount()
+            null
+          } else {
+            Log.d(TAG, "Pool engine created: ${pooledEngineCount.get()}/$capacity")
+            AcquiredEngine(engine = poolEngine, generation = generation)
+          }
+        } catch (e: Throwable) {
+          decrementPooledEngineCount()
+          Log.e(TAG, "Failed to create pool engine", e)
+          null
+        }
+      }
+
+      // All configured instances are currently in use. Wait for one to return instead of creating
+      // another native Engine beyond the Advanced setting.
+      kotlinx.coroutines.delay(50L)
     }
-    val config = engineConfigForPool ?: return null
-    return try {
-      Log.d(TAG, "Creating new pool engine (pool size was ${enginePool.size})")
-      val poolEngine = Engine(config)
-      poolEngine.initialize()
-      Log.d(TAG, "Pool engine created and initialized")
-      AcquiredEngine(engine = poolEngine, generation = generation)
-    } catch (e: Throwable) {
-      Log.e(TAG, "Failed to create pool engine", e)
-      null
-    }
+    return null
   }
 
   /** Return an engine back to the pool after use. */
@@ -586,10 +681,21 @@ TAGS: [extracted tag1, tag2, tag3]"""
     if (acquired.generation != activeGeneration || engine == null || engineConfigForPool == null) {
       try {
         acquired.engine.close()
-      } catch (_: Exception) {}
+      } catch (_: Exception) {} finally {
+        decrementPooledEngineCount()
+      }
       Log.d(
           TAG,
           "Discarded pooled engine for stale generation ${acquired.generation} (active=$activeGeneration)")
+      return
+    }
+    if (pooledEngineCount.get() > poolCapacity()) {
+      try {
+        acquired.engine.close()
+      } catch (_: Exception) {} finally {
+        decrementPooledEngineCount()
+      }
+      Log.d(TAG, "Closed pooled engine above configured capacity ${poolCapacity()}")
       return
     }
     enginePool.offer(PooledEngine(engine = acquired.engine, generation = acquired.generation))
@@ -618,6 +724,8 @@ TAGS: [extracted tag1, tag2, tag3]"""
         count++
       } catch (e: Exception) {
         Log.w(TAG, "Error closing pool engine: ${e.message}")
+      } finally {
+        decrementPooledEngineCount()
       }
     }
     engineConfigForPool = null
@@ -644,8 +752,19 @@ TAGS: [extracted tag1, tag2, tag3]"""
       onError: (String) -> Unit,
   ) {
     scope.launch {
-      val acquired = acquirePoolEngine()
+      if (!acquireInferenceSlot()) {
+        onError("Model is no longer available")
+        return@launch
+      }
+      val acquired =
+          try {
+            acquirePoolEngine()
+          } catch (e: kotlinx.coroutines.CancellationException) {
+            releaseInferenceSlot()
+            throw e
+          }
       if (acquired == null) {
+        releaseInferenceSlot()
         // Fall back to the mutex-locked single engine if pool is unavailable
         Log.d(TAG, "Pool engine unavailable, falling back to single-engine mode")
         analyzeScreenshot(
@@ -782,6 +901,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
         onError(e.message ?: "Analysis failed")
       } finally {
         releasePoolEngine(acquired)
+        releaseInferenceSlot()
       }
     }
   }

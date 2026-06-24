@@ -7,7 +7,8 @@ plugins {
   alias(libs.plugins.spotless)
 }
 
-val buildingBundle = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+val buildingBundle =
+    gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
 
 android {
   namespace = "com.deryk.skarmetoo"
@@ -17,15 +18,13 @@ android {
     applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 27
-    versionName = "1.11"
+    versionCode = 28
+    versionName = "1.12"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     if (buildingBundle) {
-      ndk {
-        abiFilters += setOf("arm64-v8a", "x86_64")
-      }
+      ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
     }
   }
 
@@ -71,11 +70,6 @@ android {
   }
 
   bundle { language { enableSplit = false } }
-
-  packaging {
-    jniLibs.pickFirsts += "**/libLiteRt.so"
-    jniLibs.pickFirsts += "**/libLiteRtClGlAccelerator.so"
-  }
 
   lint {
     checkReleaseBuilds = false
@@ -125,4 +119,3 @@ spotless {
     ktfmt()
   }
 }
-

@@ -37,6 +37,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -312,6 +313,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   val folderImageCounts: StateFlow<Map<String, Int>> = _folderImageCounts.asStateFlow()
 
   private val isAnalyzing = java.util.concurrent.atomic.AtomicBoolean(false)
+  private val analysisLifecycleLock = Any()
   private var analysisJob: kotlinx.coroutines.Job? = null
 
   private val isSwitchingModel = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -505,19 +507,64 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   }
 
   private fun launchAnalysisQueue() {
-    if (isSwitchingModel.get()) {
-      Log.d(TAG, "Skipped queue launch: model switch in progress")
-      return
-    }
-    if (_selectedModel.value == ModelType.GGUF) {
-      if (ggufManager.isInferenceRunning.value) {
-        Log.w(TAG, "Skipped queue launch: GGUF instance is already running")
+    synchronized(analysisLifecycleLock) {
+      if (isSwitchingModel.get()) {
+        Log.d(TAG, "Skipped queue launch: model switch in progress")
         return
       }
-      _analysisInstanceCount.value = 1
+      val configuredInstances =
+          if (_selectedModel.value == ModelType.GGUF || _selectedModel.value == ModelType.AICORE) {
+            1
+          } else {
+            _analysisInstanceCount.value.coerceIn(1, 5)
+          }
+      llmManager.setMaxConcurrentInstances(configuredInstances)
+
+      if (_selectedModel.value != ModelType.GGUF && _selectedModel.value != ModelType.AICORE) {
+        val activeInstances = llmManager.getActiveInferenceCount()
+        val pooledEngines = llmManager.getPooledEngineCount()
+        Log.d(
+            TAG,
+            "Queue start instance check: active=$activeInstances, " +
+                "engines=$pooledEngines, configured=$configuredInstances")
+        if (activeInstances >= configuredInstances) {
+          Log.d(
+              TAG,
+              "Skipped queue launch: active instances already match configured limit " +
+                  "($activeInstances/$configuredInstances)")
+          return
+        }
+      }
+      if (_selectedModel.value == ModelType.GGUF) {
+        if (ggufManager.isInferenceRunning.value) {
+          Log.w(TAG, "Skipped queue launch: GGUF instance is already running")
+          return
+        }
+        _analysisInstanceCount.value = 1
+      }
+      if (_isAnalysisPaused.value) return
+
+      // Keep the Job as a second source of truth so competing callers cannot overwrite a queue
+      // whose workers or model engines are still draining.
+      if (analysisJob?.isActive == true) {
+        Log.d(TAG, "Skipped queue launch: previous queue is still draining")
+        return
+      }
+      if (!isAnalyzing.compareAndSet(false, true)) {
+        Log.d(TAG, "Skipped queue launch: analysis already claimed")
+        return
+      }
+
+      val newJob =
+          viewModelScope.launch(
+              context = Dispatchers.IO,
+              start = kotlinx.coroutines.CoroutineStart.LAZY,
+          ) {
+            startAnalysisQueue()
+          }
+      analysisJob = newJob
+      newJob.start()
     }
-    if (isAnalyzing.get() || _isAnalysisPaused.value) return
-    analysisJob = viewModelScope.launch(Dispatchers.IO) { startAnalysisQueue() }
   }
 
   private fun queueEmbeddingGemmaIndex(
@@ -612,16 +659,16 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   val isAnalysisPaused: StateFlow<Boolean> = _isAnalysisPaused.asStateFlow()
 
   fun toggleAnalysisPause() {
-    val newPaused = !_isAnalysisPaused.value
-    _isAnalysisPaused.value = newPaused
-    if (newPaused) {
-      viewModelScope.launch(Dispatchers.IO) {
-        isAnalyzing.set(false)
-        _activeAnalysisIds.value = emptySet()
-        _entryProgressMap.value = emptyMap()
-        analysisJob?.join()
-      }
-    } else {
+    val newPaused =
+        synchronized(analysisLifecycleLock) {
+          val paused = !_isAnalysisPaused.value
+          _isAnalysisPaused.value = paused
+          paused
+        }
+
+    if (!newPaused) {
+      // An existing queue resumes through its pause gate. If it happened to finish while paused,
+      // the normal launch guards allow exactly one replacement queue.
       launchAnalysisQueue()
     }
   }
@@ -635,8 +682,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   val analysisInstanceCount: StateFlow<Int> = _analysisInstanceCount.asStateFlow()
 
   fun setAnalysisInstanceCount(value: Int) {
-    _analysisInstanceCount.value = value
-    prefs.edit().putInt("analysis_instance_count", value).apply()
+    val instanceCount = value.coerceIn(1, 5)
+    _analysisInstanceCount.value = instanceCount
+    llmManager.setMaxConcurrentInstances(instanceCount)
+    prefs.edit().putInt("analysis_instance_count", instanceCount).apply()
   }
 
   private val _maxTokens = MutableStateFlow(prefs.getInt("max_tokens", 4096))
@@ -763,6 +812,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   }
 
   init {
+    llmManager.setMaxConcurrentInstances(_analysisInstanceCount.value)
+
     val currentUris = prefs.getStringSet("saved_folder_uris", emptySet()) ?: emptySet()
     _sourceFolders.value = currentUris
 
@@ -2217,13 +2268,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   }
 
   private suspend fun startAnalysisQueue() {
-    if (!isAnalyzing.compareAndSet(false, true)) {
-      Log.d(TAG, "Analysis already in progress, skipping")
-      return
-    }
     val sessionToken = analysisSessionToken.get()
 
     try {
+      // launchAnalysisQueue claims isAnalyzing while holding analysisLifecycleLock. Honor a pause
+      // that arrives before this coroutine is dispatched.
+      if (!isAnalyzing.get() || _isAnalysisPaused.value) return
+
       var allUnprocessed =
           db.getAllEntries().filter {
             it.analyzedAt == 0L && !it.isAnalyzing && it.imageUri.isNotBlank()
@@ -2243,7 +2294,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       if (concurrency <= 1) {
         // Sequential mode (original behavior)
         while (true) {
-          if (!isAnalyzing.get() || !isAnalysisSessionActive(sessionToken)) break
+          if (!awaitAnalysisResume(sessionToken)) break
           // Fetch the latest unanalyzed image from DB again to handle new inserts dynamically
           val currentUnprocessed =
               db.getAllEntries()
@@ -2304,7 +2355,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             jobs.add(
                 launch(Dispatchers.IO) {
                   for (entry in channel) {
-                    if (!isAnalyzing.get() || !isAnalysisSessionActive(sessionToken)) break
+                    if (!awaitAnalysisResume(sessionToken)) break
                     val current = processed.incrementAndGet()
                     val remaining = total - current + 1
                     _analysisProgress.value = remaining to total
@@ -2348,6 +2399,21 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         Log.d(TAG, "Skipped stale queue finalizer for token=$sessionToken")
       }
     }
+  }
+
+  /**
+   * Suspends queue workers while the user has paused analysis without destroying their queue.
+   *
+   * Keeping the original workers alive is important: stopping the queue and launching another one
+   * lets a rapid Pause/Play cycle create new model engines before the previous inference scope has
+   * fully released its instances.
+   */
+  private suspend fun awaitAnalysisResume(sessionToken: Long): Boolean {
+    while (_isAnalysisPaused.value) {
+      if (!isAnalyzing.get() || !isAnalysisSessionActive(sessionToken)) return false
+      kotlinx.coroutines.delay(50L)
+    }
+    return isAnalyzing.get() && isAnalysisSessionActive(sessionToken)
   }
 
   @Volatile private var isServiceRunning = false
@@ -2413,8 +2479,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       return false
     }
     db.setAnalyzing(entry.id, true)
-    _activeAnalysisIds.value = _activeAnalysisIds.value + entry.id
-    _entryProgressMap.value = _entryProgressMap.value + (entry.id to 0.1f)
+    _activeAnalysisIds.update { it + entry.id }
+    _entryProgressMap.update { it + (entry.id to 0.1f) }
     if (useConcurrent) {
       refreshEntriesDebounced()
     } else {
@@ -2424,8 +2490,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     val bitmap = loadBitmap(Uri.parse(entry.imageUri))
     if (bitmap == null) {
       db.setAnalyzing(entry.id, false)
-      _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
-      _entryProgressMap.value = _entryProgressMap.value - entry.id
+      _activeAnalysisIds.update { it - entry.id }
+      _entryProgressMap.update { it - entry.id }
       refreshEntries()
       return false
     }
@@ -2444,11 +2510,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
     val onProgress: (Float) -> Unit = onProgressLabel@{ progress ->
       if (!isAnalysisSessionActive(sessionToken)) return@onProgressLabel
-      val currentProgress = _entryProgressMap.value[entry.id] ?: 0f
-      val newProgress = maxOf(currentProgress, progress)
+      val newProgress = maxOf(_entryProgressMap.value[entry.id] ?: 0f, progress)
       if (newProgress > 0f) {
         _currentImageProgress.value = newProgress
-        _entryProgressMap.value = _entryProgressMap.value + (entry.id to newProgress)
+        _entryProgressMap.update { current ->
+          current + (entry.id to maxOf(current[entry.id] ?: 0f, progress))
+        }
       }
     }
     val onResult: (String, String, String) -> Unit = { summary, tags, modelUsed ->
@@ -2464,8 +2531,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         // Delay clearing UI state slightly so the 100% progress bar has time to be seen
         kotlinx.coroutines.delay(600L)
 
-        _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
-        _entryProgressMap.value = _entryProgressMap.value - entry.id
+        _activeAnalysisIds.update { it - entry.id }
+        _entryProgressMap.update { it - entry.id }
         if (useConcurrent) {
           refreshEntriesDebounced()
         } else {
@@ -2481,7 +2548,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           return@launch
         }
         db.setAnalyzing(entry.id, false)
-        _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
+        _activeAnalysisIds.update { it - entry.id }
         // Keep progress in map on active session so UI bar doesn't disappear on error/retry
         if (useConcurrent) {
           refreshEntriesDebounced()
@@ -2673,8 +2740,8 @@ TAGS: [extracted tag1, tag2, tag3]"""
     if (result == null && isAnalysisSessionActive(sessionToken)) {
       // Un-hang the database if timeout occurred
       db.setAnalyzing(entry.id, false)
-      _activeAnalysisIds.value = _activeAnalysisIds.value - entry.id
-      _entryProgressMap.value = _entryProgressMap.value - entry.id
+      _activeAnalysisIds.update { it - entry.id }
+      _entryProgressMap.update { it - entry.id }
       refreshEntries()
       Log.e(TAG, "Analysis timed out after 300s for id=${entry.id}")
       return false

@@ -56,6 +56,10 @@ class SemanticEmbeddingGenerator(private val context: Context) {
               TAG,
               "Interpreter loaded. Input shape: ${inShape.joinToString()}, Output shape: ${outShape.joinToString()}")
           return@withContext true
+        } catch (e: LinkageError) {
+         Log.e(TAG, "Failed to link the visual embedding runtime", e)
+          close()
+          return@withContext false
         } catch (e: Exception) {
           Log.e(TAG, "Failed to load visual embedding model", e)
           close()
