@@ -2,7 +2,7 @@
 
 v1.13
 
-Last updated: 2026-06-25 17:32:24 +08:00
+Last updated: 2026-06-25 17:42:02 +08:00
 
 **Skarmetoo** is an intelligent mobile gallery assistant that automatically analyzes, tags, and adds context to your screenshots, making them instantly searchable.
 

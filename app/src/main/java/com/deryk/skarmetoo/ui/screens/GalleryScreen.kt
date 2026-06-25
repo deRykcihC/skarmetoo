@@ -1085,7 +1085,8 @@ fun GalleryScreen(
 
                           Box(
                               modifier =
-                                  (if (isDragging) Modifier else Modifier.animateItem()).offset {
+                                  (if (isDragging) Modifier else Modifier.animateItem())
+                                      .offset {
                                         IntOffset(
                                             if (isDragging) dragOffsetX.roundToInt() else 0,
                                             if (isDragging) dragOffsetY.roundToInt() else 0,
@@ -1117,8 +1118,8 @@ fun GalleryScreen(
 
                                           if (columnDelta != 0) {
                                             val targetRowPosition =
-                                                (currentRowPosition + columnDelta)
-                                                    .coerceIn(1, displayAlbums.size)
+                                                (currentRowPosition + columnDelta).coerceIn(
+                                                    1, displayAlbums.size)
                                             val targetIdx = targetRowPosition - 1
                                             if (targetIdx != currentIdx) {
                                               displayAlbums =
@@ -1143,10 +1144,8 @@ fun GalleryScreen(
                                                   albumRowDragScope.launch {
                                                     while (isActive &&
                                                         draggingBucketId == bucketId) {
-                                                      val pointerXInItem =
-                                                          latestPointerXInItem
-                                                      val layoutInfo =
-                                                          albumRowListState.layoutInfo
+                                                      val pointerXInItem = latestPointerXInItem
+                                                      val layoutInfo = albumRowListState.layoutInfo
                                                       val itemInfo =
                                                           layoutInfo.visibleItemsInfo.firstOrNull {
                                                             it.key == bucketId
@@ -1157,7 +1156,8 @@ fun GalleryScreen(
                                                             0f
                                                           } else {
                                                             val pointerXInViewport =
-                                                                itemInfo.offset + dragOffsetX +
+                                                                itemInfo.offset +
+                                                                    dragOffsetX +
                                                                     pointerXInItem
                                                             val viewportStart =
                                                                 layoutInfo.viewportStartOffset
@@ -1168,8 +1168,8 @@ fun GalleryScreen(
                                                                   viewportStart +
                                                                       leftEdgeScrollThresholdPx ->
                                                                   -((viewportStart +
-                                                                              leftEdgeScrollThresholdPx -
-                                                                              pointerXInViewport) /
+                                                                          leftEdgeScrollThresholdPx -
+                                                                          pointerXInViewport) /
                                                                           leftEdgeScrollThresholdPx)
                                                                       .coerceIn(0f, 1f) *
                                                                       maxEdgeScrollStepPx
@@ -1177,8 +1177,8 @@ fun GalleryScreen(
                                                                   viewportEnd -
                                                                       rightEdgeScrollThresholdPx ->
                                                                   ((pointerXInViewport -
-                                                                              (viewportEnd -
-                                                                                  rightEdgeScrollThresholdPx)) /
+                                                                          (viewportEnd -
+                                                                              rightEdgeScrollThresholdPx)) /
                                                                           rightEdgeScrollThresholdPx)
                                                                       .coerceIn(0f, 1f) *
                                                                       maxEdgeScrollStepPx
@@ -2551,9 +2551,7 @@ private fun GalleryAlbumThumbnailCard(
       if (isPinned) {
         Surface(
             modifier =
-                Modifier.align(Alignment.TopStart)
-                    .offset(x = (-3).dp, y = (-3).dp)
-                    .size(18.dp),
+                Modifier.align(Alignment.TopStart).offset(x = (-3).dp, y = (-3).dp).size(18.dp),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.tertiary,
             shadowElevation = 2.dp,

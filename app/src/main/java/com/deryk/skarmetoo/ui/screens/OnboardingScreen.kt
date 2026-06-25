@@ -1686,8 +1686,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                         label = "OnboardingAlbumGesturePushedOffset")
                 val touchOffsetX by
                     animateFloatAsState(
-                        targetValue =
-                            touchStartOffsetPx + if (demoStep == 5) itemTravelPx else 0f,
+                        targetValue = touchStartOffsetPx + if (demoStep == 5) itemTravelPx else 0f,
                         animationSpec = tween(520, easing = FastOutSlowInEasing),
                         label = "OnboardingAlbumGestureTouchOffset")
                 val touchScale by
@@ -1712,23 +1711,20 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                             OnboardingAlbumThumbnailCard(
                                 modifier =
                                     Modifier.graphicsLayer {
-                                      translationX = draggedOffsetX
-                                      translationY = if (demoStep == 5) 4f else 0f
-                                    }
+                                          translationX = draggedOffsetX
+                                          translationY = if (demoStep == 5) 4f else 0f
+                                        }
                                         .zIndex(if (demoStep == 5) 1f else 0f),
                                 isSelected = true,
                                 isPinned = isPinnedDemo,
                                 size = 64.dp)
                             OnboardingAlbumThumbnailCard(
-                                modifier =
-                                    Modifier.graphicsLayer { translationX = pushedOffsetX },
+                                modifier = Modifier.graphicsLayer { translationX = pushedOffsetX },
                                 isSelected = false,
                                 isPinned = false,
                                 size = 64.dp)
                             OnboardingAlbumThumbnailCard(
-                                isSelected = false,
-                                isPinned = false,
-                                size = 64.dp)
+                                isSelected = false, isPinned = false, size = 64.dp)
                           }
 
                       Surface(
@@ -2078,20 +2074,19 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   val currentSectionIndex = listState.firstVisibleItemIndex.coerceAtMost(sections.lastIndex)
   val canScrollToNextSection = currentSectionIndex < sections.lastIndex
 
-  val onboardingRuntimePermissions =
-      remember {
-        buildList {
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.READ_MEDIA_IMAGES)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-              add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-            }
-            add(Manifest.permission.POST_NOTIFICATIONS)
-          } else {
-            @Suppress("DEPRECATION") add(Manifest.permission.READ_EXTERNAL_STORAGE)
-          }
+  val onboardingRuntimePermissions = remember {
+    buildList {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        add(Manifest.permission.READ_MEDIA_IMAGES)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+          add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
         }
+        add(Manifest.permission.POST_NOTIFICATIONS)
+      } else {
+        @Suppress("DEPRECATION") add(Manifest.permission.READ_EXTERNAL_STORAGE)
       }
+    }
+  }
 
   val permissionLauncher =
       rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -2129,7 +2124,8 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   LaunchedEffect(Unit) {
     val missingPermissions =
         onboardingRuntimePermissions.filter { permission ->
-          ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+          ContextCompat.checkSelfPermission(context, permission) !=
+              PackageManager.PERMISSION_GRANTED
         }
 
     if (missingPermissions.isNotEmpty()) {
@@ -2185,9 +2181,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
             contentPadding = PaddingValues(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
-              sections.forEach { section ->
-                item { OnboardingSectionBlock(section = section) }
-              }
+              sections.forEach { section -> item { OnboardingSectionBlock(section = section) } }
             }
       }
 
@@ -2394,8 +2388,7 @@ private fun OnboardingCurrentAnalysisPreview() {
                       .border(
                           width = if (isCurrentImage) 2.dp else 1.dp,
                           color =
-                              if (isCurrentImage)
-                                  analysisGlowColor.copy(alpha = 0.82f * pulseAlpha)
+                              if (isCurrentImage) analysisGlowColor.copy(alpha = 0.82f * pulseAlpha)
                               else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                           shape = RoundedCornerShape(14.dp)),
           )
@@ -2587,9 +2580,7 @@ private fun OnboardingAlbumThumbnailCard(
 
       if (isPinned) {
         Surface(
-            modifier =
-                Modifier.align(Alignment.TopStart)
-                    .size(18.dp),
+            modifier = Modifier.align(Alignment.TopStart).size(18.dp),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.tertiary,
             shadowElevation = 2.dp,
@@ -2611,26 +2602,26 @@ private fun OnboardingAlbumThumbnailCard(
     Box(
         modifier = Modifier.width(size).offset(x = visualCenterOffset),
         contentAlignment = Alignment.Center) {
-      Box(
-          modifier =
-              Modifier.fillMaxWidth(0.78f)
-                  .height(8.dp)
-                  .clip(RoundedCornerShape(4.dp))
-                  .background(labelColor),
-      )
-    }
+          Box(
+              modifier =
+                  Modifier.fillMaxWidth(0.78f)
+                      .height(8.dp)
+                      .clip(RoundedCornerShape(4.dp))
+                      .background(labelColor),
+          )
+        }
     Spacer(modifier = Modifier.height(3.dp))
     Box(
         modifier = Modifier.width(size).offset(x = visualCenterOffset),
         contentAlignment = Alignment.Center) {
-      Box(
-          modifier =
-              Modifier.fillMaxWidth(0.34f)
-                  .height(6.dp)
-                  .clip(RoundedCornerShape(3.dp))
-                  .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
-      )
-    }
+          Box(
+              modifier =
+                  Modifier.fillMaxWidth(0.34f)
+                      .height(6.dp)
+                      .clip(RoundedCornerShape(3.dp))
+                      .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
+          )
+        }
   }
 }
 
