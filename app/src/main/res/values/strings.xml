@@ -120,12 +120,19 @@
     <string name="onboarding_skip">Skip</string>
     <string name="onboarding_next">Next</string>
     <string name="onboarding_get_started">Get Started</string>
+    <string name="onboarding_section_ai_models">AI Models</string>
+    <string name="onboarding_section_home_page">Home page</string>
+    <string name="onboarding_section_detail_page">Detail Page</string>
+    <string name="onboarding_section_search">Search</string>
+    <string name="onboarding_section_extra_features">Extra features</string>
     <string name="onboarding_page0_desc">Start by downloading a local AI model in the Settings to enable on-device image analysis.</string>
     <string name="onboarding_page1_desc">Use the buttons at the top of the Settings screen to revisit this tutorial, toggle dark or light mode, activate the screen saver to keep your phone awake during analysis, or switch the interface language.</string>
     <string name="onboarding_page2_desc">Select your preferred language for the AI to output its analysis results.</string>
     <string name="onboarding_page3_desc">Choose how detailed you want the AI to describe your images, from brief to comprehensive, or set a custom prompt.</string>
     <string name="onboarding_page4_desc">Add folders from your device to be analyzed automatically. Skarmetoo will sort and index the items inside.</string>
     <string name="onboarding_page5_desc">Activate the screen saver to keep your phone awake while the AI analyzes your images in the background.</string>
+    <string name="onboarding_current_analysis_title">Current Analysis</string>
+    <string name="onboarding_current_analysis_desc">Single-tap the analysis status pill on the Home page to jump to the image currently being analyzed.</string>
     <string name="onboarding_page6_title">Share Output</string>
     <string name="onboarding_page6_desc">You can share the AI-generated text and the image directly from the detail screen using the share button.</string>
     <string name="onboarding_page7_title">Search &amp; Filter</string>
@@ -134,6 +141,10 @@
     <string name="onboarding_layout_pills_desc">Swipe or tap the floating layout pills at the bottom to easily switch between a cinematic card-based Gallery view and a classic Grid view.</string>
     <string name="onboarding_hide_albums_title">Toggle Albums Row</string>
     <string name="onboarding_hide_albums_desc">Tap the arrow button in the filter bar to collapse or expand the albums row, saving screen space when browsing your gallery.</string>
+    <string name="onboarding_expand_albums_title">Swipe Down to Expand</string>
+    <string name="onboarding_expand_albums_desc">Swipe down on the albums row to expand it into a larger album drawer for faster browsing.</string>
+    <string name="onboarding_album_gestures_title">Organize Albums</string>
+    <string name="onboarding_album_gestures_desc">Double-tap an album card to pin it. Long-press and drag album cards to rearrange them.</string>
     <string name="onboarding_page9_title">Reanalyze</string>
     <string name="onboarding_page9_desc">If you want the AI to analyze an image again, simply double-click its status button in the gallery or the detail screen.</string>
     <string name="onboarding_extra_features_title">Better Searching</string>
@@ -247,5 +258,24 @@
     <string name="external_data_sync_disconnect">Disconnect</string>
     <string name="external_data_sync_selected_folder">Selected Folder</string>
     <string name="gemini_nano_desc">Offline, OS-managed Gemini Nano. Zero storage needed, but content safety guidelines are more restricted.</string>
+    <string name="more_models_navigation_desc">Explore additional on-device AI models</string>
+    <string name="more_models_empty_desc">Additional on-device models will appear here.</string>
+    <string name="back">Back</string>
+    <string name="import_gguf_model">GGUF model</string>
+    <string name="import_gguf_model_desc">Import a main language model file</string>
+    <string name="import_mmproj_model">Vision projector</string>
+    <string name="import_mmproj_model_desc">Import a matching multimodal projector</string>
+    <string name="import_section_title">Import</string>
+    <string name="import_guide_title">Choose a small vision model</string>
+    <string name="import_guide_desc">Look for a compact GGUF vision model and its matching mmproj .gguf projector from Hugging Face or another trusted source.</string>
+    <string name="loaded_models">Loaded models</string>
+    <string name="importing_model">Importing…</string>
+    <string name="gguf_import_success">Imported %1$s</string>
+    <string name="gguf_import_failed">Could not import file: %1$s</string>
+    <string name="unknown_error">Unknown error</string>
+    <string name="import_mmproj_to_enable_vision">Import an mmproj .gguf file to enable vision</string>
+    <string name="projector_required">Needs mmproj</string>
+    <string name="imported_model_tag">IMPORTED</string>
+    <string name="imported_gguf_model_desc">Custom GGUF vision model</string>
 </resources>
 

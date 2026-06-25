@@ -21,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -68,6 +69,7 @@ import com.deryk.skarmetoo.viewmodel.SemanticSearchViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.launch
 
 @OptIn(
@@ -83,6 +85,7 @@ fun DetailScreen(
 ) {
   val entries by viewModel.entries.collectAsState()
   val entry = entries.find { it.id == entryId }
+  val albumImages by viewModel.mediaStoreImages.collectAsState()
   val isModelReady by viewModel.isModelReady.collectAsState()
   val currentImageProgress by viewModel.currentImageProgress.collectAsState()
   val entryProgressMap by viewModel.entryProgressMap.collectAsState()
@@ -127,6 +130,64 @@ fun DetailScreen(
   val dragProgress = remember { Animatable(0f) }
   val density = androidx.compose.ui.platform.LocalDensity.current
   val maxDragPx = remember(density) { with(density) { 180.dp.toPx() } }
+  val albumImageUris = remember(albumImages) { albumImages.map { it.uri.toString() } }
+  val entryIdByImageUri =
+      remember(entries) {
+        entries.filter { it.imageUri.isNotBlank() }.associate { it.imageUri to it.id }
+      }
+  val currentAlbumImageIndex =
+      remember(albumImageUris, entry.imageUri) { albumImageUris.indexOf(entry.imageUri) }
+  val swipeThresholdPx = remember(density) { with(density) { 72.dp.toPx() } }
+  var albumImageDragAmount by remember(entryId) { mutableFloatStateOf(0f) }
+  var isSwitchingAlbumImage by remember(entryId) { mutableStateOf(false) }
+
+  fun switchAlbumImage(direction: Int) {
+    if (isSwitchingAlbumImage || currentAlbumImageIndex == -1 || albumImageUris.size <= 1) return
+
+    val nextIndex = (currentAlbumImageIndex + direction).coerceIn(0, albumImageUris.lastIndex)
+    if (nextIndex == currentAlbumImageIndex) return
+
+    val nextUriString = albumImageUris[nextIndex]
+    val nextEntryId = entryIdByImageUri[nextUriString]
+    isSwitchingAlbumImage = true
+    viewModel.updateNote(entryId, noteText)
+
+    if (nextEntryId != null) {
+      onScreenshotClick(nextEntryId)
+      isSwitchingAlbumImage = false
+    } else {
+      viewModel.getOrCreateEntryForUri(Uri.parse(nextUriString)) { newId ->
+        isSwitchingAlbumImage = false
+        if (newId > 0L) {
+          onScreenshotClick(newId)
+        }
+      }
+    }
+  }
+
+  fun Modifier.swipeAlbumImages(): Modifier =
+      pointerInput(
+          entryId,
+          currentAlbumImageIndex,
+          albumImageUris.size,
+          isSwitchingAlbumImage,
+      ) {
+        detectHorizontalDragGestures(
+            onDragStart = { albumImageDragAmount = 0f },
+            onHorizontalDrag = { change, dragAmount ->
+              albumImageDragAmount += dragAmount
+              change.consume()
+            },
+            onDragEnd = {
+              val dragAmount = albumImageDragAmount
+              albumImageDragAmount = 0f
+              if (abs(dragAmount) >= swipeThresholdPx) {
+                switchAlbumImage(if (dragAmount < 0f) 1 else -1)
+              }
+            },
+            onDragCancel = { albumImageDragAmount = 0f },
+        )
+      }
 
   LaunchedEffect(entryId) {
     showSimilarSection = false
@@ -462,7 +523,8 @@ fun DetailScreen(
             colors =
                 CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-            modifier = Modifier.fillMaxWidth().clickable { showFullscreenImage = true },
+            modifier =
+                Modifier.fillMaxWidth().swipeAlbumImages().clickable { showFullscreenImage = true },
         ) {
           if (entry.imageUri.isNotBlank()) {
             var isMainImageLoaded by remember(entry.id) { mutableStateOf(false) }
@@ -525,18 +587,21 @@ fun DetailScreen(
               color = MaterialTheme.colorScheme.onBackground,
               lineHeight = 26.sp,
               textAlign = TextAlign.Justify,
+              modifier = Modifier.fillMaxWidth().swipeAlbumImages(),
           )
         } else if (isActivelyAnalyzing) {
           Text(
               stringResource(R.string.analyzing_screenshot),
               style = MaterialTheme.typography.bodyLarge,
               color = MaterialTheme.colorScheme.primary,
+              modifier = Modifier.fillMaxWidth().swipeAlbumImages(),
           )
         } else {
           Text(
               stringResource(R.string.no_summary_double_tap),
               style = MaterialTheme.typography.bodyLarge,
               color = MaterialTheme.colorScheme.outline,
+              modifier = Modifier.fillMaxWidth().swipeAlbumImages(),
           )
         }
 

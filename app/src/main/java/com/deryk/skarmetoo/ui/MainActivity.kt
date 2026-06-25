@@ -21,8 +21,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -33,6 +35,7 @@ import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.screens.DetailScreen
 import com.deryk.skarmetoo.ui.screens.GalleryScreen
+import com.deryk.skarmetoo.ui.screens.MoreModelsScreen
 import com.deryk.skarmetoo.ui.screens.OnboardingScreen
 import com.deryk.skarmetoo.ui.screens.ScreenSaver
 import com.deryk.skarmetoo.ui.screens.SettingsScreen
@@ -119,6 +122,33 @@ class MainActivity : ComponentActivity() {
               (context as androidx.activity.result.ActivityResultRegistryOwner),
       ) {
         SkarmetooTheme(darkTheme = isDarkMode) {
+          val darkSystemBarColor = MaterialTheme.colorScheme.background.toArgb()
+          SideEffect {
+            val transparent = android.graphics.Color.TRANSPARENT
+            val systemBarColor = if (isDarkMode) darkSystemBarColor else transparent
+            val systemBarStyle =
+                if (isDarkMode) {
+                  androidx.activity.SystemBarStyle.dark(darkSystemBarColor)
+                } else {
+                  androidx.activity.SystemBarStyle.light(transparent, transparent)
+                }
+
+            this@MainActivity.enableEdgeToEdge(
+                statusBarStyle = systemBarStyle,
+                navigationBarStyle = systemBarStyle,
+            )
+            val window = this@MainActivity.window
+            window.statusBarColor = systemBarColor
+            window.navigationBarColor = systemBarColor
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+              window.isStatusBarContrastEnforced = false
+              window.isNavigationBarContrastEnforced = false
+            }
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+              isAppearanceLightStatusBars = !isDarkMode
+              isAppearanceLightNavigationBars = !isDarkMode
+            }
+          }
           CompositionLocalProvider(
               com.deryk.skarmetoo.ui.theme.LocalIsDarkMode provides isDarkMode) {
                 MainApp(viewModel = viewModel, isPickMode = isPickMode.value)
@@ -133,6 +163,7 @@ class MainActivity : ComponentActivity() {
 object Routes {
   const val ONBOARDING = "onboarding"
   const val SETTINGS = "settings"
+  const val MORE_MODELS = "more_models"
   const val GALLERY = "gallery"
   const val DETAIL = "detail/{id}"
 
@@ -326,7 +357,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           val initialIndex = routeOrder.indexOf(initialRoute)
           val targetIndex = routeOrder.indexOf(targetRoute)
 
-          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.MORE_MODELS) {
+            slideInHorizontally(initialOffsetX = { it }) + fadeIn()
+          } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
           } else if (initialIndex != -1 && targetIndex != -1 && targetRoute != Routes.GALLERY) {
             if (targetIndex > initialIndex) {
@@ -344,7 +377,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           val initialIndex = routeOrder.indexOf(initialRoute)
           val targetIndex = routeOrder.indexOf(targetRoute)
 
-          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.MORE_MODELS) {
+            slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
+          } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
           } else if (initialIndex != -1 && targetIndex != -1 && targetRoute != Routes.GALLERY) {
             if (targetIndex > initialIndex) {
@@ -359,7 +394,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
         popEnterTransition = {
           val initialRoute = initialState.destination.route
           val targetRoute = targetState.destination.route
-          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+          if (initialRoute == Routes.MORE_MODELS && targetRoute == Routes.SETTINGS) {
+            slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
+          } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
           } else {
             fadeIn()
@@ -368,7 +405,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
         popExitTransition = {
           val initialRoute = initialState.destination.route
           val targetRoute = targetState.destination.route
-          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+          if (initialRoute == Routes.MORE_MODELS && targetRoute == Routes.SETTINGS) {
+            slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+          } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
           } else {
             fadeOut()
@@ -392,6 +431,16 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
             onStartScreenSaver = { isScreenSaverActive = true },
             logoRes = logoRes,
             onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
+            onOpenMoreModels = { navController.navigate(Routes.MORE_MODELS) },
+        )
+      }
+      composable(Routes.MORE_MODELS) {
+        MoreModelsScreen(
+            onBack = { navController.popBackStack() },
+            onActivateModel = { model ->
+              viewModel.setGgufModelAsActive(model)
+              navController.popBackStack()
+            },
         )
       }
       composable(Routes.GALLERY) {
@@ -412,10 +461,10 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
             viewModel = viewModel,
             semanticViewModel = semanticViewModel,
             entryId = id,
-            onBack = { navController.popBackStack() },
+            onBack = { navController.popBackStack(Routes.GALLERY, inclusive = false) },
             onTagClick = { tag ->
               viewModel.setSearchQuery(tag)
-              navController.popBackStack()
+              navController.popBackStack(Routes.GALLERY, inclusive = false)
             },
             onScreenshotClick = { matchedId -> navController.navigate(Routes.detail(matchedId)) })
       }

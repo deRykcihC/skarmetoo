@@ -15,11 +15,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.deryk.skarmetoo"
+    applicationId = "com.deryk.skarmetoo.alt"
     minSdk = 29
     targetSdk = 36
-    versionCode = 28
-    versionName = "1.12"
+    versionCode = 29
+    versionName = "1.13"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

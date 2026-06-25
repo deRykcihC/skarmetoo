@@ -20,7 +20,15 @@ import kotlinx.coroutines.sync.withLock
 private const val TAG = "GgufLlmManager"
 
 class GgufLlmManager(private val context: Context) {
+  private val _activeModelInfo = MutableStateFlow<GgufModelInfo?>(null)
+  val activeModelInfo: StateFlow<GgufModelInfo?> = _activeModelInfo.asStateFlow()
+
   private var loadedModel: GgufModelInfo? = null
+    set(value) {
+      field = value
+      _activeModelInfo.value = value
+    }
+
   private val scope = CoroutineScope(Dispatchers.IO)
   private val inferMutex = Mutex()
   private val downloadMutex = Mutex()
@@ -572,7 +580,10 @@ class GgufLlmManager(private val context: Context) {
   }
 
   fun getDownloadedModels(): List<GgufModelInfo> {
-    val all = listOf(LFM2_5_MODEL) + PRESET_GGUF_MODELS
+    val all =
+        listOf(LFM2_5_MODEL) +
+            PRESET_GGUF_MODELS +
+            listOfNotNull(ImportedGgufModelStore.getModelInfo(context))
     return all.filter { isModelDownloaded(it) }
   }
 

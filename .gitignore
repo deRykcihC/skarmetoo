@@ -21,4 +21,5 @@ deploymentTargetSelector.xml
 # IDE and tool-specific exclusions
 .claude/
 .kotlin/
+delivery/*/build/
 

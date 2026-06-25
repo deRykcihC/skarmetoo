@@ -42,6 +42,8 @@ import androidx.core.content.ContextCompat
 import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ai.EmbeddingGemma
 import com.deryk.skarmetoo.ai.GgufLlmManager
+import com.deryk.skarmetoo.ai.GgufModelInfo
+import com.deryk.skarmetoo.ai.ImportedGgufModelStore
 import com.deryk.skarmetoo.ai.LFM2_5_MODEL
 import com.deryk.skarmetoo.ai.LlmManager
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
@@ -64,12 +66,21 @@ fun SettingsScreen(
     onStartScreenSaver: () -> Unit,
     logoRes: Int = R.drawable.app_logo,
     onRevisitTutorial: () -> Unit = {},
+    onOpenMoreModels: () -> Unit = {},
 ) {
   val isModelReady by viewModel.isModelReady.collectAsState()
   val modelStatus by viewModel.modelStatus.collectAsState()
   val currentDetailLevel by viewModel.detailLevel.collectAsState()
   val customPrompt by viewModel.customPrompt.collectAsState()
   val context = LocalContext.current
+  val appVersionName =
+      remember(context) {
+        runCatching {
+              @Suppress("DEPRECATION")
+              context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+            }
+            .getOrDefault("")
+      }
 
   val isDownloadingModel by viewModel.isDownloadingModel.collectAsState()
   val downloadProgress by viewModel.downloadProgress.collectAsState()
@@ -81,14 +92,13 @@ fun SettingsScreen(
   val isGgufDownloading by ggufManager.isDownloading.collectAsState()
   val ggufDownloadProgress by ggufManager.downloadProgress.collectAsState()
   val ggufDownloadingModelName by ggufManager.downloadingModelName.collectAsState()
+  val activeGgufModel by ggufManager.activeModelInfo.collectAsState()
 
   val isLfmDownloaded by
       produceState(initialValue = ggufManager.isModelDownloaded(LFM2_5_MODEL), isGgufDownloading) {
         value = ggufManager.isModelDownloaded(LFM2_5_MODEL)
       }
   val downloadingModelType by viewModel.downloadingModelType.collectAsState()
-
-  val modelPath = context.filesDir.absolutePath + "/" + selectedModel.fileName
 
   val gemma3nUrl =
       "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm"
@@ -156,7 +166,8 @@ fun SettingsScreen(
         }
       } catch (e: Exception) {
         withContext(Dispatchers.Main) {
-          val message = e.localizedMessage ?: context.getString(R.string.embeddinggemma_download_failed)
+          val message =
+              e.localizedMessage ?: context.getString(R.string.embeddinggemma_download_failed)
           embeddingGemmaError =
               if (message.contains("Unauthorized", ignoreCase = true) ||
                   message.contains("401", ignoreCase = true)) {
@@ -223,12 +234,7 @@ fun SettingsScreen(
 
         withContext(Dispatchers.Main) {
           embeddingGemmaIndexingProgress = 0 to pendingEntries.size
-          embeddingGemmaIndexingStatus =
-              if (pendingEntries.isEmpty()) {
-                context.getString(R.string.embeddinggemma_index_up_to_date)
-              } else {
-                null
-              }
+          embeddingGemmaIndexingStatus = null
         }
 
         var savedCount = 0
@@ -250,8 +256,9 @@ fun SettingsScreen(
                 firstFailure =
                     db.getLastError()?.let {
                       context.getString(R.string.embeddinggemma_database_save_failed, it)
-                    } ?: context.getString(
-                        R.string.embeddinggemma_database_save_failed_for_uri, entry.imageUri)
+                    }
+                        ?: context.getString(
+                            R.string.embeddinggemma_database_save_failed_for_uri, entry.imageUri)
               }
             }
           } else {
@@ -386,16 +393,16 @@ fun SettingsScreen(
       }
 
   LaunchedEffect(sourceImageSignature, sourceIsSemanticModelReady, sourceIsSemanticIndexing) {
-        if (!sourceIsSemanticModelReady ||
-            sourceIsSemanticIndexing ||
-            sourceAllScreenshots.isEmpty() ||
-            lastSemanticAutoIndexSignature == sourceImageSignature) {
-          return@LaunchedEffect
-        }
+    if (!sourceIsSemanticModelReady ||
+        sourceIsSemanticIndexing ||
+        sourceAllScreenshots.isEmpty() ||
+        lastSemanticAutoIndexSignature == sourceImageSignature) {
+      return@LaunchedEffect
+    }
 
-        lastSemanticAutoIndexSignature = sourceImageSignature
-        semanticViewModel.startIndexing(sourceAllScreenshots)
-      }
+    lastSemanticAutoIndexSignature = sourceImageSignature
+    semanticViewModel.startIndexing(sourceAllScreenshots)
+  }
 
   val totalImages by viewModel.totalImageCount.collectAsState()
   val analyzedImages by viewModel.analyzedImageCount.collectAsState()
@@ -828,7 +835,7 @@ fun SettingsScreen(
             ) {
               Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 Icon(
-                    Icons.Rounded.Psychology,
+                    Icons.Rounded.SmartToy,
                     null,
                     tint =
                         if (isModelReady) (if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32))
@@ -899,6 +906,63 @@ fun SettingsScreen(
               color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
           Spacer(modifier = Modifier.height(6.dp))
+
+          val isGemma3nSelectedForTop = selectedModel == ModelType.GEMMA_3N
+          val isDownloadingGemma3n =
+              isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
+          val isAicoreSelectedForTop = selectedModel == ModelType.AICORE
+          val aicoreStatus by viewModel.aicoreCachedStatus.collectAsState()
+          val activeImportedModel =
+              remember(activeGgufModel, selectedModel) {
+                if (selectedModel == ModelType.GGUF) {
+                  ImportedGgufModelStore.getModelInfo(context)?.takeIf {
+                    it.fileName == activeGgufModel?.fileName
+                  }
+                } else {
+                  null
+                }
+              }
+          if (activeImportedModel != null) {
+            ActiveImportedModelCard(
+                model = activeImportedModel,
+                mmprojName = java.io.File(context.filesDir, activeImportedModel.mmprojFile).name,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+          }
+
+          if (isGemma3nSelectedForTop) {
+            Gemma3nModelCard(
+                selected = true,
+                isDownloaded = isGemma3nDownloaded,
+                isDownloading = isDownloadingGemma3n,
+                downloadProgress = downloadProgress,
+                isDark = isDark,
+                onClick = {
+                  viewModel.setSelectedModel(ModelType.GEMMA_3N)
+                  if (isGemma3nDownloaded) {
+                    val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
+                    viewModel.initializeModel(path, isGemma4 = false)
+                  } else if (!isDownloadingModel) {
+                    hfLoginModelType = ModelType.GEMMA_3N
+                    showHfLogin = true
+                  }
+                },
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+          }
+
+          if (isAicoreSelectedForTop) {
+            GeminiNanoModelCard(
+                selected = true,
+                aicoreStatus = aicoreStatus,
+                isDark = isDark,
+                onClick = {
+                  viewModel.setSelectedModel(ModelType.AICORE)
+                  viewModel.triggerAicoreRescan()
+                },
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+          }
 
           val isGemma4Selected = selectedModel == ModelType.GEMMA_4 && isGemma4Downloaded
           val isDownloadingGemma4 = isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
@@ -1011,7 +1075,8 @@ fun SettingsScreen(
 
           Spacer(modifier = Modifier.height(8.dp))
 
-          val isLfmSelected = selectedModel == ModelType.GGUF && isLfmDownloaded
+          val isLfmSelected =
+              selectedModel == ModelType.GGUF && activeGgufModel?.fileName == LFM2_5_MODEL.fileName
           val isDownloadingLfm =
               isGgufDownloading && ggufDownloadingModelName == LFM2_5_MODEL.displayName
 
@@ -1158,211 +1223,259 @@ fun SettingsScreen(
                       androidx.compose.animation.fadeOut()) {
                 Column {
                   Spacer(modifier = Modifier.height(6.dp))
-                  val isGemma3nSelected = selectedModel == ModelType.GEMMA_3N && isGemma3nDownloaded
-                  val isDownloadingGemma3n =
-                      isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
-                  OutlinedCard(
-                      onClick =
-                          hapticOnClick {
-                            viewModel.setSelectedModel(ModelType.GEMMA_3N)
-                            if (isGemma3nDownloaded) {
-                              val path =
-                                  context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
-                              viewModel.initializeModel(path, isGemma4 = false)
-                            } else if (!isDownloadingModel) {
-                              hfLoginModelType = ModelType.GEMMA_3N
-                              showHfLogin = true
-                            }
-                          },
-                      modifier = Modifier.fillMaxWidth(),
-                      shape = RoundedCornerShape(14.dp),
-                      colors =
-                          CardDefaults.outlinedCardColors(
-                              containerColor =
-                                  if (isGemma3nSelected)
-                                      MaterialTheme.colorScheme.secondaryContainer
-                                  else Color.Transparent,
-                          ),
-                      border =
-                          if (isGemma3nSelected)
-                              BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                          else CardDefaults.outlinedCardBorder(),
-                  ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                      Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                          Text(
-                              stringResource(R.string.model_gemma3n),
-                              style = MaterialTheme.typography.titleSmall,
-                              fontWeight =
-                                  if (isGemma3nSelected) FontWeight.Bold else FontWeight.Medium,
-                          )
-                          Spacer(modifier = Modifier.width(8.dp))
-                          Surface(
-                              color = MaterialTheme.colorScheme.surfaceVariant,
-                              shape = RoundedCornerShape(4.dp)) {
-                                Text(
-                                    text = stringResource(R.string.tags_tag),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                  if (!isGemma3nSelectedForTop) {
+                    val isGemma3nSelected =
+                        selectedModel == ModelType.GEMMA_3N && isGemma3nDownloaded
+                    OutlinedCard(
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setSelectedModel(ModelType.GEMMA_3N)
+                              if (isGemma3nDownloaded) {
+                                val path =
+                                    context.filesDir.absolutePath +
+                                        "/" +
+                                        ModelType.GEMMA_3N.fileName
+                                viewModel.initializeModel(path, isGemma4 = false)
+                              } else if (!isDownloadingModel) {
+                                hfLoginModelType = ModelType.GEMMA_3N
+                                showHfLogin = true
                               }
-                        }
-                        Text(
-                            "google/gemma-3n-e2b-it",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        )
-                        Text(
-                            stringResource(R.string.model_gemma3n_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                      }
-                      Spacer(modifier = Modifier.width(12.dp))
-                      Surface(
-                          shape = RoundedCornerShape(8.dp),
-                          color =
-                              if (isDownloadingGemma3n)
-                                  (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
-                              else if (isGemma3nDownloaded)
-                                  (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
-                              else MaterialTheme.colorScheme.surfaceContainerHighest,
-                          modifier = Modifier.size(32.dp)) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.fillMaxSize()) {
-                                  if (isDownloadingGemma3n) {
-                                    Text(
-                                        text = "${(downloadProgress * 100).toInt()}%",
-                                        style =
-                                            MaterialTheme.typography.labelSmall.copy(
-                                                fontSize = 11.sp),
-                                        fontWeight = FontWeight.Bold,
-                                        color =
-                                            if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
-                                    )
-                                  } else if (isGemma3nDownloaded) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Check,
-                                        contentDescription = "Downloaded",
-                                        tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
-                                        modifier = Modifier.size(20.dp))
-                                  } else {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Download,
-                                        contentDescription = "Download Model",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp))
-                                  }
+                            },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors =
+                            CardDefaults.outlinedCardColors(
+                                containerColor =
+                                    if (isGemma3nSelected)
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    else Color.Transparent,
+                            ),
+                        border =
+                            if (isGemma3nSelected)
+                                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                            else CardDefaults.outlinedCardBorder(),
+                    ) {
+                      Row(
+                          modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                          Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                stringResource(R.string.model_gemma3n),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight =
+                                    if (isGemma3nSelected) FontWeight.Bold else FontWeight.Medium,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(4.dp)) {
+                                  Text(
+                                      text = stringResource(R.string.tags_tag),
+                                      modifier =
+                                          Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                      style = MaterialTheme.typography.labelSmall,
+                                      fontWeight = FontWeight.Bold,
+                                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  )
                                 }
                           }
+                          Text(
+                              "google/gemma-3n-e2b-it",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                          )
+                          Text(
+                              stringResource(R.string.model_gemma3n_desc),
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color =
+                                if (isDownloadingGemma3n)
+                                    (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                                else if (isGemma3nDownloaded)
+                                    (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.size(32.dp)) {
+                              Box(
+                                  contentAlignment = Alignment.Center,
+                                  modifier = Modifier.fillMaxSize()) {
+                                    if (isDownloadingGemma3n) {
+                                      Text(
+                                          text = "${(downloadProgress * 100).toInt()}%",
+                                          style =
+                                              MaterialTheme.typography.labelSmall.copy(
+                                                  fontSize = 11.sp),
+                                          fontWeight = FontWeight.Bold,
+                                          color =
+                                              if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                                      )
+                                    } else if (isGemma3nDownloaded) {
+                                      Icon(
+                                          imageVector = Icons.Rounded.Check,
+                                          contentDescription = "Downloaded",
+                                          tint =
+                                              if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                          modifier = Modifier.size(20.dp))
+                                    } else {
+                                      Icon(
+                                          imageVector = Icons.Rounded.Download,
+                                          contentDescription = "Download Model",
+                                          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                          modifier = Modifier.size(20.dp))
+                                    }
+                                  }
+                            }
+                      }
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
                   }
 
-                  Spacer(modifier = Modifier.height(8.dp))
+                  if (!isAicoreSelectedForTop) {
+                    val isAicoreSelected = selectedModel == ModelType.AICORE
 
-                  val isAicoreSelected = selectedModel == ModelType.AICORE
-                  val aicoreStatus by viewModel.aicoreCachedStatus.collectAsState()
+                    OutlinedCard(
+                        onClick =
+                            hapticOnClick {
+                              viewModel.setSelectedModel(ModelType.AICORE)
+                              viewModel.triggerAicoreRescan()
+                            },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors =
+                            CardDefaults.outlinedCardColors(
+                                containerColor =
+                                    if (isAicoreSelected)
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    else Color.Transparent,
+                            ),
+                        border =
+                            if (isAicoreSelected)
+                                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                            else CardDefaults.outlinedCardBorder(),
+                    ) {
+                      Row(
+                          modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                          Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Gemini Nano",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight =
+                                    if (isAicoreSelected) FontWeight.Bold else FontWeight.Medium,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(4.dp)) {
+                                  Text(
+                                      text = "BETA",
+                                      modifier =
+                                          Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                      style = MaterialTheme.typography.labelSmall,
+                                      color = MaterialTheme.colorScheme.primary,
+                                      fontWeight = FontWeight.Bold)
+                                }
+                          }
+                          Text(
+                              "Android AICore",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                          )
+                          Text(
+                              stringResource(R.string.gemini_nano_desc),
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        val aicoreColor =
+                            if (aicoreStatus == FeatureStatus.AVAILABLE) {
+                              if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+                            } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+                              MaterialTheme.colorScheme.errorContainer
+                            } else {
+                              MaterialTheme.colorScheme.surfaceContainerHighest
+                            }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = aicoreColor,
+                            modifier = Modifier.size(32.dp)) {
+                              Box(
+                                  contentAlignment = Alignment.Center,
+                                  modifier = Modifier.fillMaxSize()) {
+                                    if (aicoreStatus == FeatureStatus.AVAILABLE) {
+                                      Icon(
+                                          imageVector = Icons.Rounded.Check,
+                                          contentDescription = "Ready",
+                                          tint =
+                                              if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                          modifier = Modifier.size(20.dp))
+                                    } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+                                      Icon(
+                                          imageVector = Icons.Rounded.Close,
+                                          contentDescription = "Unsupported",
+                                          tint = MaterialTheme.colorScheme.error,
+                                          modifier = Modifier.size(20.dp))
+                                    } else {
+                                      Icon(
+                                          imageVector = Icons.Rounded.Info,
+                                          contentDescription = "Check Setup",
+                                          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                          modifier = Modifier.size(20.dp))
+                                    }
+                                  }
+                            }
+                      }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                  }
 
                   OutlinedCard(
-                      onClick =
-                          hapticOnClick {
-                            viewModel.setSelectedModel(ModelType.AICORE)
-                            viewModel.triggerAicoreRescan()
-                          },
+                      onClick = hapticOnClick(onOpenMoreModels),
                       modifier = Modifier.fillMaxWidth(),
                       shape = RoundedCornerShape(14.dp),
-                      colors =
-                          CardDefaults.outlinedCardColors(
-                              containerColor =
-                                  if (isAicoreSelected) MaterialTheme.colorScheme.secondaryContainer
-                                  else Color.Transparent,
-                          ),
-                      border =
-                          if (isAicoreSelected)
-                              BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                          else CardDefaults.outlinedCardBorder(),
+                      colors = CardDefaults.outlinedCardColors(containerColor = Color.Transparent),
                   ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                       Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                          Text(
-                              "Gemini Nano",
-                              style = MaterialTheme.typography.titleSmall,
-                              fontWeight =
-                                  if (isAicoreSelected) FontWeight.Bold else FontWeight.Medium,
-                          )
-                          Spacer(modifier = Modifier.width(8.dp))
-                          Surface(
-                              color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                              shape = RoundedCornerShape(4.dp)) {
-                                Text(
-                                    text = "BETA",
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold)
-                              }
-                        }
                         Text(
-                            "Android AICore",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            stringResource(R.string.more_models),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            stringResource(R.string.gemini_nano_desc),
+                            stringResource(R.string.more_models_navigation_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                       }
                       Spacer(modifier = Modifier.width(12.dp))
-
-                      val aicoreColor =
-                          if (aicoreStatus == FeatureStatus.AVAILABLE) {
-                            if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
-                          } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
-                            MaterialTheme.colorScheme.errorContainer
-                          } else {
-                            MaterialTheme.colorScheme.surfaceContainerHighest
-                          }
-
-                      Surface(
-                          shape = RoundedCornerShape(8.dp),
-                          color = aicoreColor,
-                          modifier = Modifier.size(32.dp)) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.fillMaxSize()) {
-                                  if (aicoreStatus == FeatureStatus.AVAILABLE) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Check,
-                                        contentDescription = "Ready",
-                                        tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
-                                        modifier = Modifier.size(20.dp))
-                                  } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Close,
-                                        contentDescription = "Unsupported",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(20.dp))
-                                  } else {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Info,
-                                        contentDescription = "Check Setup",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp))
-                                  }
-                                }
-                          }
+                      Box(
+                          contentAlignment = Alignment.Center,
+                          modifier = Modifier.size(32.dp),
+                      ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = stringResource(R.string.more_models),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp),
+                        )
+                      }
                     }
                   }
                 }
@@ -2108,8 +2221,7 @@ fun SettingsScreen(
                 }
 
                 Text(
-                    text =
-                        stringResource(R.string.embeddinggemma_hf_dialog_desc),
+                    text = stringResource(R.string.embeddinggemma_hf_dialog_desc),
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2498,8 +2610,7 @@ fun SettingsScreen(
                                 db.close()
                                 withContext(Dispatchers.Main) {
                                   embeddingGemmaIndexedCount = 0
-                                  embeddingGemmaIndexingStatus =
-                                      context.getString(R.string.index_cleared)
+                                  embeddingGemmaIndexingStatus = null
                                 }
                               }
                             },
@@ -2515,182 +2626,150 @@ fun SettingsScreen(
                     }
                   }
                 }
-                if (embeddingGemmaIndexingProgress != null || isEmbeddingGemmaIndexing) {
-                  val (completed, total) = embeddingGemmaIndexingProgress ?: Pair(0, 0)
-                  val progress = if (total > 0) completed.toFloat() / total.toFloat() else 0f
-                  Spacer(modifier = Modifier.height(16.dp))
-                  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                      Text(
-                          text = stringResource(R.string.generating_text_embeddings),
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                      )
-                      Text(
-                          text = "${(progress * 100).toInt()}%",
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.primary,
-                          fontWeight = FontWeight.Bold,
-                      )
-                    }
-                  }
-                }
               }
             }
           }
 
           Spacer(modifier = Modifier.height(12.dp))
-          val shownIndexedCount =
-              sourceSemanticIndexedCount.coerceIn(0, sourceAllScreenshots.size)
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color =
-                    MaterialTheme.colorScheme.surfaceVariant.copy(
-                        alpha = if (isDark) 0.22f else 0.45f),
+          val shownIndexedCount = sourceSemanticIndexedCount.coerceIn(0, sourceAllScreenshots.size)
+          Surface(
+              modifier = Modifier.fillMaxWidth(),
+              shape = RoundedCornerShape(12.dp),
+              color =
+                  MaterialTheme.colorScheme.surfaceVariant.copy(
+                      alpha = if (isDark) 0.22f else 0.45f),
+          ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-              Row(
-                  modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Box(modifier = Modifier.size(20.dp)) {
-                  Icon(
-                      imageVector = Icons.Rounded.Search,
-                      contentDescription = null,
-                      tint = MaterialTheme.colorScheme.onSurface,
-                      modifier = Modifier.size(20.dp),
+              Box(modifier = Modifier.size(20.dp)) {
+                Icon(
+                    imageVector = Icons.Rounded.Search,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
+                Icon(
+                    imageVector = Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier =
+                        Modifier.size(10.dp).align(Alignment.TopEnd).offset(x = 1.dp, y = (-1).dp),
+                )
+              }
+              Spacer(modifier = Modifier.width(12.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Text(
+                      stringResource(R.string.look_similar_title_caps),
+                      style = MaterialTheme.typography.labelMedium,
+                      fontWeight = FontWeight.SemiBold,
+                      color = MaterialTheme.colorScheme.onSurface,
                   )
-                  Icon(
-                      imageVector = Icons.Rounded.AutoAwesome,
-                      contentDescription = null,
-                      tint = MaterialTheme.colorScheme.onSurface,
-                      modifier =
-                          Modifier.size(10.dp)
-                              .align(Alignment.TopEnd)
-                              .offset(x = 1.dp, y = (-1).dp),
-                  )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                  Row(verticalAlignment = Alignment.CenterVertically) {
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Surface(
+                      color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                      shape = RoundedCornerShape(4.dp),
+                  ) {
                     Text(
-                        stringResource(R.string.look_similar_title_caps),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        text = stringResource(R.string.beta),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(4.dp),
-                    ) {
+                  }
+                }
+                Text(
+                    text = stringResource(R.string.look_similar_technology_subtitle),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                )
+                Text(
+                    text = "$shownIndexedCount / ${sourceAllScreenshots.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+              val semanticActionText =
+                  when {
+                    sourceIsSemanticDownloading ->
+                        "${(sourceSemanticDownloadProgress * 100).toInt()}%"
+                    !sourceIsSemanticModelReady -> stringResource(R.string.download)
+                    else -> stringResource(R.string.refresh_index)
+                  }
+              val semanticActionEnabled =
+                  when {
+                    sourceIsSemanticDownloading || sourceIsSemanticIndexing -> false
+                    !sourceIsSemanticModelReady -> true
+                    else -> sourceAllScreenshots.isNotEmpty()
+                  }
+              Row(
+                  modifier = Modifier.width(104.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+              ) {
+                if (sourceIsSemanticIndexing) {
+                  CircularProgressIndicator(
+                      modifier = Modifier.size(16.dp),
+                      strokeWidth = 1.8.dp,
+                      color = MaterialTheme.colorScheme.primary,
+                  )
+                } else {
+                  IconButton(
+                      onClick =
+                          hapticOnClick {
+                            if (!sourceIsSemanticModelReady) {
+                              semanticViewModel.downloadModel()
+                            } else {
+                              semanticViewModel.startIndexing(sourceAllScreenshots)
+                            }
+                          },
+                      enabled = semanticActionEnabled,
+                      modifier = Modifier.size(28.dp),
+                  ) {
+                    if (sourceIsSemanticDownloading) {
                       Text(
-                          text = stringResource(R.string.beta),
-                          modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.primary,
+                          text = "${(sourceSemanticDownloadProgress * 100).toInt()}%",
+                          style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                           fontWeight = FontWeight.Bold,
+                          color = MaterialTheme.colorScheme.primary,
+                      )
+                    } else if (!sourceIsSemanticModelReady) {
+                      Icon(
+                          imageVector = Icons.Rounded.Download,
+                          contentDescription = stringResource(R.string.download),
+                          tint = MaterialTheme.colorScheme.primary,
+                          modifier = Modifier.size(18.dp),
+                      )
+                    } else {
+                      Icon(
+                          imageVector = Icons.Rounded.Refresh,
+                          contentDescription = stringResource(R.string.refresh_index),
+                          tint = MaterialTheme.colorScheme.primary,
+                          modifier = Modifier.size(18.dp),
                       )
                     }
                   }
-                  Text(
-                      text = stringResource(R.string.look_similar_technology_subtitle),
-                      style = MaterialTheme.typography.labelSmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                  )
-                  Text(
-                      text = "$shownIndexedCount / ${sourceAllScreenshots.size}",
-                      style = MaterialTheme.typography.labelSmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  )
                 }
-                val semanticActionText =
-                    when {
-                      sourceIsSemanticDownloading ->
-                          "${(sourceSemanticDownloadProgress * 100).toInt()}%"
-                      !sourceIsSemanticModelReady -> stringResource(R.string.download)
-                      else -> stringResource(R.string.refresh_index)
-                    }
-                val semanticActionEnabled =
-                    when {
-                      sourceIsSemanticDownloading || sourceIsSemanticIndexing -> false
-                      !sourceIsSemanticModelReady -> true
-                      else -> sourceAllScreenshots.isNotEmpty()
-                    }
-                Row(
-                    modifier = Modifier.width(104.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                IconButton(
+                    onClick = hapticOnClick { semanticViewModel.resetEmbeddingsDatabase() },
+                    enabled = !sourceIsSemanticIndexing,
+                    modifier = Modifier.size(28.dp),
                 ) {
-                  if (sourceIsSemanticIndexing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 1.8.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                  } else {
-                    IconButton(
-                        onClick =
-                            hapticOnClick {
-                              if (!sourceIsSemanticModelReady) {
-                                semanticViewModel.downloadModel()
-                              } else {
-                                semanticViewModel.startIndexing(sourceAllScreenshots)
-                              }
-                            },
-                        enabled = semanticActionEnabled,
-                        modifier = Modifier.size(28.dp),
-                    ) {
-                      if (sourceIsSemanticDownloading) {
-                        Text(
-                            text = "${(sourceSemanticDownloadProgress * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                      } else if (!sourceIsSemanticModelReady) {
-                        Icon(
-                            imageVector = Icons.Rounded.Download,
-                            contentDescription = stringResource(R.string.download),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                      } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = stringResource(R.string.refresh_index),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                      }
-                    }
-                  }
-                  IconButton(
-                      onClick = hapticOnClick { semanticViewModel.resetEmbeddingsDatabase() },
-                      enabled = !sourceIsSemanticIndexing,
-                      modifier = Modifier.size(28.dp),
-                  ) {
-                    Icon(
-                        imageVector = Icons.Rounded.DeleteSweep,
-                        contentDescription = stringResource(R.string.clear_index),
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(16.dp),
-                    )
-                  }
+                  Icon(
+                      imageVector = Icons.Rounded.DeleteSweep,
+                      contentDescription = stringResource(R.string.clear_index),
+                      tint = MaterialTheme.colorScheme.error,
+                      modifier = Modifier.size(16.dp),
+                  )
                 }
               }
             }
           }
         }
+      }
 
       Spacer(modifier = Modifier.height(16.dp))
 
@@ -3432,36 +3511,66 @@ fun SettingsScreen(
       Spacer(modifier = Modifier.height(16.dp))
 
       // Buy Me a Coffee
-      Surface(
-          onClick = hapticOnClick { uriHandler.openUri("https://buymeacoffee.com/derykcihc") },
+      Box(
           modifier =
-              Modifier.fillMaxWidth().padding(horizontal = 16.dp).graphicsLayer {
-                shadowElevation = 0.dp.toPx()
-                shape = RoundedCornerShape(24.dp)
-                clip = true
-              },
-          shape = RoundedCornerShape(24.dp),
-          color = Color(0xFFFFDD00), // BMC Yellow
-          shadowElevation = 0.dp,
+              Modifier.fillMaxWidth()
+                  .padding(horizontal = 16.dp)
+                  .dispersedGlow(
+                      color = Color(0xFFFFDD00),
+                      alpha = 0.12f,
+                      glowRadius = 26.dp,
+                      borderRadius = 24.dp,
+                      horizontalInset = -10.dp,
+                      verticalInset = -10.dp,
+                  )
+                  .dispersedGlow(
+                      color = Color(0xFFFFDD00),
+                      alpha = 0.28f,
+                      glowRadius = 14.dp,
+                      borderRadius = 24.dp,
+                      horizontalInset = -4.dp,
+                      verticalInset = -4.dp,
+                  )
+                  .dispersedGlow(
+                      color = Color(0xFFFFDD00),
+                      alpha = 0.55f,
+                      glowRadius = 5.dp,
+                      borderRadius = 24.dp,
+                      horizontalInset = 0.dp,
+                      verticalInset = 0.dp,
+                  ),
       ) {
-        Row(
-            modifier = Modifier.padding(vertical = 16.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
+        Surface(
+            onClick = hapticOnClick { uriHandler.openUri("https://buymeacoffee.com/derykcihc") },
+            modifier =
+                Modifier.fillMaxWidth().graphicsLayer {
+                  shadowElevation = 0.dp.toPx()
+                  shape = RoundedCornerShape(24.dp)
+                  clip = true
+                },
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFFFFDD00), // BMC Yellow
+            shadowElevation = 0.dp,
         ) {
-          Icon(
-              Icons.Rounded.Coffee,
-              contentDescription = null,
-              tint = Color(0xFF0D1B2A),
-              modifier = Modifier.size(24.dp),
-          )
-          Spacer(modifier = Modifier.width(12.dp))
-          Text(
-              "Buy me a coffee",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.ExtraBold,
-              color = Color(0xFF0D1B2A),
-          )
+          Row(
+              modifier = Modifier.padding(vertical = 16.dp),
+              horizontalArrangement = Arrangement.Center,
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Icon(
+                Icons.Rounded.Coffee,
+                contentDescription = null,
+                tint = Color(0xFF0D1B2A),
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                "Buy me a coffee",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF0D1B2A),
+            )
+          }
         }
       }
 
@@ -3528,6 +3637,15 @@ fun SettingsScreen(
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.outline,
+        )
+      }
+
+      if (appVersionName.isNotBlank()) {
+        Text(
+            text = "v$appVersionName",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.72f),
+            modifier = Modifier.align(Alignment.CenterHorizontally),
         )
       }
 
@@ -3640,6 +3758,279 @@ fun SettingsScreen(
           }
         },
     )
+  }
+}
+
+@Composable
+private fun Gemma3nModelCard(
+    selected: Boolean,
+    isDownloaded: Boolean,
+    isDownloading: Boolean,
+    downloadProgress: Float,
+    isDark: Boolean,
+    onClick: () -> Unit,
+) {
+  OutlinedCard(
+      onClick = hapticOnClick(onClick),
+      modifier = Modifier.fillMaxWidth(),
+      shape = RoundedCornerShape(14.dp),
+      colors =
+          CardDefaults.outlinedCardColors(
+              containerColor =
+                  if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+          ),
+      border =
+          if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+          else CardDefaults.outlinedCardBorder(),
+  ) {
+    Row(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+              stringResource(R.string.model_gemma3n),
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Surface(
+              color = MaterialTheme.colorScheme.surfaceVariant,
+              shape = RoundedCornerShape(4.dp),
+          ) {
+            Text(
+                text = stringResource(R.string.tags_tag),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        }
+        Text(
+            "google/gemma-3n-e2b-it",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+        )
+        Text(
+            stringResource(R.string.model_gemma3n_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+      Surface(
+          shape = RoundedCornerShape(8.dp),
+          color =
+              if (isDownloading) (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+              else if (isDownloaded) (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+              else MaterialTheme.colorScheme.surfaceContainerHighest,
+          modifier = Modifier.size(32.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+          if (isDownloading) {
+            Text(
+                text = "${(downloadProgress * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                fontWeight = FontWeight.Bold,
+                color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+            )
+          } else if (isDownloaded) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = "Downloaded",
+                tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                modifier = Modifier.size(20.dp),
+            )
+          } else {
+            Icon(
+                imageVector = Icons.Rounded.Download,
+                contentDescription = "Download Model",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun GeminiNanoModelCard(
+    selected: Boolean,
+    aicoreStatus: Int,
+    isDark: Boolean,
+    onClick: () -> Unit,
+) {
+  OutlinedCard(
+      onClick = hapticOnClick(onClick),
+      modifier = Modifier.fillMaxWidth(),
+      shape = RoundedCornerShape(14.dp),
+      colors =
+          CardDefaults.outlinedCardColors(
+              containerColor =
+                  if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+          ),
+      border =
+          if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+          else CardDefaults.outlinedCardBorder(),
+  ) {
+    Row(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+              "Gemini Nano",
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Surface(
+              color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+              shape = RoundedCornerShape(4.dp),
+          ) {
+            Text(
+                text = "BETA",
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+          }
+        }
+        Text(
+            "Android AICore",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+        )
+        Text(
+            stringResource(R.string.gemini_nano_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+
+      val aicoreColor =
+          if (aicoreStatus == FeatureStatus.AVAILABLE) {
+            if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+          } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+            MaterialTheme.colorScheme.errorContainer
+          } else {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+          }
+
+      Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = aicoreColor,
+          modifier = Modifier.size(32.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+          if (aicoreStatus == FeatureStatus.AVAILABLE) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = "Ready",
+                tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                modifier = Modifier.size(20.dp),
+            )
+          } else if (aicoreStatus == FeatureStatus.UNAVAILABLE) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = "Unsupported",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp),
+            )
+          } else {
+            Icon(
+                imageVector = Icons.Rounded.Info,
+                contentDescription = "Check Setup",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun ActiveImportedModelCard(
+    model: GgufModelInfo,
+    mmprojName: String,
+) {
+  val isDark = LocalIsDarkMode.current
+  OutlinedCard(
+      onClick = {},
+      modifier = Modifier.fillMaxWidth(),
+      shape = RoundedCornerShape(14.dp),
+      colors =
+          CardDefaults.outlinedCardColors(
+              containerColor = MaterialTheme.colorScheme.secondaryContainer,
+          ),
+      border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+  ) {
+    Row(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+              text = model.displayName,
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = FontWeight.Bold,
+              maxLines = 1,
+              overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f, fill = false),
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Surface(
+              color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+              shape = RoundedCornerShape(4.dp),
+          ) {
+            Text(
+                text = stringResource(R.string.imported_model_tag),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+          }
+        }
+        Text(
+            text = stringResource(R.string.imported_gguf_model_desc),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        )
+        Text(
+            text = mmprojName,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+      Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9),
+          modifier = Modifier.size(32.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+          Icon(
+              imageVector = Icons.Rounded.Check,
+              contentDescription = stringResource(R.string.ready),
+              tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+              modifier = Modifier.size(20.dp),
+          )
+        }
+      }
+    }
   }
 }
 

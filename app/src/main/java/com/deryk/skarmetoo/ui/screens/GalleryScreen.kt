@@ -34,6 +34,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,6 +61,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -432,10 +434,42 @@ fun GalleryScreen(
 
   var draggingBucketId by remember { mutableStateOf<String?>(null) }
   var dragOffsetX by remember { mutableStateOf(0f) }
-  var accumulatedDrag by remember { mutableStateOf(0f) }
+  var dragOffsetY by remember { mutableStateOf(0f) }
   var displayAlbums by remember { mutableStateOf(sortedAlbums) }
 
+  fun togglePinAndPositionAlbum(bucketId: String) {
+    val wasPinned = bucketId in pinnedAlbumIds
+    viewModel.togglePinAlbum(bucketId)
+    if (!wasPinned) {
+      val list = displayAlbums.toMutableList()
+      val item = list.find { it.album.bucketId == bucketId }
+      if (item != null) {
+        list.remove(item)
+        if (bucketId in selectedAlbums) {
+          val lastSourceIdx = list.indexOfLast { it.album.bucketId in selectedAlbums }
+          list.add(if (lastSourceIdx >= 0) lastSourceIdx + 1 else 0, item)
+        } else {
+          val lastPinnedIdx =
+              list.indexOfLast {
+                it.album.bucketId in pinnedAlbumIds && it.album.bucketId !in selectedAlbums
+              }
+          val insertIdx =
+              if (lastPinnedIdx >= 0) {
+                lastPinnedIdx + 1
+              } else {
+                val lastSourceIdx = list.indexOfLast { it.album.bucketId in selectedAlbums }
+                if (lastSourceIdx >= 0) lastSourceIdx + 1 else 0
+              }
+          list.add(insertIdx, item)
+        }
+        displayAlbums = list
+        viewModel.updateAlbumOrder(list.map { it.album.bucketId })
+      }
+    }
+  }
+
   val albumRowListState = rememberLazyListState()
+  val albumRowDragScope = rememberCoroutineScope()
 
   val allImageCount = remember(albumThumbnails) { albumThumbnails.sumOf { it.album.count } }
   val entryByMediaUri =
@@ -964,8 +998,15 @@ fun GalleryScreen(
                     label = "albumDrawerHeight",
                 )
             val albumDrawerGestureModifier =
-                Modifier.pointerInput(isAlbumDrawerExpanded) {
-                  val swipeThreshold = 20.dp.toPx()
+                Modifier.pointerInput(isAlbumDrawerExpanded, drawerHeight, drawerRows) {
+                  val expandSwipeThreshold = 20.dp.toPx()
+                  val collapseSwipeThreshold =
+                      maxOf(
+                          112.dp.toPx(),
+                          drawerHeight.toPx() * 0.38f,
+                          (84.dp + 28.dp * (drawerRows - 1).coerceAtLeast(0).toFloat()).toPx(),
+                      )
+                  val collapseVerticalDominanceRatio = 1.45f
                   awaitEachGesture {
                     val down =
                         awaitFirstDown(
@@ -985,13 +1026,20 @@ fun GalleryScreen(
                       isPressed = change.pressed
                     }
 
-                    val isVerticalSwipe = abs(totalY) >= swipeThreshold && abs(totalY) > abs(totalX)
+                    val isExpandSwipe =
+                        !isAlbumDrawerExpanded &&
+                            totalY >= expandSwipeThreshold &&
+                            abs(totalY) > abs(totalX)
+                    val isCollapseSwipe =
+                        isAlbumDrawerExpanded &&
+                            totalY <= -collapseSwipeThreshold &&
+                            abs(totalY) > abs(totalX) * collapseVerticalDominanceRatio
                     when {
-                      isVerticalSwipe && !isAlbumDrawerExpanded && totalY > 0f -> {
+                      isExpandSwipe -> {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         isAlbumDrawerExpanded = true
                       }
-                      isVerticalSwipe && isAlbumDrawerExpanded && totalY < 0f -> {
+                      isCollapseSwipe -> {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         isAlbumDrawerExpanded = false
                       }
@@ -1037,110 +1085,143 @@ fun GalleryScreen(
 
                           Box(
                               modifier =
-                                  Modifier.offset {
+                                  (if (isDragging) Modifier else Modifier.animateItem()).offset {
                                         IntOffset(
                                             if (isDragging) dragOffsetX.roundToInt() else 0,
-                                            0,
+                                            if (isDragging) dragOffsetY.roundToInt() else 0,
                                         )
                                       }
+                                      .zIndex(if (isDragging) 1f else 0f)
                                       .pointerInput(bucketId) {
                                         val itemWidthPx = (albumSquareSize + albumSpacing).toPx()
-                                        val dragThresholdPx = 20.dp.toPx()
+                                        val leftEdgeScrollThresholdPx = 180.dp.toPx()
+                                        val rightEdgeScrollThresholdPx = 96.dp.toPx()
+                                        val maxEdgeScrollStepPx = 32.dp.toPx()
+                                        var edgeScrollJob: kotlinx.coroutines.Job? = null
+                                        var latestPointerXInItem: Float? = null
+
+                                        fun moveDraggedAlbumIfNeeded(thresholdFraction: Float) {
+                                          val currentIdx =
+                                              displayAlbums.indexOfFirst {
+                                                it.album.bucketId == draggingBucketId
+                                              }
+                                          if (currentIdx < 0) return
+
+                                          val currentRowPosition = currentIdx + 1
+                                          val columnDelta =
+                                              when {
+                                                dragOffsetX > itemWidthPx * thresholdFraction -> 1
+                                                dragOffsetX < -itemWidthPx * thresholdFraction -> -1
+                                                else -> 0
+                                              }
+
+                                          if (columnDelta != 0) {
+                                            val targetRowPosition =
+                                                (currentRowPosition + columnDelta)
+                                                    .coerceIn(1, displayAlbums.size)
+                                            val targetIdx = targetRowPosition - 1
+                                            if (targetIdx != currentIdx) {
+                                              displayAlbums =
+                                                  displayAlbums.toMutableList().apply {
+                                                    add(targetIdx, removeAt(currentIdx))
+                                                  }
+                                              dragOffsetX -=
+                                                  (targetRowPosition - currentRowPosition) *
+                                                      itemWidthPx
+                                            }
+                                          }
+                                        }
 
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = {
-                                              haptic.performHapticFeedback(
-                                                  HapticFeedbackType.LongPress)
+                                              edgeScrollJob?.cancel()
                                               draggingBucketId = bucketId
                                               dragOffsetX = 0f
-                                              accumulatedDrag = 0f
+                                              dragOffsetY = 0f
+                                              latestPointerXInItem = null
+                                              edgeScrollJob =
+                                                  albumRowDragScope.launch {
+                                                    while (isActive &&
+                                                        draggingBucketId == bucketId) {
+                                                      val pointerXInItem =
+                                                          latestPointerXInItem
+                                                      val layoutInfo =
+                                                          albumRowListState.layoutInfo
+                                                      val itemInfo =
+                                                          layoutInfo.visibleItemsInfo.firstOrNull {
+                                                            it.key == bucketId
+                                                          }
+                                                      val scrollDelta =
+                                                          if (pointerXInItem == null ||
+                                                              itemInfo == null) {
+                                                            0f
+                                                          } else {
+                                                            val pointerXInViewport =
+                                                                itemInfo.offset + dragOffsetX +
+                                                                    pointerXInItem
+                                                            val viewportStart =
+                                                                layoutInfo.viewportStartOffset
+                                                            val viewportEnd =
+                                                                layoutInfo.viewportEndOffset
+                                                            when {
+                                                              pointerXInViewport <
+                                                                  viewportStart +
+                                                                      leftEdgeScrollThresholdPx ->
+                                                                  -((viewportStart +
+                                                                              leftEdgeScrollThresholdPx -
+                                                                              pointerXInViewport) /
+                                                                          leftEdgeScrollThresholdPx)
+                                                                      .coerceIn(0f, 1f) *
+                                                                      maxEdgeScrollStepPx
+                                                              pointerXInViewport >
+                                                                  viewportEnd -
+                                                                      rightEdgeScrollThresholdPx ->
+                                                                  ((pointerXInViewport -
+                                                                              (viewportEnd -
+                                                                                  rightEdgeScrollThresholdPx)) /
+                                                                          rightEdgeScrollThresholdPx)
+                                                                      .coerceIn(0f, 1f) *
+                                                                      maxEdgeScrollStepPx
+                                                              else -> 0f
+                                                            }
+                                                          }
+
+                                                      if (scrollDelta != 0f) {
+                                                        val consumed =
+                                                            albumRowListState.scrollBy(scrollDelta)
+                                                        if (consumed != 0f) {
+                                                          dragOffsetX += consumed
+                                                          moveDraggedAlbumIfNeeded(
+                                                              thresholdFraction = 1.1f)
+                                                        }
+                                                      }
+                                                      delay(16L)
+                                                    }
+                                                  }
                                             },
                                             onDrag = { change, dragAmount ->
                                               change.consume()
+                                              latestPointerXInItem = change.position.x
                                               dragOffsetX += dragAmount.x
-                                              accumulatedDrag += abs(dragAmount.x)
+                                              dragOffsetY += dragAmount.y
 
-                                              val currentIdx =
-                                                  displayAlbums.indexOfFirst {
-                                                    it.album.bucketId == draggingBucketId
-                                                  }
-                                              if (currentIdx < 0) {
-                                                return@detectDragGesturesAfterLongPress
-                                              }
-
-                                              if (dragOffsetX > itemWidthPx * 0.5f &&
-                                                  currentIdx < displayAlbums.lastIndex) {
-                                                displayAlbums =
-                                                    displayAlbums.toMutableList().apply {
-                                                      add(currentIdx + 1, removeAt(currentIdx))
-                                                    }
-                                                dragOffsetX -= itemWidthPx
-                                              } else if (dragOffsetX < -itemWidthPx * 0.5f &&
-                                                  currentIdx > 0) {
-                                                displayAlbums =
-                                                    displayAlbums.toMutableList().apply {
-                                                      add(currentIdx - 1, removeAt(currentIdx))
-                                                    }
-                                                dragOffsetX += itemWidthPx
-                                              }
+                                              moveDraggedAlbumIfNeeded(thresholdFraction = 0.5f)
                                             },
                                             onDragEnd = {
-                                              if (accumulatedDrag < dragThresholdPx) {
-                                                val wasPinned = bucketId in pinnedAlbumIds
-                                                viewModel.togglePinAlbum(bucketId)
-                                                if (!wasPinned) {
-                                                  val list = displayAlbums.toMutableList()
-                                                  val item =
-                                                      list.find { it.album.bucketId == bucketId }
-                                                  if (item != null) {
-                                                    list.remove(item)
-                                                    if (bucketId in selectedAlbums) {
-                                                      val lastSourceIdx =
-                                                          list.indexOfLast {
-                                                            it.album.bucketId in selectedAlbums
-                                                          }
-                                                      list.add(
-                                                          if (lastSourceIdx >= 0) lastSourceIdx + 1
-                                                          else 0,
-                                                          item)
-                                                    } else {
-                                                      val lastPinnedIdx =
-                                                          list.indexOfLast {
-                                                            it.album.bucketId in pinnedAlbumIds &&
-                                                                it.album.bucketId !in selectedAlbums
-                                                          }
-                                                      val insertIdx =
-                                                          if (lastPinnedIdx >= 0) {
-                                                            lastPinnedIdx + 1
-                                                          } else {
-                                                            val lastSourceIdx =
-                                                                list.indexOfLast {
-                                                                  it.album.bucketId in
-                                                                      selectedAlbums
-                                                                }
-                                                            if (lastSourceIdx >= 0)
-                                                                lastSourceIdx + 1
-                                                            else 0
-                                                          }
-                                                      list.add(insertIdx, item)
-                                                    }
-                                                    displayAlbums = list
-                                                    viewModel.updateAlbumOrder(
-                                                        list.map { it.album.bucketId },
-                                                    )
-                                                  }
-                                                }
-                                              } else {
-                                                viewModel.updateAlbumOrder(
-                                                    displayAlbums.map { it.album.bucketId })
-                                              }
-
+                                              edgeScrollJob?.cancel()
+                                              edgeScrollJob = null
+                                              viewModel.updateAlbumOrder(
+                                                  displayAlbums.map { it.album.bucketId })
                                               draggingBucketId = null
                                               dragOffsetX = 0f
+                                              dragOffsetY = 0f
                                             },
                                             onDragCancel = {
+                                              edgeScrollJob?.cancel()
+                                              edgeScrollJob = null
                                               draggingBucketId = null
                                               dragOffsetX = 0f
+                                              dragOffsetY = 0f
                                             },
                                         )
                                       },
@@ -1154,6 +1235,7 @@ fun GalleryScreen(
                                 isAddedForAnalysis = isAddedForAnalysis,
                                 isDragging = isDragging,
                                 size = albumSquareSize,
+                                onDoubleClick = { togglePinAndPositionAlbum(bucketId) },
                                 onClick =
                                     hapticOnClick {
                                       viewModel.setSelectedExperimentalAlbumId(
@@ -1211,8 +1293,100 @@ fun GalleryScreen(
                             key = { it.album.bucketId },
                         ) { albumWithThumbs ->
                           val bucketId = albumWithThumbs.album.bucketId
+                          val isDragging = draggingBucketId == bucketId
                           Box(
-                              modifier = Modifier.fillMaxWidth(),
+                              modifier =
+                                  (if (isDragging) Modifier else Modifier.animateItem())
+                                      .fillMaxWidth()
+                                      .offset {
+                                        IntOffset(
+                                            if (isDragging) dragOffsetX.roundToInt() else 0,
+                                            if (isDragging) dragOffsetY.roundToInt() else 0,
+                                        )
+                                      }
+                                      .zIndex(if (isDragging) 1f else 0f)
+                                      .pointerInput(
+                                          bucketId,
+                                          dynamicColumns,
+                                          albumSquareSize,
+                                          albumCardHeight,
+                                      ) {
+                                        val itemWidthPx = (albumSquareSize + albumSpacing).toPx()
+                                        val itemHeightPx = (albumCardHeight + albumSpacing).toPx()
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                              draggingBucketId = bucketId
+                                              dragOffsetX = 0f
+                                              dragOffsetY = 0f
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                              change.consume()
+                                              dragOffsetX += dragAmount.x
+                                              dragOffsetY += dragAmount.y
+
+                                              val currentIdx =
+                                                  displayAlbums.indexOfFirst {
+                                                    it.album.bucketId == draggingBucketId
+                                                  }
+                                              if (currentIdx < 0) {
+                                                return@detectDragGesturesAfterLongPress
+                                              }
+
+                                              val currentGridPosition = currentIdx + 1
+                                              val currentRow = currentGridPosition / dynamicColumns
+                                              val currentColumn =
+                                                  currentGridPosition % dynamicColumns
+                                              val columnDelta =
+                                                  when {
+                                                    dragOffsetX > itemWidthPx * 0.5f -> 1
+                                                    dragOffsetX < -itemWidthPx * 0.5f -> -1
+                                                    else -> 0
+                                                  }
+                                              val rowDelta =
+                                                  when {
+                                                    dragOffsetY > itemHeightPx * 0.5f -> 1
+                                                    dragOffsetY < -itemHeightPx * 0.5f -> -1
+                                                    else -> 0
+                                                  }
+
+                                              if (columnDelta != 0 || rowDelta != 0) {
+                                                val targetGridPosition =
+                                                    (currentGridPosition +
+                                                            (rowDelta * dynamicColumns) +
+                                                            columnDelta)
+                                                        .coerceIn(1, displayAlbums.size)
+                                                val targetIdx = targetGridPosition - 1
+                                                if (targetIdx != currentIdx) {
+                                                  displayAlbums =
+                                                      displayAlbums.toMutableList().apply {
+                                                        add(targetIdx, removeAt(currentIdx))
+                                                      }
+
+                                                  val targetRow =
+                                                      targetGridPosition / dynamicColumns
+                                                  val targetColumn =
+                                                      targetGridPosition % dynamicColumns
+                                                  dragOffsetX -=
+                                                      (targetColumn - currentColumn) * itemWidthPx
+                                                  dragOffsetY -=
+                                                      (targetRow - currentRow) * itemHeightPx
+                                                }
+                                              }
+                                            },
+                                            onDragEnd = {
+                                              viewModel.updateAlbumOrder(
+                                                  displayAlbums.map { it.album.bucketId })
+                                              draggingBucketId = null
+                                              dragOffsetX = 0f
+                                              dragOffsetY = 0f
+                                            },
+                                            onDragCancel = {
+                                              draggingBucketId = null
+                                              dragOffsetX = 0f
+                                              dragOffsetY = 0f
+                                            },
+                                        )
+                                      },
                               contentAlignment = Alignment.TopCenter,
                           ) {
                             GalleryAlbumThumbnailCard(
@@ -1223,6 +1397,7 @@ fun GalleryScreen(
                                 isPinned = bucketId in pinnedAlbumIds,
                                 isAddedForAnalysis = bucketId in selectedAlbums,
                                 size = albumSquareSize,
+                                onDoubleClick = { togglePinAndPositionAlbum(bucketId) },
                                 onClick =
                                     hapticOnClick {
                                       viewModel.setSelectedExperimentalAlbumId(
@@ -2260,6 +2435,7 @@ private fun ThumbnailCell(
   }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GalleryAlbumThumbnailCard(
     albumName: String,
@@ -2270,6 +2446,7 @@ private fun GalleryAlbumThumbnailCard(
     isAddedForAnalysis: Boolean = false,
     isDragging: Boolean = false,
     size: Dp = 80.dp,
+    onDoubleClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
   val analysisGlowColor = Color(0xFF4CAF50)
@@ -2293,75 +2470,77 @@ private fun GalleryAlbumThumbnailCard(
     val glowOuterShape = RoundedCornerShape(14.dp)
     val glowInnerShape = RoundedCornerShape(13.dp)
 
-    Box(
-        modifier =
-            Modifier.size(size)
-                .then(
-                    if (isAddedForAnalysis) {
-                      Modifier.background(
-                              analysisGlowColor.copy(alpha = 0.24f),
-                              glowOuterShape,
-                          )
-                          .padding(1.dp)
-                          .background(
-                              analysisGlowColor.copy(alpha = 0.14f),
-                              glowInnerShape,
-                          )
-                          .padding(1.dp)
-                    } else {
-                      Modifier
-                    },
-                )
-                .clip(RoundedCornerShape(12.dp))
-                .background(backgroundColor)
-                .border(2.dp, borderColor, RoundedCornerShape(12.dp))
-                .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-      if (thumbnailUris.isEmpty()) {
-        Icon(
-            Icons.Rounded.PhotoLibrary,
-            contentDescription = null,
-            tint =
-                if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.outline,
-            modifier = Modifier.size(32.dp),
-        )
-      } else {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(2.dp),
-            verticalArrangement = Arrangement.spacedBy(1.dp),
-        ) {
-          repeat(2) { row ->
-            Row(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(1.dp),
-            ) {
-              repeat(2) { col ->
-                val index = row * 2 + col
-                val cornerShape =
-                    RoundedCornerShape(
-                        topStart = if (row == 0 && col == 0) 10.dp else 2.dp,
-                        topEnd = if (row == 0 && col == 1) 10.dp else 2.dp,
-                        bottomStart = if (row == 1 && col == 0) 10.dp else 2.dp,
-                        bottomEnd = if (row == 1 && col == 1) 10.dp else 2.dp,
-                    )
+    Box(modifier = Modifier.size(size)) {
+      Box(
+          modifier =
+              Modifier.matchParentSize()
+                  .then(
+                      if (isAddedForAnalysis) {
+                        Modifier.background(
+                                analysisGlowColor.copy(alpha = 0.24f),
+                                glowOuterShape,
+                            )
+                            .padding(1.dp)
+                            .background(
+                                analysisGlowColor.copy(alpha = 0.14f),
+                                glowInnerShape,
+                            )
+                            .padding(1.dp)
+                      } else {
+                        Modifier
+                      },
+                  )
+                  .clip(RoundedCornerShape(12.dp))
+                  .background(backgroundColor)
+                  .border(2.dp, borderColor, RoundedCornerShape(12.dp))
+                  .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick),
+          contentAlignment = Alignment.Center,
+      ) {
+        if (thumbnailUris.isEmpty()) {
+          Icon(
+              Icons.Rounded.PhotoLibrary,
+              contentDescription = null,
+              tint =
+                  if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                  else MaterialTheme.colorScheme.outline,
+              modifier = Modifier.size(32.dp),
+          )
+        } else {
+          Column(
+              modifier = Modifier.fillMaxSize().padding(2.dp),
+              verticalArrangement = Arrangement.spacedBy(1.dp),
+          ) {
+            repeat(2) { row ->
+              Row(
+                  modifier = Modifier.weight(1f).fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(1.dp),
+              ) {
+                repeat(2) { col ->
+                  val index = row * 2 + col
+                  val cornerShape =
+                      RoundedCornerShape(
+                          topStart = if (row == 0 && col == 0) 10.dp else 2.dp,
+                          topEnd = if (row == 0 && col == 1) 10.dp else 2.dp,
+                          bottomStart = if (row == 1 && col == 0) 10.dp else 2.dp,
+                          bottomEnd = if (row == 1 && col == 1) 10.dp else 2.dp,
+                      )
 
-                if (index < thumbnailUris.size) {
-                  AsyncImage(
-                      model = thumbnailUris[index],
-                      contentDescription = null,
-                      modifier = Modifier.weight(1f).fillMaxSize().clip(cornerShape),
-                      contentScale = ContentScale.Crop,
-                  )
-                } else {
-                  Box(
-                      modifier =
-                          Modifier.weight(1f)
-                              .fillMaxSize()
-                              .clip(cornerShape)
-                              .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                  )
+                  if (index < thumbnailUris.size) {
+                    AsyncImage(
+                        model = thumbnailUris[index],
+                        contentDescription = null,
+                        modifier = Modifier.weight(1f).fillMaxSize().clip(cornerShape),
+                        contentScale = ContentScale.Crop,
+                    )
+                  } else {
+                    Box(
+                        modifier =
+                            Modifier.weight(1f)
+                                .fillMaxSize()
+                                .clip(cornerShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    )
+                  }
                 }
               }
             }
@@ -2370,14 +2549,24 @@ private fun GalleryAlbumThumbnailCard(
       }
 
       if (isPinned) {
-        Box(
+        Surface(
             modifier =
                 Modifier.align(Alignment.TopStart)
-                    .padding(3.dp)
-                    .size(8.dp)
-                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
-                    .border(1.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(50)),
-        )
+                    .offset(x = (-3).dp, y = (-3).dp)
+                    .size(18.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.tertiary,
+            shadowElevation = 2.dp,
+        ) {
+          Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            Icon(
+                imageVector = Icons.Rounded.PushPin,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiary,
+                modifier = Modifier.size(11.dp),
+            )
+          }
+        }
       }
     }
 

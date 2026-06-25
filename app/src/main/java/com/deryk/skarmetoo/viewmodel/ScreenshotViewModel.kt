@@ -18,9 +18,7 @@ import com.deryk.skarmetoo.ai.AicoreManager
 import com.deryk.skarmetoo.ai.EmbeddingGemma
 import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.GgufModelInfo
-import com.deryk.skarmetoo.ai.LFM2_5_VARIANTS
 import com.deryk.skarmetoo.ai.LlmManager
-import com.deryk.skarmetoo.ai.PRESET_GGUF_MODELS
 import com.deryk.skarmetoo.data.DataManager
 import com.deryk.skarmetoo.data.ImageHasher
 import com.deryk.skarmetoo.data.JsonFolderManager
@@ -297,8 +295,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val _isModelFound = MutableStateFlow(true)
   val isModelFound: StateFlow<Boolean> = _isModelFound.asStateFlow()
 
-  private val _selectedModel = MutableStateFlow(ModelType.GEMMA_3N)
-  val selectedModel: StateFlow<ModelType> = _selectedModel.asStateFlow()
+  private val _selectedModel = MutableStateFlow<ModelType?>(null)
+  val selectedModel: StateFlow<ModelType?> = _selectedModel.asStateFlow()
 
   private val _isGemma3nDownloaded = MutableStateFlow(false)
   val isGemma3nDownloaded: StateFlow<Boolean> = _isGemma3nDownloaded.asStateFlow()
@@ -845,12 +843,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     _selectedAlbums.value = prefs.getStringSet("selected_album_ids", emptySet()) ?: emptySet()
 
     // Restore selected model from prefs
-    val savedModelType = prefs.getString("selected_model", ModelType.GEMMA_3N.name)
+    val savedModelType = prefs.getString("selected_model", null)
     _selectedModel.value =
         try {
-          ModelType.valueOf(savedModelType ?: ModelType.GEMMA_3N.name)
+          savedModelType?.let { ModelType.valueOf(it) }
         } catch (e: Exception) {
-          ModelType.GEMMA_3N
+          null
         }
 
     // Restore selected experimental album
@@ -941,6 +939,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                 }
               }
             } else {
+              if (selected == null) {
+                clearModelSwitchStatus()
+                setModelStatusImmediate("Please load a model")
+                _isModelReady.value = false
+                return@combine
+              }
               when (llmState) {
                 is LlmManager.LlmState.Initial -> {
                   if (isModelSwitchStatusActive(selected)) {
@@ -1016,13 +1020,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         if (selected == ModelType.GGUF) {
           val lastGgufFile = prefs.getString("last_gguf_model", null)
           if (lastGgufFile != null) {
-            val allModels = LFM2_5_VARIANTS + PRESET_GGUF_MODELS
+            val allModels = ggufManager.getDownloadedModels()
             val modelInfo = allModels.find { it.fileName == lastGgufFile }
             if (modelInfo != null) {
               ggufManager.loadModel(modelInfo)
             }
           }
-        } else {
+        } else if (selected != null) {
           val selectedModelFile = java.io.File(application.filesDir, selected.fileName)
           if (selectedModelFile.exists()) {
             initializeModel(
@@ -1155,13 +1159,18 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
             ggufManager.getDownloadedModels().isNotEmpty()
           } else if (_selectedModel.value == ModelType.AICORE) {
             _aicoreCachedStatus.value == FeatureStatus.AVAILABLE
+          } else if (_selectedModel.value == null) {
+            false
           } else {
-            val selectedFile = java.io.File(context.filesDir, _selectedModel.value.fileName)
+            val selectedFile = java.io.File(context.filesDir, _selectedModel.value!!.fileName)
             selectedFile.exists()
           }
       _isModelFound.value = exists
       if (!exists) {
-        if (!isModelSwitchStatusActive(_selectedModel.value)) {
+        val selected = _selectedModel.value
+        if (selected == null) {
+          setModelStatusImmediate("Please load a model")
+        } else if (!isModelSwitchStatusActive(selected)) {
           setModelStatusImmediate("Model not found")
         }
         _isModelReady.value = false
