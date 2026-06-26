@@ -31,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Label
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,6 +47,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
@@ -129,6 +131,7 @@ fun DetailScreen(
   var isResettingLoader by remember(entryId) { mutableStateOf(false) }
   val dragProgress = remember { Animatable(0f) }
   val density = androidx.compose.ui.platform.LocalDensity.current
+  val showDetailsTitle = LocalConfiguration.current.screenWidthDp >= 390
   val maxDragPx = remember(density) { with(density) { 180.dp.toPx() } }
   val albumImageUris = remember(albumImages) { albumImages.map { it.uri.toString() } }
   val entryIdByImageUri =
@@ -364,42 +367,96 @@ fun DetailScreen(
               }) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
           }
-      Text(
-          stringResource(R.string.details_title),
-          style = MaterialTheme.typography.titleLarge,
-          fontWeight = FontWeight.SemiBold,
-      )
+      if (showDetailsTitle) {
+        Text(
+            stringResource(R.string.details_title),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+      }
       Spacer(modifier = Modifier.weight(1f))
 
-      // Custom Rendered Share Card Button
-      IconButton(
-          onClick = hapticOnClick { ShareUtils.shareScreenshotContent(context, entry, noteText) },
-          modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Rounded.Style, "Generate Share Card")
-          }
-      Spacer(modifier = Modifier.width(4.dp))
-
-      // Direct Original Screenshot Share Button
-      IconButton(
-          onClick =
-              hapticOnClick {
-                try {
-                  val intent =
-                      Intent(Intent.ACTION_SEND).apply {
-                        type = "image/*"
-                        putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                      }
-                  context.startActivity(Intent.createChooser(intent, "Share Original Screenshot"))
-                } catch (e: Exception) {
-                  Toast.makeText(context, "Failed to share original screenshot", Toast.LENGTH_SHORT)
-                      .show()
+      CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            shape = RoundedCornerShape(14.dp),
+        ) {
+          Row(
+              modifier = Modifier.padding(4.dp),
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            // Custom Rendered Share Card Button
+            IconButton(
+                onClick =
+                    hapticOnClick { ShareUtils.shareScreenshotContent(context, entry, noteText) },
+                modifier = Modifier.size(34.dp)) {
+                  Icon(
+                      Icons.Rounded.Style,
+                      "Generate Share Card",
+                      modifier = Modifier.size(20.dp),
+                  )
                 }
-              },
-          modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Rounded.Share, "Share Original")
+
+            // Open Original Screenshot Button
+            IconButton(
+                onClick =
+                    hapticOnClick {
+                      try {
+                        val intent =
+                            Intent(Intent.ACTION_VIEW).apply {
+                              setDataAndType(Uri.parse(entry.imageUri), "image/*")
+                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                        context.startActivity(
+                            Intent.createChooser(
+                                intent, context.getString(R.string.open_original_screenshot)))
+                      } catch (e: Exception) {
+                        Toast.makeText(
+                                context,
+                                context.getString(R.string.open_original_screenshot_failed),
+                                Toast.LENGTH_SHORT)
+                            .show()
+                      }
+                    },
+                modifier = Modifier.size(34.dp)) {
+                  Icon(
+                      Icons.AutoMirrored.Rounded.OpenInNew,
+                      stringResource(R.string.open_original_screenshot),
+                      modifier = Modifier.size(20.dp),
+                  )
+                }
+
+            // Direct Original Screenshot Share Button
+            IconButton(
+                onClick =
+                    hapticOnClick {
+                      try {
+                        val intent =
+                            Intent(Intent.ACTION_SEND).apply {
+                              type = "image/*"
+                              putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
+                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                        context.startActivity(
+                            Intent.createChooser(intent, "Share Original Screenshot"))
+                      } catch (e: Exception) {
+                        Toast.makeText(
+                                context, "Failed to share original screenshot", Toast.LENGTH_SHORT)
+                            .show()
+                      }
+                    },
+                modifier = Modifier.size(34.dp)) {
+                  Icon(
+                      Icons.Rounded.Share,
+                      "Share Original",
+                      modifier = Modifier.size(20.dp),
+                  )
+                }
           }
-      Spacer(modifier = Modifier.width(8.dp))
+        }
+      }
+      Spacer(modifier = Modifier.width(12.dp))
 
       // Status pill — exact copy of home page style
       if (isActivelyAnalyzing) {
@@ -506,8 +563,6 @@ fun DetailScreen(
           }
         }
       }
-
-      Spacer(modifier = Modifier.width(8.dp))
     }
 
     Box(modifier = Modifier.weight(1f).nestedScroll(nestedScrollConnection)) {

@@ -115,6 +115,8 @@
     <string name="rendering_image">Rendering image for sharing...</string>
     <string name="failed_capture">Failed to capture window bounds</string>
     <string name="share_failed">Share failed: %1$s</string>
+    <string name="open_original_screenshot">Open original screenshot</string>
+    <string name="open_original_screenshot_failed">Failed to open original screenshot</string>
     <string name="save_to_gallery">Save to Gallery</string>
     <string name="saved_to_gallery">Saved to gallery</string>
     <string name="onboarding_skip">Skip</string>
@@ -189,6 +191,12 @@
     <string name="look_similar_disclaimer">Results may vary and are not guaranteed to be exact.</string>
     <string name="look_similar_no_results">No similar images found.</string>
     <string name="look_similar_searching">Searching for similar layouts...</string>
+    <string name="duplicate_images_title">Duplicate images</string>
+    <string name="duplicate_images_none">No duplicate images found</string>
+    <string name="duplicate_images_none_desc">Images with the same content hash will appear here.</string>
+    <string name="duplicate_images_summary">%1$d duplicate images across %2$d groups</string>
+    <string name="duplicate_images_group_count">%1$d matching copies</string>
+    <string name="unknown_album">Unknown album</string>
     <string name="analyzing_screenshot">Analyzing screenshot...</string>
     <string name="no_summary_double_tap">No summary available. Double-tap status to analyze.</string>
     <string name="index_gallery">Index Gallery</string>

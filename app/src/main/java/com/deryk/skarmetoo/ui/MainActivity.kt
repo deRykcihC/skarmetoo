@@ -34,6 +34,7 @@ import androidx.navigation.navArgument
 import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.screens.DetailScreen
+import com.deryk.skarmetoo.ui.screens.DuplicateImagesScreen
 import com.deryk.skarmetoo.ui.screens.GalleryScreen
 import com.deryk.skarmetoo.ui.screens.MoreModelsScreen
 import com.deryk.skarmetoo.ui.screens.OnboardingScreen
@@ -164,6 +165,7 @@ object Routes {
   const val ONBOARDING = "onboarding"
   const val SETTINGS = "settings"
   const val MORE_MODELS = "more_models"
+  const val DUPLICATE_IMAGES = "duplicate_images"
   const val GALLERY = "gallery"
   const val DETAIL = "detail/{id}"
 
@@ -357,7 +359,8 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           val initialIndex = routeOrder.indexOf(initialRoute)
           val targetIndex = routeOrder.indexOf(targetRoute)
 
-          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.MORE_MODELS) {
+          if (initialRoute == Routes.SETTINGS &&
+              (targetRoute == Routes.MORE_MODELS || targetRoute == Routes.DUPLICATE_IMAGES)) {
             slideInHorizontally(initialOffsetX = { it }) + fadeIn()
           } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
@@ -377,7 +380,8 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           val initialIndex = routeOrder.indexOf(initialRoute)
           val targetIndex = routeOrder.indexOf(targetRoute)
 
-          if (initialRoute == Routes.SETTINGS && targetRoute == Routes.MORE_MODELS) {
+          if (initialRoute == Routes.SETTINGS &&
+              (targetRoute == Routes.MORE_MODELS || targetRoute == Routes.DUPLICATE_IMAGES)) {
             slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
           } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
@@ -394,7 +398,8 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
         popEnterTransition = {
           val initialRoute = initialState.destination.route
           val targetRoute = targetState.destination.route
-          if (initialRoute == Routes.MORE_MODELS && targetRoute == Routes.SETTINGS) {
+          if ((initialRoute == Routes.MORE_MODELS || initialRoute == Routes.DUPLICATE_IMAGES) &&
+              targetRoute == Routes.SETTINGS) {
             slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
           } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
@@ -405,7 +410,8 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
         popExitTransition = {
           val initialRoute = initialState.destination.route
           val targetRoute = targetState.destination.route
-          if (initialRoute == Routes.MORE_MODELS && targetRoute == Routes.SETTINGS) {
+          if ((initialRoute == Routes.MORE_MODELS || initialRoute == Routes.DUPLICATE_IMAGES) &&
+              targetRoute == Routes.SETTINGS) {
             slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
           } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
             slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
@@ -432,6 +438,14 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
             logoRes = logoRes,
             onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
             onOpenMoreModels = { navController.navigate(Routes.MORE_MODELS) },
+            onOpenDuplicateImages = { navController.navigate(Routes.DUPLICATE_IMAGES) },
+        )
+      }
+      composable(Routes.DUPLICATE_IMAGES) {
+        DuplicateImagesScreen(
+            viewModel = viewModel,
+            onBack = { navController.popBackStack() },
+            onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
         )
       }
       composable(Routes.MORE_MODELS) {
@@ -457,14 +471,25 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
           arguments = listOf(navArgument("id") { type = NavType.LongType }),
       ) { backStackEntry ->
         val id = backStackEntry.arguments?.getLong("id") ?: return@composable
+        val previousRoute = navController.previousBackStackEntry?.destination?.route
         DetailScreen(
             viewModel = viewModel,
             semanticViewModel = semanticViewModel,
             entryId = id,
-            onBack = { navController.popBackStack(Routes.GALLERY, inclusive = false) },
+            onBack = {
+              if (previousRoute == Routes.DUPLICATE_IMAGES) {
+                navController.popBackStack()
+              } else {
+                navController.popBackStack(Routes.GALLERY, inclusive = false)
+              }
+            },
             onTagClick = { tag ->
               viewModel.setSearchQuery(tag)
-              navController.popBackStack(Routes.GALLERY, inclusive = false)
+              if (previousRoute == Routes.DUPLICATE_IMAGES) {
+                navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
+              } else {
+                navController.popBackStack(Routes.GALLERY, inclusive = false)
+              }
             },
             onScreenshotClick = { matchedId -> navController.navigate(Routes.detail(matchedId)) })
       }

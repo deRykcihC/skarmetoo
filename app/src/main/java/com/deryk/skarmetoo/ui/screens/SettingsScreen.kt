@@ -3,7 +3,9 @@ package com.deryk.skarmetoo.ui.screens
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,6 +60,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private data class SourceFolderBreakdown(
+    val name: String,
+    val bucketId: String,
+    val count: Int,
+)
+
+private data class MediaStoreAlbumRef(
+    val name: String,
+    val bucketId: String,
+)
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
@@ -67,6 +80,7 @@ fun SettingsScreen(
     logoRes: Int = R.drawable.app_logo,
     onRevisitTutorial: () -> Unit = {},
     onOpenMoreModels: () -> Unit = {},
+    onOpenDuplicateImages: () -> Unit = {},
 ) {
   val isModelReady by viewModel.isModelReady.collectAsState()
   val modelStatus by viewModel.modelStatus.collectAsState()
@@ -598,6 +612,39 @@ fun SettingsScreen(
       ) {
         Column(
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)) {
+              val uriBackedUnselectedAlbumCounts by
+                  produceState(
+                      initialValue = emptyList<SourceFolderBreakdown>(),
+                      key1 = sourceAllScreenshots.map { it.imageUri },
+                      key2 = selectedAlbums,
+                  ) {
+                    value =
+                        withContext(Dispatchers.IO) {
+                          sourceAllScreenshots
+                              .asSequence()
+                              .filter { it.imageUri.isNotBlank() }
+                              .distinctBy { it.imageUri }
+                              .mapNotNull { queryAlbumRefForUri(context, it.imageUri) }
+                              .filter { it.bucketId !in selectedAlbums }
+                              .groupingBy { it }
+                              .eachCount()
+                              .map { (album, count) ->
+                                SourceFolderBreakdown(
+                                    name = album.name,
+                                    bucketId = album.bucketId,
+                                    count = count,
+                                )
+                              }
+                              .sortedByDescending { it.count }
+                              .toList()
+                        }
+                  }
+              val albumCounts =
+                  availableAlbums
+                      .filter { it.bucketId in selectedAlbums }
+                      .map { SourceFolderBreakdown(it.name, it.bucketId, it.count) } +
+                      uriBackedUnselectedAlbumCounts
+
               Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = CircleShape,
@@ -629,7 +676,6 @@ fun SettingsScreen(
 
               Spacer(modifier = Modifier.height(8.dp))
 
-              val albumCounts = availableAlbums.filter { it.bucketId in selectedAlbums }
               val primaryColor = MaterialTheme.colorScheme.primary
               val chartColors =
                   remember(primaryColor) {
@@ -658,7 +704,7 @@ fun SettingsScreen(
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically) {
-                    if (selectedAlbums.isNotEmpty()) {
+                    if (albumCounts.isNotEmpty()) {
                       val totalInMap = albumCounts.sumOf { it.count }.coerceAtLeast(1)
                       Row(
                           modifier =
@@ -718,7 +764,7 @@ fun SettingsScreen(
                     }
                   }
 
-              if (selectedAlbums.isNotEmpty()) {
+              if (albumCounts.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Column {
@@ -761,15 +807,28 @@ fun SettingsScreen(
                                       }
                                   Spacer(modifier = Modifier.width(12.dp))
                                   Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = album.name,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow =
-                                            androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                      Text(
+                                          text = album.name,
+                                          style = MaterialTheme.typography.bodySmall,
+                                          fontWeight = FontWeight.Medium,
+                                          color = MaterialTheme.colorScheme.onSurface,
+                                          maxLines = 1,
+                                          overflow =
+                                              androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                          modifier = Modifier.weight(1f),
+                                      )
+                                      Spacer(modifier = Modifier.width(8.dp))
+                                      Text(
+                                          text = album.count.toString(),
+                                          style = MaterialTheme.typography.bodySmall,
+                                          fontWeight = FontWeight.SemiBold,
+                                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                      )
+                                    }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     LinearProgressIndicator(
                                         progress = { album.count.toFloat() / totalInMap },
@@ -2710,6 +2769,17 @@ fun SettingsScreen(
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
               ) {
+                IconButton(
+                    onClick = hapticOnClick(onOpenDuplicateImages),
+                    modifier = Modifier.size(28.dp),
+                ) {
+                  Icon(
+                      imageVector = Icons.Rounded.ChevronRight,
+                      contentDescription = stringResource(R.string.duplicate_images_title),
+                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                      modifier = Modifier.size(20.dp),
+                  )
+                }
                 if (sourceIsSemanticIndexing) {
                   CircularProgressIndicator(
                       modifier = Modifier.size(16.dp),
@@ -4032,6 +4102,55 @@ private fun ActiveImportedModelCard(
       }
     }
   }
+}
+
+private fun queryAlbumRefForUri(
+    context: android.content.Context,
+    imageUri: String,
+): MediaStoreAlbumRef? {
+  if (imageUri.isBlank()) return null
+
+  val uri = runCatching { Uri.parse(imageUri) }.getOrNull() ?: return null
+  return runCatching {
+        context.contentResolver
+            .query(
+                uri,
+                arrayOf(
+                    MediaStore.Images.Media.BUCKET_ID,
+                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+                ),
+                null,
+                null,
+                null,
+            )
+            ?.use { cursor ->
+              if (!cursor.moveToFirst()) return@use null
+
+              val bucketId =
+                  cursor
+                      .getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID))
+                      ?.takeIf { it.isNotBlank() }
+              val bucketName =
+                  cursor
+                      .getString(
+                          cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME))
+                      ?.takeIf { it.isNotBlank() }
+
+              if (bucketId != null) {
+                MediaStoreAlbumRef(
+                    name = bucketName ?: context.getString(R.string.unknown_album),
+                    bucketId = bucketId,
+                )
+              } else {
+                null
+              }
+            }
+      }
+      .getOrNull()
+      ?: MediaStoreAlbumRef(
+          name = context.getString(R.string.unknown_album),
+          bucketId = "unknown_uri_album",
+      )
 }
 
 @Composable

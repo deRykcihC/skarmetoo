@@ -1,6 +1,6 @@
 # Skarmetoo
 
-v1.13
+v1.14
 
 Last updated: 2026-06-25 17:42:02 +08:00
 

@@ -2136,6 +2136,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
   }
 
   Scaffold(
+      contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
       bottomBar = {
         Surface(
             color = MaterialTheme.colorScheme.surface,
@@ -2178,7 +2179,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().padding(innerPadding),
-            contentPadding = PaddingValues(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 24.dp),
+            contentPadding = PaddingValues(start = 16.dp, top = 0.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
               sections.forEach { section -> item { OnboardingSectionBlock(section = section) } }

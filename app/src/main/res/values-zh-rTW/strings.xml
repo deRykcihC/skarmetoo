@@ -115,6 +115,8 @@
     <string name="rendering_image">正在渲染分享圖片...</string>
     <string name="failed_capture">無法擷取視窗畫面</string>
     <string name="share_failed">分享失敗：%1$s</string>
+    <string name="open_original_screenshot">開啟原始截圖</string>
+    <string name="open_original_screenshot_failed">無法開啟原始截圖</string>
     <string name="save_to_gallery">儲存至相簿</string>
     <string name="saved_to_gallery">已儲存至相簿</string>
     <string name="onboarding_skip">跳過</string>
@@ -189,6 +191,12 @@
     <string name="look_similar_disclaimer">系統會依畫面構圖與內容估算相似度，結果僅供參考，不一定完全一致。</string>
     <string name="look_similar_no_results">找不到相似圖片。</string>
     <string name="look_similar_searching">正在搜尋相似版面...</string>
+    <string name="duplicate_images_title">重複圖片</string>
+    <string name="duplicate_images_none">找不到重複圖片</string>
+    <string name="duplicate_images_none_desc">具有相同內容雜湊的圖片會顯示在這裡。</string>
+    <string name="duplicate_images_summary">%1$d 張重複圖片，分成 %2$d 組</string>
+    <string name="duplicate_images_group_count">%1$d 張相同副本</string>
+    <string name="unknown_album">未知相簿</string>
     <string name="analyzing_screenshot">正在分析螢幕截圖...</string>
     <string name="no_summary_double_tap">暫無摘要。點兩下狀態即可分析。</string>
     <string name="index_gallery">索引圖庫</string>
