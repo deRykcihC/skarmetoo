@@ -84,6 +84,7 @@ fun DetailScreen(
     onBack: () -> Unit,
     onTagClick: (String) -> Unit = {},
     onScreenshotClick: (Long) -> Unit = {},
+    swipeEntryIds: List<Long>? = null,
 ) {
   val entries by viewModel.entries.collectAsState()
   val entry = entries.find { it.id == entryId }
@@ -140,29 +141,49 @@ fun DetailScreen(
       }
   val currentAlbumImageIndex =
       remember(albumImageUris, entry.imageUri) { albumImageUris.indexOf(entry.imageUri) }
+  val swipeIds =
+      remember(swipeEntryIds, entries) {
+        swipeEntryIds
+            ?.mapNotNull { id -> entries.firstOrNull { it.id == id }?.id }
+            ?.distinct()
+            .orEmpty()
+      }
+  val currentSwipeIndex =
+      remember(swipeIds, currentAlbumImageIndex, entry.id) {
+        if (swipeEntryIds != null) swipeIds.indexOf(entry.id) else currentAlbumImageIndex
+      }
+  val swipeItemCount = if (swipeEntryIds != null) swipeIds.size else albumImageUris.size
   val swipeThresholdPx = remember(density) { with(density) { 72.dp.toPx() } }
   var albumImageDragAmount by remember(entryId) { mutableFloatStateOf(0f) }
   var isSwitchingAlbumImage by remember(entryId) { mutableStateOf(false) }
 
   fun switchAlbumImage(direction: Int) {
-    if (isSwitchingAlbumImage || currentAlbumImageIndex == -1 || albumImageUris.size <= 1) return
+    if (isSwitchingAlbumImage || currentSwipeIndex == -1 || swipeItemCount <= 1) return
 
-    val nextIndex = (currentAlbumImageIndex + direction).coerceIn(0, albumImageUris.lastIndex)
-    if (nextIndex == currentAlbumImageIndex) return
+    val nextIndex = (currentSwipeIndex + direction).coerceIn(0, swipeItemCount - 1)
+    if (nextIndex == currentSwipeIndex) return
 
-    val nextUriString = albumImageUris[nextIndex]
-    val nextEntryId = entryIdByImageUri[nextUriString]
     isSwitchingAlbumImage = true
     viewModel.updateNote(entryId, noteText)
 
-    if (nextEntryId != null) {
-      onScreenshotClick(nextEntryId)
+    if (swipeEntryIds != null) {
+      val nextEntryId = swipeIds.getOrNull(nextIndex)
+      if (nextEntryId != null) {
+        onScreenshotClick(nextEntryId)
+      }
       isSwitchingAlbumImage = false
     } else {
-      viewModel.getOrCreateEntryForUri(Uri.parse(nextUriString)) { newId ->
+      val nextUriString = albumImageUris[nextIndex]
+      val nextEntryId = entryIdByImageUri[nextUriString]
+      if (nextEntryId != null) {
+        onScreenshotClick(nextEntryId)
         isSwitchingAlbumImage = false
-        if (newId > 0L) {
-          onScreenshotClick(newId)
+      } else {
+        viewModel.getOrCreateEntryForUri(Uri.parse(nextUriString)) { newId ->
+          isSwitchingAlbumImage = false
+          if (newId > 0L) {
+            onScreenshotClick(newId)
+          }
         }
       }
     }
@@ -171,8 +192,8 @@ fun DetailScreen(
   fun Modifier.swipeAlbumImages(): Modifier =
       pointerInput(
           entryId,
-          currentAlbumImageIndex,
-          albumImageUris.size,
+          currentSwipeIndex,
+          swipeItemCount,
           isSwitchingAlbumImage,
       ) {
         detectHorizontalDragGestures(

@@ -168,8 +168,11 @@ object Routes {
   const val DUPLICATE_IMAGES = "duplicate_images"
   const val GALLERY = "gallery"
   const val DETAIL = "detail/{id}"
+  const val DUPLICATE_DETAIL = "detail/{id}/duplicate"
 
   fun detail(id: Long) = "detail/$id"
+
+  fun duplicateDetail(id: Long) = "detail/$id/duplicate"
 }
 
 fun android.content.Context.findComponentActivity(): ComponentActivity? {
@@ -445,7 +448,7 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
         DuplicateImagesScreen(
             viewModel = viewModel,
             onBack = { navController.popBackStack() },
-            onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
+            onScreenshotClick = { id -> navController.navigate(Routes.duplicateDetail(id)) },
         )
       }
       composable(Routes.MORE_MODELS) {
@@ -492,6 +495,40 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
               }
             },
             onScreenshotClick = { matchedId -> navController.navigate(Routes.detail(matchedId)) })
+      }
+      composable(
+          Routes.DUPLICATE_DETAIL,
+          arguments = listOf(navArgument("id") { type = NavType.LongType }),
+      ) { backStackEntry ->
+        val id = backStackEntry.arguments?.getLong("id") ?: return@composable
+        val entries by viewModel.entries.collectAsState()
+        val duplicateSwipeEntryIds =
+            remember(id, entries) {
+              val imageHash = entries.firstOrNull { it.id == id }?.imageHash.orEmpty()
+              if (imageHash.isBlank()) {
+                null
+              } else {
+                entries
+                    .filter { it.imageHash == imageHash }
+                    .sortedByDescending { it.sortKey }
+                    .map { it.id }
+                    .takeIf { it.size > 1 }
+              }
+            }
+        DetailScreen(
+            viewModel = viewModel,
+            semanticViewModel = semanticViewModel,
+            entryId = id,
+            onBack = { navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false) },
+            onTagClick = { tag ->
+              viewModel.setSearchQuery(tag)
+              navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
+            },
+            onScreenshotClick = { matchedId ->
+              navController.navigate(Routes.duplicateDetail(matchedId))
+            },
+            swipeEntryIds = duplicateSwipeEntryIds,
+        )
       }
     }
   }

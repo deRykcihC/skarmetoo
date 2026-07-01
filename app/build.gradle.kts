@@ -18,8 +18,8 @@ android {
     applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 31
-    versionName = "1.14"
+    versionCode = 32
+    versionName = "1.15"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -44,6 +44,8 @@ android {
   }
 
   buildTypes {
+    debug { applicationIdSuffix = ".alt" }
+
     release {
       isMinifyEnabled = true
       isShrinkResources = true

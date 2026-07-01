@@ -2135,6 +2135,8 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
     }
   }
 
+  val bottomActionBarInset = WindowInsets.tappableElement.asPaddingValues().calculateBottomPadding()
+
   Scaffold(
       contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
       bottomBar = {
@@ -2145,8 +2147,8 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
           Row(
               modifier =
                   Modifier.fillMaxWidth()
-                      .navigationBarsPadding()
-                      .padding(horizontal = 16.dp, vertical = 12.dp),
+                      .padding(horizontal = 16.dp)
+                      .padding(top = 10.dp, bottom = 10.dp + bottomActionBarInset),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.End) {
                 FilledTonalIconButton(

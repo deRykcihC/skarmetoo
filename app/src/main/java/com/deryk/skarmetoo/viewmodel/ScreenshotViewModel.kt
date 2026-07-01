@@ -653,7 +653,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
   }
 
-  private val _isAnalysisPaused = MutableStateFlow(false)
+  private val _isAnalysisPaused = MutableStateFlow(prefs.getBoolean("is_analysis_paused", false))
   val isAnalysisPaused: StateFlow<Boolean> = _isAnalysisPaused.asStateFlow()
 
   fun toggleAnalysisPause() {
@@ -661,6 +661,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         synchronized(analysisLifecycleLock) {
           val paused = !_isAnalysisPaused.value
           _isAnalysisPaused.value = paused
+          prefs.edit().putBoolean("is_analysis_paused", paused).apply()
           paused
         }
 
@@ -2245,6 +2246,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       return
     }
     _isAnalysisPaused.value = false
+    prefs.edit().putBoolean("is_analysis_paused", false).apply()
     launchAnalysisQueue()
   }
 
@@ -2272,6 +2274,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
       withContext(Dispatchers.Main) {}
       _isAnalysisPaused.value = false
+      prefs.edit().putBoolean("is_analysis_paused", false).apply()
       launchAnalysisQueue()
     }
   }
