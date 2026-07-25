@@ -883,8 +883,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
               } else if (cachedAicoreStatus == FeatureStatus.DOWNLOADING) {
                 setModelStatusImmediate("AICore downloading...")
                 _isModelReady.value = false
+              } else if (cachedAicoreStatus == FeatureStatus.DOWNLOADABLE) {
+                setModelStatusImmediate("AICore supported — download required")
+                _isModelReady.value = false
               } else {
-                setModelStatusImmediate("AICore unsupported")
+                setModelStatusImmediate("AICore not available")
                 _isModelReady.value = false
               }
             } else if (selected == ModelType.GGUF) {
@@ -1087,7 +1090,19 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   fun triggerAicoreRescan() {
     viewModelScope.launch(Dispatchers.IO) {
-      val status = aicoreManager.checkStatus()
+      var status = aicoreManager.checkStatus()
+
+      // DOWNLOADABLE means the device supports Prompt API but its model assets are not installed.
+      // Selecting AICore is explicit user intent, so start the required model download.
+      if (status == FeatureStatus.DOWNLOADABLE && _selectedModel.value == ModelType.AICORE) {
+        _aicoreCachedStatus.value = FeatureStatus.DOWNLOADING
+        prefs.edit().putInt("aicore_cached_status", FeatureStatus.DOWNLOADING).apply()
+        setModelStatusImmediate("AICore downloading...")
+        _isModelReady.value = false
+        _isModelFound.value = true
+        status = aicoreManager.requestDownload()
+      }
+
       _aicoreCachedStatus.value = status
       prefs.edit().putInt("aicore_cached_status", status).apply()
 
@@ -1102,9 +1117,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         } else if (status == FeatureStatus.DOWNLOADING) {
           setModelStatusImmediate("AICore downloading...")
           _isModelReady.value = false
-          _isModelFound.value = false
+          _isModelFound.value = true
+        } else if (status == FeatureStatus.DOWNLOADABLE) {
+          setModelStatusImmediate("AICore supported — download required")
+          _isModelReady.value = false
+          _isModelFound.value = true
         } else {
-          setModelStatusImmediate("AICore unsupported")
+          setModelStatusImmediate("AICore not available")
           _isModelReady.value = false
           _isModelFound.value = false
         }

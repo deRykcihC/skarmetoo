@@ -1,5 +1,6 @@
 package com.deryk.skarmetoo.ui.screens
 
+import android.content.res.Configuration
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,8 +10,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +52,7 @@ fun MoreModelsScreen(
     onActivateModel: (GgufModelInfo) -> Unit = {},
 ) {
   val context = LocalContext.current
+  val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
   val scope = rememberCoroutineScope()
   var importedModelFile by remember { mutableStateOf(ImportedGgufModelStore.getModelFile(context)) }
   var importedMmprojFile by remember {
@@ -99,6 +104,74 @@ fun MoreModelsScreen(
     arrayOf("application/octet-stream", "application/x-gguf", "*/*")
   }
 
+  val importPaneContent: @Composable ColumnScope.() -> Unit = {
+    Text(
+        text = stringResource(R.string.import_section_title),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.Medium,
+    )
+
+    ImportFileSection(
+        title = stringResource(R.string.import_gguf_model),
+        description =
+            when {
+              isImportingModel -> stringResource(R.string.importing_model)
+              importedModelFile != null -> importedModelFile!!.name
+              else -> stringResource(R.string.import_gguf_model_desc)
+            },
+        fileType = ".gguf",
+        enabled = !isImportingModel && !isImportingMmproj,
+        onClick = { modelPicker.launch(pickerMimeTypes) },
+    )
+
+    ImportFileSection(
+        title = stringResource(R.string.import_mmproj_model),
+        description =
+            when {
+              isImportingMmproj -> stringResource(R.string.importing_model)
+              importedMmprojFile != null -> importedMmprojFile!!.name
+              else -> stringResource(R.string.import_mmproj_model_desc)
+            },
+        fileType = "mmproj .gguf",
+        enabled = !isImportingModel && !isImportingMmproj,
+        onClick = { mmprojPicker.launch(pickerMimeTypes) },
+    )
+
+    ImportGuideCard()
+  }
+
+  val loadedModelsPaneContent: @Composable ColumnScope.() -> Unit = {
+    Text(
+        text = stringResource(R.string.loaded_models),
+        modifier = Modifier.padding(top = if (isLandscape) 0.dp else 8.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.Medium,
+    )
+
+    if (importedModelFile != null) {
+      ImportedModelCard(
+          modelFile = importedModelFile!!,
+          mmprojFile = importedMmprojFile,
+          onClick = { ImportedGgufModelStore.getModelInfo(context)?.let(onActivateModel) },
+      )
+    } else {
+      Surface(
+          modifier = Modifier.fillMaxWidth(),
+          shape = MaterialTheme.shapes.large,
+          color = MaterialTheme.colorScheme.surfaceContainerLowest,
+      ) {
+        Text(
+            text = stringResource(R.string.more_models_empty_desc),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    }
+  }
+
   Column(
       modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
   ) {
@@ -120,75 +193,32 @@ fun MoreModelsScreen(
       )
     }
 
-    Column(
-        modifier =
-            Modifier.fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      Text(
-          text = stringResource(R.string.import_section_title),
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          fontWeight = FontWeight.Medium,
-      )
-
-      ImportFileSection(
-          title = stringResource(R.string.import_gguf_model),
-          description =
-              when {
-                isImportingModel -> stringResource(R.string.importing_model)
-                importedModelFile != null -> importedModelFile!!.name
-                else -> stringResource(R.string.import_gguf_model_desc)
-              },
-          fileType = ".gguf",
-          enabled = !isImportingModel && !isImportingMmproj,
-          onClick = { modelPicker.launch(pickerMimeTypes) },
-      )
-
-      ImportFileSection(
-          title = stringResource(R.string.import_mmproj_model),
-          description =
-              when {
-                isImportingMmproj -> stringResource(R.string.importing_model)
-                importedMmprojFile != null -> importedMmprojFile!!.name
-                else -> stringResource(R.string.import_mmproj_model_desc)
-              },
-          fileType = "mmproj .gguf",
-          enabled = !isImportingModel && !isImportingMmproj,
-          onClick = { mmprojPicker.launch(pickerMimeTypes) },
-      )
-
-      ImportGuideCard()
-
-      Text(
-          text = stringResource(R.string.loaded_models),
-          modifier = Modifier.padding(top = 8.dp),
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          fontWeight = FontWeight.Medium,
-      )
-
-      if (importedModelFile != null) {
-        ImportedModelCard(
-            modelFile = importedModelFile!!,
-            mmprojFile = importedMmprojFile,
-            onClick = { ImportedGgufModelStore.getModelInfo(context)?.let(onActivateModel) },
+    if (isLandscape) {
+      Row(
+          modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
+          horizontalArrangement = Arrangement.spacedBy(20.dp),
+      ) {
+        Column(
+            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = importPaneContent,
         )
-      } else {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        ) {
-          Text(
-              text = stringResource(R.string.more_models_empty_desc),
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
+        Column(
+            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = loadedModelsPaneContent,
+        )
+      }
+    } else {
+      Column(
+          modifier =
+              Modifier.fillMaxSize()
+                  .verticalScroll(rememberScrollState())
+                  .padding(horizontal = 16.dp, vertical = 8.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        importPaneContent()
+        loadedModelsPaneContent()
       }
     }
   }

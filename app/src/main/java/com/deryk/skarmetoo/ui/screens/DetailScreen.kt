@@ -1,6 +1,7 @@
 package com.deryk.skarmetoo.ui.screens
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -23,6 +24,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -95,6 +97,7 @@ fun DetailScreen(
   val context = LocalContext.current
   val isDark = LocalIsDarkMode.current
   val scrollState = rememberScrollState()
+  val landscapeScrollState = rememberScrollState()
 
   if (entry == null) {
     LaunchedEffect(Unit) { onBack() }
@@ -130,8 +133,11 @@ fun DetailScreen(
   var showSimilarSection by remember(entryId) { mutableStateOf(false) }
   var isLoaderActive by remember(entryId) { mutableStateOf(false) }
   var isResettingLoader by remember(entryId) { mutableStateOf(false) }
+  var landscapeRestingScrollEnd by remember(entryId) { mutableIntStateOf(0) }
   val dragProgress = remember { Animatable(0f) }
   val density = androidx.compose.ui.platform.LocalDensity.current
+  val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+  val landscapeActionRailWidth = 80.dp
   val showDetailsTitle = LocalConfiguration.current.screenWidthDp >= 390
   val maxDragPx = remember(density) { with(density) { 180.dp.toPx() } }
   val albumImageUris = remember(albumImages) { albumImages.map { it.uri.toString() } }
@@ -253,9 +259,6 @@ fun DetailScreen(
 
             if (overscrollY > 0f && dragProgress.value > 0f) {
               val newProgress = (dragProgress.value - (overscrollY / maxDragPx)).coerceAtLeast(0f)
-              if (newProgress <= 0f) {
-                isLoaderActive = false
-              }
               coroutineScope.launch { dragProgress.snapTo(newProgress) }
               return Offset(0f, overscrollY)
             }
@@ -282,6 +285,93 @@ fun DetailScreen(
                   targetValue = 0f,
                   animationSpec = tween(durationMillis = resetDurationMs, easing = LinearEasing),
               )
+              isResettingLoader = false
+              isLoaderActive = false
+            }
+            return Velocity.Zero
+          }
+        }
+      }
+
+  val landscapeNestedScrollConnection =
+      remember(entryId, isSemanticModelReady, showSimilarSection) {
+        object : NestedScrollConnection {
+          override fun onPostScroll(
+              consumed: Offset,
+              available: Offset,
+              source: NestedScrollSource,
+          ): Offset {
+            if (!isSemanticModelReady || showSimilarSection) return Offset.Zero
+            val isAtEnd = landscapeScrollState.value >= landscapeScrollState.maxValue
+            val overscrollX = available.x
+
+            if (isAtEnd && overscrollX < 0f) {
+              if (!isLoaderActive) {
+                landscapeRestingScrollEnd = landscapeScrollState.maxValue
+              }
+              isLoaderActive = true
+              isResettingLoader = false
+              val previousProgress = dragProgress.value
+              val newProgress = (dragProgress.value + (-overscrollX / maxDragPx)).coerceIn(0f, 1f)
+              if (previousProgress < 1f && newProgress >= 1f) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+              }
+              coroutineScope.launch { dragProgress.snapTo(newProgress) }
+              return Offset(overscrollX, 0f)
+            }
+
+            // Only let an intentional finger drag reduce the reveal amount. The scrollable sends
+            // a positive SideEffect delta while settling after release; consuming that here would
+            // snap the loader to zero before onPostFling can animate the bounce-back.
+            if (source == NestedScrollSource.UserInput &&
+                overscrollX > 0f &&
+                dragProgress.value > 0f) {
+              val newProgress = (dragProgress.value - (overscrollX / maxDragPx)).coerceAtLeast(0f)
+              coroutineScope.launch { dragProgress.snapTo(newProgress) }
+              return Offset(overscrollX, 0f)
+            }
+
+            return Offset.Zero
+          }
+
+          override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+            if (dragProgress.value >= 0.99f) {
+              showSimilarSection = true
+              isResettingLoader = false
+              isLoaderActive = false
+              dragProgress.snapTo(0f)
+              return Velocity.Zero
+            }
+
+            if (showSimilarSection) return Velocity.Zero
+            if (dragProgress.value > 0f) {
+              isLoaderActive = true
+              isResettingLoader = true
+              // Return to the exact boundary from before the temporary loader lane was inserted.
+              // This lets the image and context panels slide back instead of jumping when the
+              // loader is removed.
+              val resetScrollTarget =
+                  landscapeScrollState.value.coerceAtMost(landscapeRestingScrollEnd)
+              val resetDurationMs =
+                  (260 * dragProgress.value.coerceIn(0f, 1f)).toInt().coerceAtLeast(120)
+              kotlinx.coroutines.coroutineScope {
+                launch {
+                  dragProgress.animateTo(
+                      targetValue = 0f,
+                      animationSpec =
+                          tween(durationMillis = resetDurationMs, easing = LinearEasing),
+                  )
+                }
+                launch {
+                  if (landscapeScrollState.value > resetScrollTarget) {
+                    landscapeScrollState.animateScrollTo(
+                        value = resetScrollTarget,
+                        animationSpec =
+                            tween(durationMillis = resetDurationMs, easing = LinearEasing),
+                    )
+                  }
+                }
+              }
               isResettingLoader = false
               isLoaderActive = false
             }
@@ -373,575 +463,847 @@ fun DetailScreen(
     }
   }
 
-  Column(
+  Box(
       modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
   ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier =
+            Modifier.fillMaxSize()
+                .padding(start = if (isLandscape) landscapeActionRailWidth else 0.dp),
     ) {
-      IconButton(
-          onClick =
-              hapticOnClick {
-                viewModel.updateNote(entryId, noteText)
-                onBack()
-              }) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
-          }
-      if (showDetailsTitle) {
-        Text(
-            stringResource(R.string.details_title),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-      }
-      Spacer(modifier = Modifier.weight(1f))
-
-      CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            shape = RoundedCornerShape(14.dp),
+      if (!isLandscape) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-          Row(
-              modifier = Modifier.padding(4.dp),
-              horizontalArrangement = Arrangement.spacedBy(4.dp),
-              verticalAlignment = Alignment.CenterVertically,
-          ) {
-            // Custom Rendered Share Card Button
-            IconButton(
-                onClick =
-                    hapticOnClick { ShareUtils.shareScreenshotContent(context, entry, noteText) },
-                modifier = Modifier.size(34.dp)) {
-                  Icon(
-                      Icons.Rounded.Style,
-                      "Generate Share Card",
-                      modifier = Modifier.size(20.dp),
+          IconButton(
+              onClick =
+                  hapticOnClick {
+                    viewModel.updateNote(entryId, noteText)
+                    onBack()
+                  }) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
+              }
+          if (showDetailsTitle) {
+            Text(
+                stringResource(R.string.details_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+          }
+          Spacer(modifier = Modifier.weight(1f))
+
+          CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+              Row(
+                  modifier = Modifier.padding(4.dp),
+                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                // Custom Rendered Share Card Button
+                IconButton(
+                    onClick =
+                        hapticOnClick {
+                          ShareUtils.shareScreenshotContent(context, entry, noteText)
+                        },
+                    modifier = Modifier.size(34.dp)) {
+                      Icon(
+                          Icons.Rounded.Style,
+                          "Generate Share Card",
+                          modifier = Modifier.size(20.dp),
+                      )
+                    }
+
+                // Open Original Screenshot Button
+                IconButton(
+                    onClick =
+                        hapticOnClick {
+                          try {
+                            val intent =
+                                Intent(Intent.ACTION_VIEW).apply {
+                                  setDataAndType(Uri.parse(entry.imageUri), "image/*")
+                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                            context.startActivity(
+                                Intent.createChooser(
+                                    intent, context.getString(R.string.open_original_screenshot)))
+                          } catch (e: Exception) {
+                            Toast.makeText(
+                                    context,
+                                    context.getString(R.string.open_original_screenshot_failed),
+                                    Toast.LENGTH_SHORT)
+                                .show()
+                          }
+                        },
+                    modifier = Modifier.size(34.dp)) {
+                      Icon(
+                          Icons.AutoMirrored.Rounded.OpenInNew,
+                          stringResource(R.string.open_original_screenshot),
+                          modifier = Modifier.size(20.dp),
+                      )
+                    }
+
+                // Direct Original Screenshot Share Button
+                IconButton(
+                    onClick =
+                        hapticOnClick {
+                          try {
+                            val intent =
+                                Intent(Intent.ACTION_SEND).apply {
+                                  type = "image/*"
+                                  putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
+                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                            context.startActivity(
+                                Intent.createChooser(intent, "Share Original Screenshot"))
+                          } catch (e: Exception) {
+                            Toast.makeText(
+                                    context,
+                                    "Failed to share original screenshot",
+                                    Toast.LENGTH_SHORT)
+                                .show()
+                          }
+                        },
+                    modifier = Modifier.size(34.dp)) {
+                      Icon(
+                          Icons.Rounded.Share,
+                          "Share Original",
+                          modifier = Modifier.size(20.dp),
+                      )
+                    }
+              }
+            }
+          }
+          Spacer(modifier = Modifier.width(12.dp))
+
+          // Status pill — exact copy of home page style
+          if (isActivelyAnalyzing) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.clip(RoundedCornerShape(16.dp)),
+            ) {
+              Row(
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                if (analyzingCount > 1) {
+                  Box(
+                      modifier =
+                          Modifier.size(16.dp)
+                              .background(
+                                  MaterialTheme.colorScheme.error,
+                                  androidx.compose.foundation.shape.CircleShape),
+                      contentAlignment = Alignment.Center) {
+                        Text(
+                            text = if (analyzingCount > 5) "5+" else analyzingCount.toString(),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            fontWeight = FontWeight.Bold,
+                        )
+                      }
+                } else {
+                  CircularProgressIndicator(
+                      progress = { entryProgressMap[entry.id] ?: currentImageProgress },
+                      modifier = Modifier.size(14.dp),
+                      strokeWidth = 2.dp,
+                      color = MaterialTheme.colorScheme.error,
+                      trackColor = MaterialTheme.colorScheme.errorContainer,
+                  )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    stringResource(R.string.analyzing),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error,
+                )
+              }
+            }
+          } else if (isPending) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier =
+                    Modifier.clip(RoundedCornerShape(16.dp))
+                        .combinedClickable(
+                            onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
+                            onClick = hapticOnClick {},
+                        ),
+            ) {
+              Row(
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Icon(
+                    Icons.Rounded.Schedule,
+                    null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    stringResource(R.string.pending),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error,
+                )
+              }
+            }
+          } else {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier =
+                    Modifier.clip(RoundedCornerShape(16.dp))
+                        .combinedClickable(
+                            onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
+                            onClick = hapticOnClick {},
+                        ),
+            ) {
+              Row(
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Icon(
+                    Icons.Rounded.CheckCircle,
+                    null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    stringResource(R.string.done),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+              }
+            }
+          }
+        }
+      }
+
+      Box(
+          modifier =
+              Modifier.weight(1f)
+                  .then(
+                      if (isLandscape) Modifier
+                      else Modifier.nestedScroll(nestedScrollConnection))) {
+            val imageSection: @Composable () -> Unit = {
+              Column {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    modifier =
+                        Modifier.fillMaxWidth()
+                            .then(if (isLandscape) Modifier else Modifier.swipeAlbumImages())
+                            .clickable { showFullscreenImage = true },
+                ) {
+                  if (entry.imageUri.isNotBlank()) {
+                    var isMainImageLoaded by remember(entry.id) { mutableStateOf(false) }
+                    val mainImageAlpha by
+                        animateFloatAsState(
+                            targetValue = if (isMainImageLoaded) 1f else 0f,
+                            animationSpec = tween(durationMillis = 350),
+                            label = "mainImageFade",
+                        )
+
+                    AsyncImage(
+                        model = entry.imageUri,
+                        contentDescription = entry.summary,
+                        onSuccess = { isMainImageLoaded = true },
+                        modifier =
+                            Modifier.fillMaxWidth().heightIn(max = 350.dp).graphicsLayer {
+                              alpha = mainImageAlpha
+                            },
+                        contentScale = ContentScale.Fit,
+                    )
+                  } else {
+                    Box(
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .height(200.dp)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                      Icon(
+                          Icons.Rounded.BrokenImage,
+                          null,
+                          tint = MaterialTheme.colorScheme.outline,
+                          modifier = Modifier.size(48.dp),
+                      )
+                    }
+                  }
+                  if (isActivelyAnalyzing) {
+                    LinearProgressIndicator(
+                        progress = { entryProgressMap[entry.id] ?: currentImageProgress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                  }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+              }
+            }
+
+            val detailsSection: @Composable () -> Unit = {
+              Column {
+                // Summary
+                if (entry.summary.isNotBlank()) {
+                  Text(
+                      text = entry.summary,
+                      style =
+                          MaterialTheme.typography.bodyLarge.copy(
+                              hyphens = Hyphens.Auto,
+                              lineBreak = LineBreak.Paragraph,
+                              platformStyle =
+                                  PlatformTextStyle(
+                                      includeFontPadding = false,
+                                  ),
+                          ),
+                      color = MaterialTheme.colorScheme.onBackground,
+                      lineHeight = 26.sp,
+                      textAlign = TextAlign.Justify,
+                      modifier =
+                          Modifier.fillMaxWidth()
+                              .then(if (isLandscape) Modifier else Modifier.swipeAlbumImages()),
+                  )
+                } else if (isActivelyAnalyzing) {
+                  Text(
+                      stringResource(R.string.analyzing_screenshot),
+                      style = MaterialTheme.typography.bodyLarge,
+                      color = MaterialTheme.colorScheme.primary,
+                      modifier =
+                          Modifier.fillMaxWidth()
+                              .then(if (isLandscape) Modifier else Modifier.swipeAlbumImages()),
+                  )
+                } else {
+                  Text(
+                      stringResource(R.string.no_summary_double_tap),
+                      style = MaterialTheme.typography.bodyLarge,
+                      color = MaterialTheme.colorScheme.outline,
+                      modifier =
+                          Modifier.fillMaxWidth()
+                              .then(if (isLandscape) Modifier else Modifier.swipeAlbumImages()),
                   )
                 }
 
-            // Open Original Screenshot Button
-            IconButton(
-                onClick =
-                    hapticOnClick {
-                      try {
-                        val intent =
-                            Intent(Intent.ACTION_VIEW).apply {
-                              setDataAndType(Uri.parse(entry.imageUri), "image/*")
-                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                        context.startActivity(
-                            Intent.createChooser(
-                                intent, context.getString(R.string.open_original_screenshot)))
-                      } catch (e: Exception) {
-                        Toast.makeText(
-                                context,
-                                context.getString(R.string.open_original_screenshot_failed),
-                                Toast.LENGTH_SHORT)
-                            .show()
+                // TAGS section — clickable to filter gallery
+                if (entry.getTagList().isNotEmpty()) {
+                  Spacer(modifier = Modifier.height(24.dp))
+
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.Label,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.tags_title),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        letterSpacing = 1.sp,
+                    )
+                  }
+
+                  Spacer(modifier = Modifier.height(4.dp))
+
+                  FlowRow(
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                      verticalArrangement = Arrangement.spacedBy(0.dp),
+                  ) {
+                    entry.getTagList().forEach { tag ->
+                      OutlinedCard(
+                          shape = RoundedCornerShape(20.dp),
+                          border = CardDefaults.outlinedCardBorder(),
+                          onClick = hapticOnClick { onTagClick(tag) },
+                      ) {
+                        Text(
+                            text = tag,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
                       }
+                    }
+                  }
+                }
+
+                // NOTE section
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(
+                      Icons.Rounded.Edit,
+                      null,
+                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                      modifier = Modifier.size(18.dp),
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(
+                      stringResource(R.string.note_title),
+                      style = MaterialTheme.typography.labelLarge,
+                      fontWeight = FontWeight.SemiBold,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      letterSpacing = 1.sp,
+                  )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = {
+                      Text(
+                          stringResource(R.string.add_a_note),
+                          color = MaterialTheme.colorScheme.outline)
                     },
-                modifier = Modifier.size(34.dp)) {
+                    shape = RoundedCornerShape(12.dp),
+                    minLines = 2,
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.outline,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                )
+
+                // METADATA section
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(
+                      Icons.Rounded.Info,
+                      null,
+                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                      modifier = Modifier.size(18.dp),
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(
+                      stringResource(R.string.metadata_title),
+                      style = MaterialTheme.typography.labelLarge,
+                      fontWeight = FontWeight.SemiBold,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      letterSpacing = 1.sp,
+                  )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                ) {
+                  Column(modifier = Modifier.padding(14.dp)) {
+                    if (entry.modelUsed.isNotBlank()) {
+                      MetadataRow(
+                          label = stringResource(R.string.meta_model_used),
+                          value = entry.modelUsed,
+                      )
+                      Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    MetadataRow(
+                        label = stringResource(R.string.meta_hash),
+                        value =
+                            entry.imageHash.take(16) +
+                                if (entry.imageHash.length > 16) "..." else "",
+                    )
+
+                    if (entry.analyzedAt > 0) {
+                      Spacer(modifier = Modifier.height(8.dp))
+                      MetadataRow(
+                          label = stringResource(R.string.meta_analyzed),
+                          value =
+                              run {
+                                val pattern =
+                                    if (Locale.getDefault().language == "zh") "M月d日, yyyy HH:mm"
+                                    else "MMM dd, yyyy HH:mm"
+                                SimpleDateFormat(pattern, Locale.getDefault())
+                                    .format(Date(entry.analyzedAt))
+                              },
+                      )
+                    }
+
+                    if (entry.imageUri.isNotBlank()) {
+                      Spacer(modifier = Modifier.height(8.dp))
+                      val sourceName =
+                          try {
+                            android.net.Uri.decode(
+                                Uri.parse(entry.imageUri).lastPathSegment ?: "Unknown",
+                            )
+                          } catch (e: Exception) {
+                            "Unknown"
+                          }
+                      MetadataRow(label = stringResource(R.string.meta_file), value = sourceName)
+
+                      Spacer(modifier = Modifier.height(8.dp))
+                      val fileSize =
+                          try {
+                            context.contentResolver
+                                .openAssetFileDescriptor(Uri.parse(entry.imageUri), "r")
+                                ?.use {
+                                  val bytes = it.length
+                                  when {
+                                    bytes < 1024 -> "$bytes B"
+                                    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+                                    else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+                                  }
+                                } ?: "Unknown"
+                          } catch (e: Exception) {
+                            "Unknown"
+                          }
+                      MetadataRow(label = stringResource(R.string.meta_size), value = fileSize)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MetadataRow(label = stringResource(R.string.meta_id), value = "#${entry.id}")
+                  }
+                }
+              }
+            }
+
+            val similarSection: @Composable () -> Unit = {
+              Column {
+                val progress = dragProgress.value
+                if (showSimilarSection) {
+                  if (!isLandscape) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                  }
+                  AnimatedVisibility(
+                      visible = true,
+                      enter =
+                          slideInVertically(
+                              initialOffsetY = { -it / 2 },
+                              animationSpec = tween(durationMillis = 260),
+                          ) + fadeIn(animationSpec = tween(durationMillis = 220)),
+                  ) {
+                    Column {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(18.dp)) {
+                          Icon(
+                              Icons.Rounded.Search,
+                              null,
+                              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                              modifier = Modifier.size(18.dp),
+                          )
+                          Icon(
+                              Icons.Rounded.AutoAwesome,
+                              null,
+                              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                              modifier =
+                                  Modifier.size(9.dp)
+                                      .align(Alignment.TopEnd)
+                                      .offset(x = 1.dp, y = (-1).dp),
+                          )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.look_similar_title_caps),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 1.sp,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(4.dp),
+                        ) {
+                          Text(
+                              text = stringResource(R.string.beta),
+                              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.primary,
+                              fontWeight = FontWeight.Bold,
+                          )
+                        }
+                      }
+
+                      Spacer(modifier = Modifier.height(4.dp))
+                      Text(
+                          stringResource(R.string.look_similar_disclaimer),
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                      )
+
+                      Spacer(modifier = Modifier.height(8.dp))
+
+                      SimilarScreenshotsSection(
+                          currentEntry = entry,
+                          targetScreenshot = targetScreenshot,
+                          similarScreenshots = similarScreenshots,
+                          infoMessage = infoMessage,
+                          onScreenshotClick = { matchedEntry ->
+                            viewModel.updateNote(entryId, noteText)
+                            onScreenshotClick(matchedEntry.id)
+                          },
+                      )
+                    }
+                  }
+                } else {
+                  val shouldShowLoader = isLoaderActive || progress > 0f || isResettingLoader
+                  AnimatedVisibility(
+                      visible = shouldShowLoader,
+                      enter = fadeIn(animationSpec = tween(durationMillis = 90)),
+                      exit =
+                          shrinkVertically(animationSpec = tween(durationMillis = 180)) +
+                              fadeOut(animationSpec = tween(durationMillis = 180)),
+                  ) {
+                    SimilarScreenshotsLoader(progress = progress)
+                  }
+                }
+              }
+            }
+
+            if (isLandscape) {
+              BoxWithConstraints(
+                  modifier = Modifier.fillMaxSize().nestedScroll(landscapeNestedScrollConnection)) {
+                    val imagePanelWidth = (maxWidth * 0.42f).coerceIn(300.dp, 480.dp)
+                    val detailsPanelWidth = (maxWidth * 0.48f).coerceIn(340.dp, 540.dp)
+                    val similarPanelWidth = (maxWidth * 0.48f).coerceIn(340.dp, 540.dp)
+                    Row(
+                        modifier =
+                            Modifier.fillMaxSize()
+                                .horizontalScroll(landscapeScrollState)
+                                .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                      Column(
+                          modifier =
+                              Modifier.width(imagePanelWidth)
+                                  .fillMaxHeight()
+                                  .verticalScroll(rememberScrollState())
+                                  .padding(vertical = 8.dp)) {
+                            imageSection()
+                          }
+                      Column(
+                          modifier =
+                              Modifier.width(detailsPanelWidth)
+                                  .fillMaxHeight()
+                                  .verticalScroll(rememberScrollState())
+                                  .padding(vertical = 8.dp)) {
+                            detailsSection()
+                          }
+                      val shouldShowLandscapeLoader =
+                          !showSimilarSection &&
+                              (isLoaderActive || dragProgress.value > 0f || isResettingLoader)
+                      if (shouldShowLandscapeLoader) {
+                        Box(
+                            modifier =
+                                Modifier.width(96.dp).fillMaxHeight().graphicsLayer {
+                                  translationX =
+                                      size.width * (1f - dragProgress.value.coerceIn(0f, 1f))
+                                },
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                          Box(modifier = Modifier.width(72.dp)) {
+                            SimilarScreenshotsLoader(progress = dragProgress.value)
+                          }
+                        }
+                      } else if (showSimilarSection) {
+                        Column(
+                            modifier =
+                                Modifier.width(similarPanelWidth)
+                                    .fillMaxHeight()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(vertical = 8.dp)) {
+                              similarSection()
+                            }
+                      }
+                    }
+                  }
+            } else {
+              Column(
+                  modifier =
+                      Modifier.fillMaxSize()
+                          .verticalScroll(scrollState)
+                          .padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    imageSection()
+                    detailsSection()
+                    similarSection()
+                  }
+            }
+          } // end Box
+    } // end outer Column
+
+    if (isLandscape) {
+      Surface(
+          modifier =
+              Modifier.align(Alignment.CenterStart).width(landscapeActionRailWidth).fillMaxHeight(),
+          color = Color.Transparent,
+      ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+          IconButton(
+              onClick =
+                  hapticOnClick {
+                    viewModel.updateNote(entryId, noteText)
+                    onBack()
+                  }) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
+              }
+          Spacer(modifier = Modifier.height(8.dp))
+          Surface(
+              modifier =
+                  Modifier.size(56.dp)
+                      .clip(RoundedCornerShape(16.dp))
+                      .combinedClickable(
+                          onDoubleClick = {
+                            if (isModelReady && !isActivelyAnalyzing) {
+                              viewModel.analyzeEntry(entry)
+                            }
+                          },
+                          onClick = hapticOnClick {},
+                      ),
+              shape = RoundedCornerShape(16.dp),
+              color =
+                  if (isActivelyAnalyzing || isPending) {
+                    MaterialTheme.colorScheme.errorContainer
+                  } else {
+                    MaterialTheme.colorScheme.secondaryContainer
+                  },
+          ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+              when {
+                isActivelyAnalyzing ->
+                    CircularProgressIndicator(
+                        progress = { entryProgressMap[entry.id] ?: currentImageProgress },
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.error,
+                        trackColor = MaterialTheme.colorScheme.errorContainer,
+                    )
+                isPending ->
+                    Icon(
+                        Icons.Rounded.Schedule,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                else ->
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+              }
+              Spacer(modifier = Modifier.height(3.dp))
+              Text(
+                  text =
+                      when {
+                        isActivelyAnalyzing -> analyzingCount.coerceAtLeast(1).toString()
+                        isPending -> stringResource(R.string.pending)
+                        else -> stringResource(R.string.done)
+                      },
+                  style = MaterialTheme.typography.labelMedium,
+                  fontWeight = FontWeight.Bold,
+                  color =
+                      if (isActivelyAnalyzing || isPending) MaterialTheme.colorScheme.error
+                      else MaterialTheme.colorScheme.onSecondaryContainer,
+                  maxLines = 1,
+              )
+            }
+          }
+          Spacer(modifier = Modifier.weight(1f))
+          CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+              Column(
+                  modifier = Modifier.padding(4.dp),
+                  verticalArrangement = Arrangement.spacedBy(4.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+              ) {
+                IconButton(
+                    onClick =
+                        hapticOnClick {
+                          ShareUtils.shareScreenshotContent(context, entry, noteText)
+                        },
+                    modifier = Modifier.size(34.dp),
+                ) {
+                  Icon(Icons.Rounded.Style, "Generate Share Card", modifier = Modifier.size(20.dp))
+                }
+                IconButton(
+                    onClick =
+                        hapticOnClick {
+                          try {
+                            val intent =
+                                Intent(Intent.ACTION_VIEW).apply {
+                                  setDataAndType(Uri.parse(entry.imageUri), "image/*")
+                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                            context.startActivity(
+                                Intent.createChooser(
+                                    intent, context.getString(R.string.open_original_screenshot)))
+                          } catch (_: Exception) {
+                            Toast.makeText(
+                                    context,
+                                    context.getString(R.string.open_original_screenshot_failed),
+                                    Toast.LENGTH_SHORT)
+                                .show()
+                          }
+                        },
+                    modifier = Modifier.size(34.dp),
+                ) {
                   Icon(
                       Icons.AutoMirrored.Rounded.OpenInNew,
                       stringResource(R.string.open_original_screenshot),
                       modifier = Modifier.size(20.dp),
                   )
                 }
-
-            // Direct Original Screenshot Share Button
-            IconButton(
-                onClick =
-                    hapticOnClick {
-                      try {
-                        val intent =
-                            Intent(Intent.ACTION_SEND).apply {
-                              type = "image/*"
-                              putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
-                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                        context.startActivity(
-                            Intent.createChooser(intent, "Share Original Screenshot"))
-                      } catch (e: Exception) {
-                        Toast.makeText(
-                                context, "Failed to share original screenshot", Toast.LENGTH_SHORT)
-                            .show()
-                      }
-                    },
-                modifier = Modifier.size(34.dp)) {
-                  Icon(
-                      Icons.Rounded.Share,
-                      "Share Original",
-                      modifier = Modifier.size(20.dp),
-                  )
+                IconButton(
+                    onClick =
+                        hapticOnClick {
+                          try {
+                            val intent =
+                                Intent(Intent.ACTION_SEND).apply {
+                                  type = "image/*"
+                                  putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
+                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                            context.startActivity(
+                                Intent.createChooser(intent, "Share Original Screenshot"))
+                          } catch (_: Exception) {
+                            Toast.makeText(
+                                    context,
+                                    "Failed to share original screenshot",
+                                    Toast.LENGTH_SHORT)
+                                .show()
+                          }
+                        },
+                    modifier = Modifier.size(34.dp),
+                ) {
+                  Icon(Icons.Rounded.Share, "Share Original", modifier = Modifier.size(20.dp))
                 }
-          }
-        }
-      }
-      Spacer(modifier = Modifier.width(12.dp))
-
-      // Status pill — exact copy of home page style
-      if (isActivelyAnalyzing) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.errorContainer,
-            modifier = Modifier.clip(RoundedCornerShape(16.dp)),
-        ) {
-          Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-          ) {
-            if (analyzingCount > 1) {
-              Box(
-                  modifier =
-                      Modifier.size(16.dp)
-                          .background(
-                              MaterialTheme.colorScheme.error,
-                              androidx.compose.foundation.shape.CircleShape),
-                  contentAlignment = Alignment.Center) {
-                    Text(
-                        text = if (analyzingCount > 5) "5+" else analyzingCount.toString(),
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        fontWeight = FontWeight.Bold,
-                    )
-                  }
-            } else {
-              CircularProgressIndicator(
-                  progress = { entryProgressMap[entry.id] ?: currentImageProgress },
-                  modifier = Modifier.size(14.dp),
-                  strokeWidth = 2.dp,
-                  color = MaterialTheme.colorScheme.error,
-                  trackColor = MaterialTheme.colorScheme.errorContainer,
-              )
+              }
             }
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                stringResource(R.string.analyzing),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.error,
-            )
           }
-        }
-      } else if (isPending) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.errorContainer,
-            modifier =
-                Modifier.clip(RoundedCornerShape(16.dp))
-                    .combinedClickable(
-                        onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
-                        onClick = hapticOnClick {},
-                    ),
-        ) {
-          Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Icon(
-                Icons.Rounded.Schedule,
-                null,
-                modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.error,
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                stringResource(R.string.pending),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.error,
-            )
-          }
-        }
-      } else {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            modifier =
-                Modifier.clip(RoundedCornerShape(16.dp))
-                    .combinedClickable(
-                        onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
-                        onClick = hapticOnClick {},
-                    ),
-        ) {
-          Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Icon(
-                Icons.Rounded.CheckCircle,
-                null,
-                modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                stringResource(R.string.done),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-          }
+          Spacer(modifier = Modifier.height(8.dp))
         }
       }
     }
-
-    Box(modifier = Modifier.weight(1f).nestedScroll(nestedScrollConnection)) {
-      Column(
-          modifier =
-              Modifier.fillMaxSize()
-                  .verticalScroll(scrollState)
-                  .padding(horizontal = 16.dp, vertical = 8.dp),
-      ) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            colors =
-                CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-            modifier =
-                Modifier.fillMaxWidth().swipeAlbumImages().clickable { showFullscreenImage = true },
-        ) {
-          if (entry.imageUri.isNotBlank()) {
-            var isMainImageLoaded by remember(entry.id) { mutableStateOf(false) }
-            val mainImageAlpha by
-                animateFloatAsState(
-                    targetValue = if (isMainImageLoaded) 1f else 0f,
-                    animationSpec = tween(durationMillis = 350),
-                    label = "mainImageFade",
-                )
-
-            AsyncImage(
-                model = entry.imageUri,
-                contentDescription = entry.summary,
-                onSuccess = { isMainImageLoaded = true },
-                modifier =
-                    Modifier.fillMaxWidth().heightIn(max = 350.dp).graphicsLayer {
-                      alpha = mainImageAlpha
-                    },
-                contentScale = ContentScale.Fit,
-            )
-          } else {
-            Box(
-                modifier =
-                    Modifier.fillMaxWidth()
-                        .height(200.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-                contentAlignment = Alignment.Center,
-            ) {
-              Icon(
-                  Icons.Rounded.BrokenImage,
-                  null,
-                  tint = MaterialTheme.colorScheme.outline,
-                  modifier = Modifier.size(48.dp),
-              )
-            }
-          }
-          if (isActivelyAnalyzing) {
-            LinearProgressIndicator(
-                progress = { entryProgressMap[entry.id] ?: currentImageProgress },
-                modifier = Modifier.fillMaxWidth(),
-            )
-          }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Summary
-        if (entry.summary.isNotBlank()) {
-          Text(
-              text = entry.summary,
-              style =
-                  MaterialTheme.typography.bodyLarge.copy(
-                      hyphens = Hyphens.Auto,
-                      lineBreak = LineBreak.Paragraph,
-                      platformStyle =
-                          PlatformTextStyle(
-                              includeFontPadding = false,
-                          ),
-                  ),
-              color = MaterialTheme.colorScheme.onBackground,
-              lineHeight = 26.sp,
-              textAlign = TextAlign.Justify,
-              modifier = Modifier.fillMaxWidth().swipeAlbumImages(),
-          )
-        } else if (isActivelyAnalyzing) {
-          Text(
-              stringResource(R.string.analyzing_screenshot),
-              style = MaterialTheme.typography.bodyLarge,
-              color = MaterialTheme.colorScheme.primary,
-              modifier = Modifier.fillMaxWidth().swipeAlbumImages(),
-          )
-        } else {
-          Text(
-              stringResource(R.string.no_summary_double_tap),
-              style = MaterialTheme.typography.bodyLarge,
-              color = MaterialTheme.colorScheme.outline,
-              modifier = Modifier.fillMaxWidth().swipeAlbumImages(),
-          )
-        }
-
-        // TAGS section — clickable to filter gallery
-        if (entry.getTagList().isNotEmpty()) {
-          Spacer(modifier = Modifier.height(24.dp))
-
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.AutoMirrored.Rounded.Label,
-                null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                stringResource(R.string.tags_title),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                letterSpacing = 1.sp,
-            )
-          }
-
-          Spacer(modifier = Modifier.height(4.dp))
-
-          FlowRow(
-              horizontalArrangement = Arrangement.spacedBy(4.dp),
-              verticalArrangement = Arrangement.spacedBy(0.dp),
-          ) {
-            entry.getTagList().forEach { tag ->
-              OutlinedCard(
-                  shape = RoundedCornerShape(20.dp),
-                  border = CardDefaults.outlinedCardBorder(),
-                  onClick = hapticOnClick { onTagClick(tag) },
-              ) {
-                Text(
-                    text = tag,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-              }
-            }
-          }
-        }
-
-        // NOTE section
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(
-              Icons.Rounded.Edit,
-              null,
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.size(18.dp),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-              stringResource(R.string.note_title),
-              style = MaterialTheme.typography.labelLarge,
-              fontWeight = FontWeight.SemiBold,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              letterSpacing = 1.sp,
-          )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = noteText,
-            onValueChange = { noteText = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = {
-              Text(stringResource(R.string.add_a_note), color = MaterialTheme.colorScheme.outline)
-            },
-            shape = RoundedCornerShape(12.dp),
-            minLines = 2,
-            colors =
-                OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.outline,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                ),
-        )
-
-        // METADATA section
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(
-              Icons.Rounded.Info,
-              null,
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.size(18.dp),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-              stringResource(R.string.metadata_title),
-              style = MaterialTheme.typography.labelLarge,
-              fontWeight = FontWeight.SemiBold,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              letterSpacing = 1.sp,
-          )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
-          Column(modifier = Modifier.padding(14.dp)) {
-            if (entry.modelUsed.isNotBlank()) {
-              MetadataRow(
-                  label = stringResource(R.string.meta_model_used),
-                  value = entry.modelUsed,
-              )
-              Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            MetadataRow(
-                label = stringResource(R.string.meta_hash),
-                value = entry.imageHash.take(16) + if (entry.imageHash.length > 16) "..." else "",
-            )
-
-            if (entry.analyzedAt > 0) {
-              Spacer(modifier = Modifier.height(8.dp))
-              MetadataRow(
-                  label = stringResource(R.string.meta_analyzed),
-                  value =
-                      run {
-                        val pattern =
-                            if (Locale.getDefault().language == "zh") "M月d日, yyyy HH:mm"
-                            else "MMM dd, yyyy HH:mm"
-                        SimpleDateFormat(pattern, Locale.getDefault())
-                            .format(Date(entry.analyzedAt))
-                      },
-              )
-            }
-
-            if (entry.imageUri.isNotBlank()) {
-              Spacer(modifier = Modifier.height(8.dp))
-              val sourceName =
-                  try {
-                    android.net.Uri.decode(
-                        Uri.parse(entry.imageUri).lastPathSegment ?: "Unknown",
-                    )
-                  } catch (e: Exception) {
-                    "Unknown"
-                  }
-              MetadataRow(label = stringResource(R.string.meta_file), value = sourceName)
-
-              Spacer(modifier = Modifier.height(8.dp))
-              val fileSize =
-                  try {
-                    context.contentResolver
-                        .openAssetFileDescriptor(Uri.parse(entry.imageUri), "r")
-                        ?.use {
-                          val bytes = it.length
-                          when {
-                            bytes < 1024 -> "$bytes B"
-                            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-                            else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
-                          }
-                        } ?: "Unknown"
-                  } catch (e: Exception) {
-                    "Unknown"
-                  }
-              MetadataRow(label = stringResource(R.string.meta_size), value = fileSize)
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            MetadataRow(label = stringResource(R.string.meta_id), value = "#${entry.id}")
-          }
-        }
-
-        val progress = dragProgress.value
-        if (showSimilarSection) {
-          Spacer(modifier = Modifier.height(24.dp))
-          AnimatedVisibility(
-              visible = true,
-              enter =
-                  slideInVertically(
-                      initialOffsetY = { -it / 2 },
-                      animationSpec = tween(durationMillis = 260),
-                  ) + fadeIn(animationSpec = tween(durationMillis = 220)),
-          ) {
-            Column {
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(18.dp)) {
-                  Icon(
-                      Icons.Rounded.Search,
-                      null,
-                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier.size(18.dp),
-                  )
-                  Icon(
-                      Icons.Rounded.AutoAwesome,
-                      null,
-                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier =
-                          Modifier.size(9.dp).align(Alignment.TopEnd).offset(x = 1.dp, y = (-1).dp),
-                  )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    stringResource(R.string.look_similar_title_caps),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    letterSpacing = 1.sp,
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(4.dp),
-                ) {
-                  Text(
-                      text = stringResource(R.string.beta),
-                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                      style = MaterialTheme.typography.labelSmall,
-                      color = MaterialTheme.colorScheme.primary,
-                      fontWeight = FontWeight.Bold,
-                  )
-                }
-              }
-
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(
-                  stringResource(R.string.look_similar_disclaimer),
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-              )
-
-              Spacer(modifier = Modifier.height(8.dp))
-
-              SimilarScreenshotsSection(
-                  currentEntry = entry,
-                  targetScreenshot = targetScreenshot,
-                  similarScreenshots = similarScreenshots,
-                  infoMessage = infoMessage,
-                  onScreenshotClick = { matchedEntry ->
-                    viewModel.updateNote(entryId, noteText)
-                    onScreenshotClick(matchedEntry.id)
-                  },
-              )
-            }
-          }
-        } else {
-          val shouldShowLoader = isLoaderActive || progress > 0f || isResettingLoader
-          AnimatedVisibility(
-              visible = shouldShowLoader,
-              enter = fadeIn(animationSpec = tween(durationMillis = 90)),
-              exit =
-                  shrinkVertically(animationSpec = tween(durationMillis = 180)) +
-                      fadeOut(animationSpec = tween(durationMillis = 180)),
-          ) {
-            SimilarScreenshotsLoader(progress = progress)
-          }
-        }
-      } // end scroll Column
-    } // end Box
-  } // end outer Column
+  }
 }
 
 @Composable

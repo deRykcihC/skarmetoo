@@ -9,19 +9,19 @@ import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.TextPart
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private const val TAG = "AicoreManager"
 
 class AicoreManager private constructor(private val context: Context) {
-  private val scope = CoroutineScope(Dispatchers.IO)
   private var generativeModel: GenerativeModel? = null
+  private val downloadMutex = Mutex()
 
   private val _uiState = MutableStateFlow<AicoreState>(AicoreState.Initial)
   val uiState: StateFlow<AicoreState> = _uiState.asStateFlow()
@@ -67,30 +67,38 @@ class AicoreManager private constructor(private val context: Context) {
    * Triggers a model download if status is DOWNLOADABLE. Calls generativeModel.download() which
    * handles Play Services background download.
    */
-  fun requestDownload() {
-    val model = generativeModel ?: return
-    scope.launch {
-      try {
-        if (model.checkStatus() == FeatureStatus.DOWNLOADABLE) {
-          Log.d(TAG, "Requesting AICore Gemini Nano download...")
-          _uiState.value = AicoreState.Downloading
-          model.download().collect { status ->
-            Log.d(TAG, "AICore Download status: $status")
-            // Update state according to availability status
-            val check = model.checkStatus()
-            if (check == FeatureStatus.AVAILABLE) {
-              _uiState.value = AicoreState.Ready
-            } else if (check == FeatureStatus.UNAVAILABLE) {
-              _uiState.value = AicoreState.Error("AICore download failed or is unavailable.")
+  suspend fun requestDownload(): Int =
+      withContext(Dispatchers.IO) {
+        downloadMutex.withLock {
+          val model = generativeModel ?: return@withLock FeatureStatus.UNAVAILABLE
+          try {
+            val initialStatus = model.checkStatus()
+            if (initialStatus != FeatureStatus.DOWNLOADABLE) {
+              return@withLock initialStatus
             }
+
+            Log.d(TAG, "Requesting AICore Gemini Nano download...")
+            _uiState.value = AicoreState.Downloading
+            model.download().collect { status ->
+              Log.d(TAG, "AICore download status: $status")
+            }
+
+            val finalStatus = model.checkStatus()
+            if (finalStatus == FeatureStatus.AVAILABLE) {
+              _uiState.value = AicoreState.Ready
+            } else {
+              _uiState.value = AicoreState.Error("AICore download did not complete.")
+            }
+            finalStatus
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed during AICore download request", e)
+            _uiState.value = AicoreState.Error("Download request failed: ${e.message}")
+            // The pre-download status already established device support. A transient download
+            // failure must not turn a supported device into an "unavailable" false negative.
+            FeatureStatus.DOWNLOADABLE
           }
         }
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed during AICore download request", e)
-        _uiState.value = AicoreState.Error("Download request failed: ${e.message}")
       }
-    }
-  }
 
   /** Perform basic text diagnostics to check if the Gemini Nano model responds. */
   suspend fun testInference(prompt: String): Result<String> =
