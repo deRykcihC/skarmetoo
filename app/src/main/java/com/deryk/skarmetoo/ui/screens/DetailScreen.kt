@@ -1215,7 +1215,9 @@ fun DetailScreen(
                         isPending -> stringResource(R.string.pending)
                         else -> stringResource(R.string.done)
                       },
-                  style = MaterialTheme.typography.labelMedium,
+                  style =
+                      if (isPending) MaterialTheme.typography.labelSmall
+                      else MaterialTheme.typography.labelMedium,
                   fontWeight = FontWeight.Bold,
                   color =
                       if (isActivelyAnalyzing || isPending) MaterialTheme.colorScheme.error
