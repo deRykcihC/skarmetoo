@@ -79,9 +79,7 @@ class AicoreManager private constructor(private val context: Context) {
 
             Log.d(TAG, "Requesting AICore Gemini Nano download...")
             _uiState.value = AicoreState.Downloading
-            model.download().collect { status ->
-              Log.d(TAG, "AICore download status: $status")
-            }
+            model.download().collect { status -> Log.d(TAG, "AICore download status: $status") }
 
             val finalStatus = model.checkStatus()
             if (finalStatus == FeatureStatus.AVAILABLE) {

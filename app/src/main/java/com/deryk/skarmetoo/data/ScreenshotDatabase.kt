@@ -291,6 +291,26 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     }
   }
 
+  fun applyLanResult(
+      hash: String,
+      summary: String,
+      tags: String,
+      analyzedAt: Long,
+      note: String,
+      modelUsed: String,
+  ) {
+    val values =
+        ContentValues().apply {
+          put(COL_SUMMARY, summary)
+          put(COL_TAGS, tags)
+          put(COL_ANALYZED_AT, analyzedAt)
+          put(COL_IS_ANALYZING, 0)
+          put(COL_NOTE, note)
+          put(COL_MODEL_USED, modelUsed)
+        }
+    writableDatabase.update(TABLE, values, "$COL_IMAGE_HASH = ?", arrayOf(hash))
+  }
+
   /** Link an image URI to an existing hash entry (for imported entries). */
   fun linkImageToHash(
       hash: String,

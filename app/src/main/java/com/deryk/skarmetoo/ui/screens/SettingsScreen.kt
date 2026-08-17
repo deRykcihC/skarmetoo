@@ -102,6 +102,7 @@ fun SettingsScreen(
   val isDownloadingModel by viewModel.isDownloadingModel.collectAsState()
   val downloadProgress by viewModel.downloadProgress.collectAsState()
   val selectedModel by viewModel.selectedModel.collectAsState()
+  val desktopProgress by viewModel.desktopProgress.collectAsState()
   val isGemma3nDownloaded by viewModel.isGemma3nDownloaded.collectAsState()
   val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
 
@@ -437,7 +438,10 @@ fun SettingsScreen(
       val overviewSection: @Composable () -> Unit = {
         Column {
           Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+              modifier =
+                  Modifier.fillMaxWidth()
+                      .offset(y = (-4).dp)
+                      .padding(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 4.dp),
               verticalAlignment = Alignment.CenterVertically,
           ) {
             Image(
@@ -891,6 +895,8 @@ fun SettingsScreen(
         }
       }
 
+      Spacer(modifier = Modifier.height(16.dp))
+
       val analysisModelSection: @Composable () -> Unit = {
         Column {
           // ===== AI Model card (merged with status) =====
@@ -939,6 +945,10 @@ fun SettingsScreen(
                 // (or about to load). Never show "Offline" in that case.
                 val statusText =
                     when {
+                      selectedModel == ModelType.DESKTOP && desktopProgress.connected ->
+                          stringResource(R.string.desktop_ready)
+                      selectedModel == ModelType.DESKTOP ->
+                          stringResource(R.string.desktop_disconnected)
                       isModelReady -> stringResource(R.string.ready)
                       !isModelFound && !isDownloadingModel ->
                           stringResource(R.string.status_no_model)
@@ -947,6 +957,9 @@ fun SettingsScreen(
                     }
                 val statusBg =
                     when {
+                      selectedModel == ModelType.DESKTOP && desktopProgress.connected ->
+                          if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
+                      selectedModel == ModelType.DESKTOP -> MaterialTheme.colorScheme.errorContainer
                       isModelReady -> if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9)
                       isModelFound || isDownloadingModel ->
                           if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0)
@@ -955,6 +968,9 @@ fun SettingsScreen(
                     }
                 val statusColor =
                     when {
+                      selectedModel == ModelType.DESKTOP && desktopProgress.connected ->
+                          if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
+                      selectedModel == ModelType.DESKTOP -> MaterialTheme.colorScheme.error
                       isModelReady -> if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
                       isModelFound || isDownloadingModel ->
                           if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100)
@@ -1009,6 +1025,63 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
               }
+
+              val lanState by viewModel.lanState.collectAsState()
+              val lanAddress by viewModel.lanAddress.collectAsState()
+              val isDesktopSelected = selectedModel == ModelType.DESKTOP
+              OutlinedCard(
+                  onClick = hapticOnClick { viewModel.setSelectedModel(ModelType.DESKTOP) },
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(14.dp),
+                  colors =
+                      CardDefaults.outlinedCardColors(
+                          containerColor =
+                              if (isDesktopSelected) MaterialTheme.colorScheme.secondaryContainer
+                              else Color.Transparent,
+                      ),
+                  border =
+                      if (isDesktopSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                      else CardDefaults.outlinedCardBorder(),
+              ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                      Text(
+                          stringResource(R.string.desktop_ollama_model),
+                          style = MaterialTheme.typography.titleSmall,
+                          fontWeight =
+                              if (isDesktopSelected) FontWeight.Bold else FontWeight.Medium,
+                      )
+                      Text(
+                          if (lanState == com.deryk.skarmetoo.network.LanServer.State.RUNNING &&
+                              lanAddress != null) {
+                            "http://$lanAddress:${viewModel.lanPort()}"
+                          } else {
+                            stringResource(R.string.desktop_connection_wifi_desc)
+                          },
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                      if (lanState == com.deryk.skarmetoo.network.LanServer.State.RUNNING &&
+                          lanAddress != null) {
+                        Text(
+                            stringResource(R.string.desktop_connection_ip_instruction),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        )
+                      }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = lanState == com.deryk.skarmetoo.network.LanServer.State.RUNNING,
+                        onCheckedChange = { enabled ->
+                          if (enabled) viewModel.startLanServer() else viewModel.stopLanServer()
+                        },
+                    )
+                  }
+                }
+              }
+              Spacer(modifier = Modifier.height(8.dp))
 
               if (isGemma3nSelectedForTop) {
                 Gemma3nModelCard(
@@ -2362,6 +2435,7 @@ fun SettingsScreen(
                       "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
                   ModelType.GGUF -> ""
                   ModelType.AICORE -> ""
+                  ModelType.DESKTOP -> ""
                 }
             androidx.compose.ui.window.Dialog(
                 onDismissRequest = {

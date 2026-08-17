@@ -2250,6 +2250,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                               "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
                           ModelType.GGUF -> ""
                           ModelType.AICORE -> ""
+                          ModelType.DESKTOP -> ""
                         }
                     loadUrl(loginRepoUrl)
                   }

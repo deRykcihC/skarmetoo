@@ -213,6 +213,8 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
   val pendingCount by viewModel.pendingImageCount.collectAsState()
   val analyzingCount by viewModel.analyzingImageCount.collectAsState()
   val isModelReady by viewModel.isModelReady.collectAsState()
+  val desktopProgress by viewModel.desktopProgress.collectAsState()
+  val selectedModel by viewModel.selectedModel.collectAsState()
 
   val galleryScrollState = androidx.compose.foundation.rememberScrollState()
   var isScreenSaverActive by remember { mutableStateOf(false) }
@@ -582,8 +584,19 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                   modifier = Modifier.size(40.dp).align(Alignment.CenterHorizontally),
               )
               Spacer(modifier = Modifier.height(10.dp))
+              val isDesktopActive =
+                  selectedModel == com.deryk.skarmetoo.viewmodel.ModelType.DESKTOP &&
+                      desktopProgress.isRunning
+              val desktopPending =
+                  if (isDesktopActive)
+                      (desktopProgress.total - desktopProgress.processed).coerceAtLeast(0)
+                  else 0
               val hasAnalysisWork =
-                  isAnalysisPaused || isAnalysisRunning || pendingCount > 0 || analyzingCount > 0
+                  isAnalysisPaused ||
+                      isAnalysisRunning ||
+                      pendingCount > 0 ||
+                      analyzingCount > 0 ||
+                      isDesktopActive
               Surface(
                   modifier =
                       Modifier.align(Alignment.CenterHorizontally)
@@ -623,6 +636,13 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                     verticalArrangement = Arrangement.Center,
                 ) {
                   when {
+                    isDesktopActive ->
+                        Icon(
+                            Icons.Rounded.Computer,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                     isAnalysisPaused && activeAnalysisIds.isEmpty() ->
                         Icon(
                             Icons.Rounded.Pause,
@@ -656,7 +676,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                   Spacer(modifier = Modifier.height(3.dp))
                   Text(
                       text =
-                          if (hasAnalysisWork) {
+                          if (isDesktopActive) {
+                            desktopPending.toString()
+                          } else if (hasAnalysisWork) {
                             (pendingCount + analyzingCount).toString()
                           } else {
                             stringResource(R.string.done)
