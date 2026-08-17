@@ -267,6 +267,8 @@ fun GalleryScreen(
   val currentImageProgress by viewModel.currentImageProgress.collectAsState()
   val pendingCount by viewModel.pendingImageCount.collectAsState()
   val analyzingCount by viewModel.analyzingImageCount.collectAsState()
+  val selectedModel by viewModel.selectedModel.collectAsState()
+  val desktopProgress by viewModel.desktopProgress.collectAsState()
   val isSortDescending by viewModel.isSortDescending.collectAsState()
 
   val viewModelSearchQuery by viewModel.searchQuery.collectAsState()
@@ -750,7 +752,42 @@ fun GalleryScreen(
               ) {
                 Spacer(modifier = Modifier.weight(1f))
 
-                if (isAnalysisPaused ||
+                val isDesktopActive =
+                    selectedModel == com.deryk.skarmetoo.viewmodel.ModelType.DESKTOP &&
+                        desktopProgress.isRunning
+                val desktopPending =
+                    if (isDesktopActive)
+                        (desktopProgress.total - desktopProgress.processed).coerceAtLeast(0)
+                    else 0
+                if (isDesktopActive) {
+                  Surface(
+                      shape = RoundedCornerShape(16.dp),
+                      color = MaterialTheme.colorScheme.errorContainer,
+                      modifier =
+                          Modifier.clip(RoundedCornerShape(16.dp)).clickable {
+                            focusNextActiveAnalysis()
+                          },
+                  ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                      Icon(
+                          Icons.Rounded.Computer,
+                          null,
+                          modifier = Modifier.size(14.dp),
+                          tint = MaterialTheme.colorScheme.error,
+                      )
+                      Spacer(modifier = Modifier.width(4.dp))
+                      Text(
+                          stringResource(R.string.items_left, desktopPending.toString()),
+                          style = MaterialTheme.typography.labelMedium,
+                          fontWeight = FontWeight.Bold,
+                          color = MaterialTheme.colorScheme.error,
+                      )
+                    }
+                  }
+                } else if (isAnalysisPaused ||
                     isAnalysisRunning ||
                     pendingCount > 0 ||
                     analyzingCount > 0) {

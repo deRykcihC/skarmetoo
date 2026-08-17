@@ -24,4 +24,15 @@ data class ScreenshotEntry(
       tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
   }
+
+  fun isDesktopAnalysisCandidate(): Boolean {
+    if (imageUri.isBlank() || imageHash.isBlank() || isAnalyzing) return false
+
+    val isUnprocessed = analyzedAt == 0L && summary.isBlank()
+    val isGeminiNanoRejected =
+        modelUsed.equals("Gemini Nano", ignoreCase = true) &&
+            getTagList().any { it.equals("restricted", ignoreCase = true) }
+
+    return isUnprocessed || isGeminiNanoRejected
+  }
 }

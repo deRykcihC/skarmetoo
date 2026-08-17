@@ -25,6 +25,9 @@ import com.deryk.skarmetoo.data.JsonFolderManager
 import com.deryk.skarmetoo.data.ScreenshotDatabase
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
+import com.deryk.skarmetoo.network.DesktopJobSettings
+import com.deryk.skarmetoo.network.LanProtocol
+import com.deryk.skarmetoo.network.LanServer
 import com.deryk.skarmetoo.service.AnalysisService
 import com.google.mlkit.genai.common.FeatureStatus
 import kotlin.coroutines.resume
@@ -70,7 +73,18 @@ enum class ModelType(val fileName: String, val displayName: String) {
   GEMMA_4("gemma-4-E2B-it.litertlm", "Gemma 4"),
   GGUF("", "GGUF Model"),
   AICORE("", "Gemini Nano"),
+  DESKTOP("", "Desktop / Ollama"),
 }
+
+data class DesktopAnalysisProgress(
+    val connected: Boolean = false,
+    val total: Int = 0,
+    val sent: Int = 0,
+    val processed: Int = 0,
+    val failed: Int = 0,
+    val isRunning: Boolean = false,
+    val lastError: String? = null,
+)
 
 class ScreenshotViewModel(application: Application) : AndroidViewModel(application) {
   private val db = ScreenshotDatabase(application)
@@ -338,6 +352,147 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val _jsonLastBackupTime = MutableStateFlow<String?>(null)
   val jsonLastBackupTime: StateFlow<String?> = _jsonLastBackupTime.asStateFlow()
 
+  private val _lanState = MutableStateFlow(LanServer.State.STOPPED)
+  val lanState: StateFlow<LanServer.State> = _lanState.asStateFlow()
+  private val _lanAddress = MutableStateFlow<String?>(null)
+  val lanAddress: StateFlow<String?> = _lanAddress.asStateFlow()
+  private val _desktopProgress = MutableStateFlow(DesktopAnalysisProgress())
+  val desktopProgress: StateFlow<DesktopAnalysisProgress> = _desktopProgress.asStateFlow()
+  private val lanServer =
+      LanServer(
+          application,
+          db,
+          settingsProvider = { desktopJobSettings() },
+          onResultApplied = { refreshEntries() },
+          onProgressChanged = { progress ->
+            _desktopProgress.value =
+                DesktopAnalysisProgress(
+                    connected = progress.connected,
+                    total = progress.total,
+                    sent = progress.sent,
+                    processed = progress.processed,
+                    failed = progress.failed,
+                    isRunning = progress.isRunning,
+                    lastError = progress.lastError,
+                )
+            if (_backgroundProcessEnabled.value) updateDesktopTransferService()
+          },
+          onStateChanged = {
+            _lanState.value = it
+            updateDesktopTransferService()
+          },
+      )
+
+  fun startLanServer() {
+    lanServer.start()
+    _lanAddress.value = lanServer.localAddress()
+    updateDesktopTransferService()
+  }
+
+  fun stopLanServer() {
+    lanServer.stop()
+    _lanAddress.value = null
+    _desktopProgress.value = DesktopAnalysisProgress()
+    stopDesktopTransferService()
+  }
+
+  @Volatile private var isDesktopTransferServiceRunning = false
+
+  private fun updateDesktopTransferService() {
+    val context = getApplication<Application>()
+    val p = _desktopProgress.value
+    val hasActiveTransfer = p.isRunning && p.total > 0 && p.processed < p.total
+    val shouldRun =
+        _backgroundProcessEnabled.value &&
+            lanServer.isRunning() &&
+            hasActiveTransfer &&
+            _selectedModel.value == ModelType.DESKTOP
+    if (!shouldRun) {
+      if (isDesktopTransferServiceRunning) stopDesktopTransferService()
+      return
+    }
+    val isComplete = p.total > 0 && !p.isRunning && p.processed >= p.total
+    val detail = if (isComplete) "COMPLETE" else "${p.processed}/${p.total}"
+    val action =
+        if (!isDesktopTransferServiceRunning)
+            com.deryk.skarmetoo.service.DesktopTransferService.ACTION_START
+        else com.deryk.skarmetoo.service.DesktopTransferService.ACTION_UPDATE
+    if (action == com.deryk.skarmetoo.service.DesktopTransferService.ACTION_START) {
+      isDesktopTransferServiceRunning = true
+    }
+    val intent =
+        android.content
+            .Intent(context, com.deryk.skarmetoo.service.DesktopTransferService::class.java)
+            .apply {
+              this.action = action
+              putExtra(com.deryk.skarmetoo.service.DesktopTransferService.EXTRA_DETAIL, detail)
+            }
+    try {
+      if (action == com.deryk.skarmetoo.service.DesktopTransferService.ACTION_START &&
+          android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        context.startForegroundService(intent)
+      } else {
+        context.startService(intent)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to update DesktopTransferService", e)
+      if (action == com.deryk.skarmetoo.service.DesktopTransferService.ACTION_START) {
+        isDesktopTransferServiceRunning = false
+      }
+    }
+    if (isComplete) {
+      android.os
+          .Handler(android.os.Looper.getMainLooper())
+          .postDelayed({ stopDesktopTransferService() }, 2500)
+    }
+  }
+
+  private fun stopDesktopTransferService() {
+    if (!isDesktopTransferServiceRunning) return
+    isDesktopTransferServiceRunning = false
+    val context = getApplication<Application>()
+    val intent =
+        android.content
+            .Intent(context, com.deryk.skarmetoo.service.DesktopTransferService::class.java)
+            .apply { action = com.deryk.skarmetoo.service.DesktopTransferService.ACTION_STOP }
+    try {
+      context.startService(intent)
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to stop DesktopTransferService", e)
+    }
+  }
+
+  private fun desktopJobSettings(): DesktopJobSettings {
+    val languageName =
+        when (_analysisLanguage.value) {
+          "en" -> "English"
+          "zh-rTW" -> "Traditional Chinese"
+          "hi" -> "Hindi"
+          "es" -> "Spanish"
+          "ar" -> "Arabic"
+          "fr" -> "French"
+          "ru" -> "Russian"
+          else -> "English"
+        }
+    return DesktopJobSettings(
+        languageCode = _analysisLanguage.value,
+        languageName = languageName,
+        detailLevel = _detailLevel.value.name,
+        customPrompt = _customPrompt.value.take(500),
+    )
+  }
+
+  fun startDesktopAnalysis() {
+    if (_selectedModel.value != ModelType.DESKTOP || !lanServer.isRunning()) return
+    lanServer.startJob()
+  }
+
+  fun stopDesktopAnalysis() {
+    lanServer.cancelJob()
+  }
+
+  fun lanPort(): Int = LanProtocol.PORT
+
   private fun getFolderFriendlyName(uri: Uri): String {
     val context = getApplication<Application>()
     return try {
@@ -505,6 +660,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   }
 
   private fun launchAnalysisQueue() {
+    if (_selectedModel.value == ModelType.DESKTOP) {
+      Log.d(TAG, "Skipped local queue launch: Desktop backend selected")
+      return
+    }
     synchronized(analysisLifecycleLock) {
       if (isSwitchingModel.get()) {
         Log.d(TAG, "Skipped queue launch: model switch in progress")
@@ -650,6 +809,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     prefs.edit().putBoolean("background_process_enabled", enabled).apply()
     if (!enabled) {
       stopAnalysisService()
+      stopDesktopTransferService()
+    } else {
+      updateDesktopTransferService()
     }
   }
 
@@ -874,7 +1036,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
               llmState,
               ggufState,
               cachedAicoreStatus ->
-            if (selected == ModelType.AICORE) {
+            if (selected == ModelType.DESKTOP) {
+              clearModelSwitchStatus(ModelType.DESKTOP)
+              setModelStatusImmediate(
+                  if (lanServer.isRunning()) "Ready (Desktop)" else "Desktop disconnected")
+              _isModelFound.value = lanServer.isRunning()
+              _isModelReady.value = lanServer.isRunning()
+            } else if (selected == ModelType.AICORE) {
               if (cachedAicoreStatus == FeatureStatus.AVAILABLE) {
                 clearModelSwitchStatus(ModelType.AICORE)
                 setModelStatusImmediate("Ready (AICore)")
@@ -1030,7 +1198,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
               ggufManager.loadModel(modelInfo)
             }
           }
-        } else if (selected != null) {
+        } else if (selected != null && selected != ModelType.DESKTOP) {
           val selectedModelFile = java.io.File(application.filesDir, selected.fileName)
           if (selectedModelFile.exists()) {
             initializeModel(
@@ -1072,7 +1240,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         stopAllAnalysisForModelSwitch("setSelectedModel:${model.name}")
         withContext(Dispatchers.Main) {}
         checkModelExists()
-        if (model != ModelType.AICORE) {
+        if (model == ModelType.DESKTOP) {
+          clearModelSwitchStatus(ModelType.DESKTOP)
+          _isModelFound.value = lanServer.isRunning()
+          _isModelReady.value = lanServer.isRunning()
+          setModelStatusImmediate(
+              if (lanServer.isRunning()) "Ready (Desktop)" else "Desktop disconnected")
+        } else if (model != ModelType.AICORE) {
           val modelPath = java.io.File(getApplication<Application>().filesDir, model.fileName)
           if (modelPath.exists()) {
             initializeModel(modelPath.absolutePath, isGemma4 = model == ModelType.GEMMA_4)
@@ -1175,7 +1349,9 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       val context = getApplication<Application>()
       refreshModelDownloadStatus()
       val exists =
-          if (_selectedModel.value == ModelType.GGUF) {
+          if (_selectedModel.value == ModelType.DESKTOP) {
+            lanServer.isRunning()
+          } else if (_selectedModel.value == ModelType.GGUF) {
             ggufManager.getDownloadedModels().isNotEmpty()
           } else if (_selectedModel.value == ModelType.AICORE) {
             _aicoreCachedStatus.value == FeatureStatus.AVAILABLE
@@ -2932,6 +3108,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
   }
 
   override fun onCleared() {
+    lanServer.stop()
     super.onCleared()
     clearModelSwitchStatus()
     llmManager.close()
