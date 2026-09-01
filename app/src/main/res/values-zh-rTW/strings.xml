@@ -237,6 +237,10 @@
     <string name="embeddinggemma_load_failed_with_error">無法載入 EmbeddingGemma：%1$s</string>
     <string name="embeddinggemma_no_searchable_text">尚無螢幕截圖產生摘要、標籤或備註。請先分析圖片，再重新建立索引。</string>
     <string name="embeddinggemma_index_up_to_date">EmbeddingGemma 索引已是最新狀態。</string>
+    <string name="edit_generated_context">編輯產生的上下文</string>
+    <string name="save_generated_context">儲存</string>
+    <string name="embeddinggemma_skipped_images_title">上下文過長</string>
+    <string name="embeddinggemma_skipped_images_none">沒有略過的圖片</string>
     <string name="embeddinggemma_database_save_failed">資料庫儲存失敗：%1$s</string>
     <string name="embeddinggemma_database_save_failed_for_uri">URI %1$s 的資料庫儲存失敗</string>
     <string name="embeddinggemma_embedding_failed">嵌入產生失敗：%1$s</string>

@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -52,13 +54,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -107,6 +113,8 @@ fun DetailScreen(
   val coroutineScope = rememberCoroutineScope()
 
   var noteText by remember(entry.note) { mutableStateOf(entry.note) }
+  var summaryText by remember(entry.id, entry.summary) { mutableStateOf(entry.summary) }
+  var isEditingSummary by remember(entry.id) { mutableStateOf(false) }
   var showFullscreenImage by remember { mutableStateOf(false) }
 
   val isActivelyAnalyzing = entry.isAnalyzing || entryProgressMap.containsKey(entry.id)
@@ -757,24 +765,100 @@ fun DetailScreen(
               Column {
                 // Summary
                 if (entry.summary.isNotBlank()) {
-                  Text(
-                      text = entry.summary,
-                      style =
-                          MaterialTheme.typography.bodyLarge.copy(
-                              hyphens = Hyphens.Auto,
-                              lineBreak = LineBreak.Paragraph,
-                              platformStyle =
-                                  PlatformTextStyle(
-                                      includeFontPadding = false,
-                                  ),
-                          ),
-                      color = MaterialTheme.colorScheme.onBackground,
-                      lineHeight = 26.sp,
-                      textAlign = TextAlign.Justify,
-                      modifier =
-                          Modifier.fillMaxWidth()
-                              .then(if (isLandscape) Modifier else Modifier.swipeAlbumImages()),
-                  )
+                  if (isEditingSummary) {
+                    OutlinedTextField(
+                        value = summaryText,
+                        onValueChange = { summaryText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        minLines = 3,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(lineHeight = 26.sp),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                      TextButton(
+                          onClick = {
+                            summaryText = entry.summary
+                            isEditingSummary = false
+                          },
+                          modifier = Modifier.height(36.dp),
+                          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                      ) {
+                            Text(stringResource(R.string.cancel))
+                          }
+                      TextButton(
+                          onClick = {
+                            val updatedSummary = summaryText.trim()
+                            if (updatedSummary.isNotBlank()) {
+                              viewModel.updateSummary(entry.id, updatedSummary)
+                              isEditingSummary = false
+                            }
+                          },
+                          enabled = summaryText.isNotBlank(),
+                          modifier = Modifier.height(36.dp),
+                          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                      ) {
+                        Text(stringResource(R.string.save_generated_context))
+                      }
+                    }
+                  } else {
+                    val summaryWithEditIcon =
+                        buildAnnotatedString {
+                          append(entry.summary)
+                          append(" ")
+                          appendInlineContent("editSummary", "Edit")
+                        }
+                    val summaryInlineContent =
+                        mapOf(
+                            "editSummary" to
+                                InlineTextContent(
+                                    Placeholder(
+                                        width = 1.15.em,
+                                        height = 1.15.em,
+                                        placeholderVerticalAlign = PlaceholderVerticalAlign.Center,
+                                    )) {
+                                      Icon(
+                                          imageVector = Icons.Rounded.Edit,
+                                          contentDescription =
+                                              stringResource(R.string.edit_generated_context),
+                                          modifier =
+                                              Modifier.fillMaxSize()
+                                                  .clip(CircleShape)
+                                                  .background(
+                                                      MaterialTheme.colorScheme.surfaceVariant
+                                                          .copy(alpha = 0.65f))
+                                                  .clickable(
+                                                      onClick =
+                                                          hapticOnClick {
+                                                            summaryText = entry.summary
+                                                            isEditingSummary = true
+                                                          })
+                                                  .padding(2.dp),
+                                          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                      )
+                                    })
+                    Text(
+                        text = summaryWithEditIcon,
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .then(if (isLandscape) Modifier else Modifier.swipeAlbumImages()),
+                        inlineContent = summaryInlineContent,
+                        style =
+                            MaterialTheme.typography.bodyLarge.copy(
+                                hyphens = Hyphens.Auto,
+                                lineBreak = LineBreak.Paragraph,
+                                platformStyle =
+                                    PlatformTextStyle(
+                                        includeFontPadding = false,
+                                    ),
+                            ),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        lineHeight = 26.sp,
+                        textAlign = TextAlign.Justify,
+                    )
+                  }
                 } else if (isActivelyAnalyzing) {
                   Text(
                       stringResource(R.string.analyzing_screenshot),
@@ -797,7 +881,7 @@ fun DetailScreen(
 
                 // TAGS section — clickable to filter gallery
                 if (entry.getTagList().isNotEmpty()) {
-                  Spacer(modifier = Modifier.height(24.dp))
+                  Spacer(modifier = Modifier.height(if (isEditingSummary) 12.dp else 24.dp))
 
                   Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -840,7 +924,7 @@ fun DetailScreen(
                 }
 
                 // NOTE section
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(if (isEditingSummary) 12.dp else 24.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Icon(

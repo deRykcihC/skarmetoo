@@ -68,6 +68,11 @@ data class AlbumWithThumbnails(
     val thumbnailUris: List<Uri>,
 )
 
+enum class TemperatureUnit {
+  CELSIUS,
+  FAHRENHEIT,
+}
+
 enum class ModelType(val fileName: String, val displayName: String) {
   GEMMA_3N("gemma-3n-E2B-it-int4.litertlm", "Gemma 3n"),
   GEMMA_4("gemma-4-E2B-it.litertlm", "Gemma 4"),
@@ -119,6 +124,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   private val _entries = MutableStateFlow<List<ScreenshotEntry>>(emptyList())
   val entries: StateFlow<List<ScreenshotEntry>> = _entries.asStateFlow()
+
+  // These are read by refreshEntries(), which can run from init. Keep them above the init block so
+  // background refresh work can never observe JVM-default null fields during construction.
+  private val _experimentalStatuses = MutableStateFlow<Map<String, Pair<Long, Boolean>>>(emptyMap())
+  val experimentalStatuses: StateFlow<Map<String, Pair<Long, Boolean>>> =
+      _experimentalStatuses.asStateFlow()
+  private val _experimentalPathMap = MutableStateFlow<Map<String, String>>(emptyMap())
 
   private val _totalImageCount = MutableStateFlow(0)
   val totalImageCount: StateFlow<Int> = _totalImageCount.asStateFlow()
@@ -906,6 +918,20 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   private val _isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", false))
   val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
+
+  private val _temperatureUnit =
+      MutableStateFlow(
+          if (prefs.getString("temperature_unit", "celsius") == "fahrenheit") {
+            TemperatureUnit.FAHRENHEIT
+          } else {
+            TemperatureUnit.CELSIUS
+          })
+  val temperatureUnit: StateFlow<TemperatureUnit> = _temperatureUnit.asStateFlow()
+
+  fun setTemperatureUnit(unit: TemperatureUnit) {
+    _temperatureUnit.value = unit
+    prefs.edit().putString("temperature_unit", unit.name.lowercase()).apply()
+  }
 
   fun setDarkMode(enabled: Boolean) {
     _isDarkMode.value = enabled
@@ -1734,14 +1760,6 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   // Total count of ALL images (including unloaded) — used for accurate scrollbar sizing
   private val _experimentalTotalCount = MutableStateFlow(0)
   val experimentalTotalCount: StateFlow<Int> = _experimentalTotalCount.asStateFlow()
-
-  // Maps MediaStore URI string → (Entry ID, isAnalyzed)
-  private val _experimentalStatuses = MutableStateFlow<Map<String, Pair<Long, Boolean>>>(emptyMap())
-  val experimentalStatuses: StateFlow<Map<String, Pair<Long, Boolean>>> =
-      _experimentalStatuses.asStateFlow()
-
-  // Maps file relative path → MediaStore URI string (built during loadExperimentalImages)
-  private val _experimentalPathMap = MutableStateFlow<Map<String, String>>(emptyMap())
 
   // Migrate old default (3) to new default (6) for better performance with many images
   private val _experimentalGridColumns =

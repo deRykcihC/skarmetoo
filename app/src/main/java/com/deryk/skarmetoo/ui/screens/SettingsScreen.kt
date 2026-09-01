@@ -35,6 +35,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ai.EmbeddingGemma
+import com.deryk.skarmetoo.ai.EmbeddingGemmaSkippedStore
 import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.GgufModelInfo
 import com.deryk.skarmetoo.ai.ImportedGgufModelStore
@@ -54,12 +57,16 @@ import com.deryk.skarmetoo.ai.LlmManager
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
+import com.deryk.skarmetoo.ui.theme.MiSansFamily
+import com.deryk.skarmetoo.util.CpuTemperature
 import com.deryk.skarmetoo.viewmodel.ModelType
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import com.deryk.skarmetoo.viewmodel.SemanticSearchViewModel
+import com.deryk.skarmetoo.viewmodel.TemperatureUnit
 import com.google.mlkit.genai.common.FeatureStatus
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -84,6 +91,7 @@ fun SettingsScreen(
     onRevisitTutorial: () -> Unit = {},
     onOpenMoreModels: () -> Unit = {},
     onOpenDuplicateImages: () -> Unit = {},
+    onOpenSkippedImages: () -> Unit = {},
 ) {
   val isModelReady by viewModel.isModelReady.collectAsState()
   val modelStatus by viewModel.modelStatus.collectAsState()
@@ -103,6 +111,16 @@ fun SettingsScreen(
   val downloadProgress by viewModel.downloadProgress.collectAsState()
   val selectedModel by viewModel.selectedModel.collectAsState()
   val desktopProgress by viewModel.desktopProgress.collectAsState()
+  val temperatureUnit by viewModel.temperatureUnit.collectAsState()
+  var cpuTemperatureCelsius by remember { mutableStateOf<Float?>(null) }
+
+  LaunchedEffect(Unit) {
+    while (isActive) {
+      cpuTemperatureCelsius = withContext(Dispatchers.IO) { CpuTemperature.readAverageCelsius() }
+      kotlinx.coroutines.delay(5000)
+    }
+  }
+
   val isGemma3nDownloaded by viewModel.isGemma3nDownloaded.collectAsState()
   val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
 
@@ -137,6 +155,9 @@ fun SettingsScreen(
   var embeddingGemmaIndexingProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
   var embeddingGemmaIndexedCount by remember { mutableIntStateOf(0) }
   var embeddingGemmaIndexingStatus by remember { mutableStateOf<String?>(null) }
+  var embeddingGemmaTooLongEntryIds by remember {
+    mutableStateOf(EmbeddingGemmaSkippedStore.getEntryIds(context))
+  }
   var embeddingGemmaTotalCount by remember { mutableIntStateOf(0) }
   var embeddingGemmaTextReadyCount by remember { mutableIntStateOf(0) }
   var showMoreModels by remember { mutableStateOf(false) }
@@ -161,6 +182,13 @@ fun SettingsScreen(
     EmbeddingGemma.migrateLegacyTokenizerName(context.applicationContext)
     isEmbeddingGemmaDownloaded = EmbeddingGemma.hasRequiredFiles(context)
     val allEntries = withContext(Dispatchers.IO) { viewModel.getAllValidEntriesSnapshot() }
+    val validEntryIds = allEntries.mapTo(hashSetOf()) { it.id }
+    val persistedTooLongIds = EmbeddingGemmaSkippedStore.getEntryIds(context)
+    val existingTooLongIds = persistedTooLongIds.filterTo(linkedSetOf()) { it in validEntryIds }
+    if (existingTooLongIds != persistedTooLongIds) {
+      EmbeddingGemmaSkippedStore.saveEntryIds(context, existingTooLongIds)
+    }
+    embeddingGemmaTooLongEntryIds = existingTooLongIds
     embeddingGemmaTotalCount = allEntries.size
     embeddingGemmaTextReadyCount =
         allEntries.count { EmbeddingGemma.buildSearchText(it).isNotBlank() }
@@ -207,6 +235,8 @@ fun SettingsScreen(
     embeddingGemmaIndexingProgress = 0 to 0
     embeddingGemmaError = null
     embeddingGemmaIndexingStatus = null
+    embeddingGemmaTooLongEntryIds = emptySet()
+    EmbeddingGemmaSkippedStore.saveEntryIds(context.applicationContext, emptySet())
 
     settingsScope.launch(Dispatchers.IO) {
       val generator = EmbeddingGemma(context.applicationContext)
@@ -257,6 +287,8 @@ fun SettingsScreen(
 
         var savedCount = 0
         var failedCount = 0
+        var tooLongCount = 0
+        val tooLongEntryIds = linkedSetOf<Long>()
         var firstFailure: String? = null
         pendingEntries.forEachIndexed { index, entry ->
           val text = EmbeddingGemma.buildSearchText(entry)
@@ -281,35 +313,48 @@ fun SettingsScreen(
             }
           } else {
             failedCount++
-            if (firstFailure == null) {
+            val error = generator.getLastError()
+            if (EmbeddingGemma.isTextTooLongError(error)) {
+              tooLongCount++
+              tooLongEntryIds += entry.id
+              EmbeddingGemmaSkippedStore.saveEntryIds(
+                  context.applicationContext, tooLongEntryIds)
+            } else if (firstFailure == null) {
               firstFailure =
-                  generator.getLastError()?.let {
-                    context.getString(R.string.embeddinggemma_embedding_failed, it)
-                  } ?: context.getString(R.string.embeddinggemma_empty_vector)
+                  error?.let { context.getString(R.string.embeddinggemma_embedding_failed, it) }
+                      ?: context.getString(R.string.embeddinggemma_empty_vector)
             }
           }
           withContext(Dispatchers.Main) {
             embeddingGemmaIndexingProgress = (index + 1) to pendingEntries.size
             embeddingGemmaIndexedCount = db.getStoredEmbeddingCount()
+            embeddingGemmaTooLongEntryIds = tooLongEntryIds.toSet()
             embeddingGemmaIndexingStatus =
-                if (failedCount > 0) {
-                  context.getString(R.string.embeddinggemma_failed_count, failedCount)
-                } else {
-                  null
+                when {
+                  tooLongCount > 0 ->
+                      context.getString(
+                          R.string.embeddinggemma_context_too_long_skipped, tooLongCount)
+                  failedCount > 0 ->
+                      context.getString(R.string.embeddinggemma_failed_count, failedCount)
+                  else -> null
                 }
           }
         }
 
         withContext(Dispatchers.Main) {
           embeddingGemmaIndexedCount = db.getStoredEmbeddingCount()
+          embeddingGemmaTooLongEntryIds = tooLongEntryIds.toSet()
           embeddingGemmaIndexingStatus =
-              if (failedCount > 0) {
-                context.getString(
-                    R.string.embeddinggemma_failed_count_detail,
-                    failedCount,
-                    firstFailure.orEmpty())
-              } else {
-                null
+              when {
+                tooLongCount > 0 ->
+                    context.getString(
+                        R.string.embeddinggemma_context_too_long_skipped, tooLongCount)
+                failedCount > 0 ->
+                    context.getString(
+                        R.string.embeddinggemma_failed_count_detail,
+                        failedCount,
+                        firstFailure.orEmpty())
+                else -> null
               }
         }
       } catch (e: Exception) {
@@ -436,7 +481,7 @@ fun SettingsScreen(
                     if (isLandscape) Modifier else Modifier.verticalScroll(rememberScrollState())),
     ) {
       val overviewSection: @Composable () -> Unit = {
-        Column {
+        Column(modifier = if (isLandscape) Modifier.padding(top = 4.dp) else Modifier) {
           Row(
               modifier =
                   Modifier.fillMaxWidth()
@@ -460,14 +505,59 @@ fun SettingsScreen(
             val currentLanguage by viewModel.appLanguage.collectAsState()
 
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
-              Surface(
-                  color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                  shape = RoundedCornerShape(14.dp),
-              ) {
-                Row(
-                    modifier = Modifier.padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                val temperatureContentDescription =
+                    stringResource(R.string.cpu_temperature_content_description)
+                Surface(
+                    onClick =
+                        hapticOnClick {
+                          viewModel.setTemperatureUnit(
+                              if (temperatureUnit == TemperatureUnit.CELSIUS) {
+                                TemperatureUnit.FAHRENHEIT
+                              } else {
+                                TemperatureUnit.CELSIUS
+                              })
+                        },
+                    modifier =
+                        Modifier.height(42.dp)
+                            .semantics { contentDescription = temperatureContentDescription },
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                  Box(modifier = Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
+                      Text(
+                          text =
+                              cpuTemperatureCelsius?.let { temperature ->
+                                val displayTemperature =
+                                    if (temperatureUnit == TemperatureUnit.CELSIUS) {
+                                      temperature
+                                    } else {
+                                      temperature * 9f / 5f + 32f
+                                    }
+                                "${displayTemperature.roundToInt()}°${
+                                  if (temperatureUnit == TemperatureUnit.CELSIUS) "C" else "F"
+                                }"
+                              } ?: stringResource(R.string.cpu_temperature_unavailable),
+                          modifier =
+                              Modifier.padding(horizontal = 10.dp),
+                          style = MaterialTheme.typography.labelMedium,
+                          fontFamily = MiSansFamily,
+                          fontWeight = FontWeight.Bold,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                  }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                  Row(
+                      modifier = Modifier.padding(4.dp),
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                      verticalAlignment = Alignment.CenterVertically) {
                       IconButton(
                           onClick = hapticOnClick(onRevisitTutorial),
                           modifier = Modifier.size(34.dp)) {
@@ -508,7 +598,8 @@ fun SettingsScreen(
                                 contentDescription = "Language",
                                 modifier = Modifier.size(20.dp))
                           }
-                    }
+                  }
+                }
               }
             }
           }
@@ -2762,19 +2853,45 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (embeddingGemmaIndexingStatus != null) {
-                          Text(
-                              text = embeddingGemmaIndexingStatus.orEmpty(),
-                              style = MaterialTheme.typography.labelSmall,
-                              color = MaterialTheme.colorScheme.primary,
-                          )
-                        }
                       }
                       Row(
-                          modifier = Modifier.width(104.dp),
+                          modifier = Modifier.wrapContentWidth(),
                           verticalAlignment = Alignment.CenterVertically,
                           horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
                       ) {
+                        if (embeddingGemmaTooLongEntryIds.isNotEmpty()) {
+                          Surface(
+                              onClick = hapticOnClick(onOpenSkippedImages),
+                              modifier = Modifier.height(28.dp),
+                              shape = RoundedCornerShape(8.dp),
+                              color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                          ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                              Icon(
+                                  imageVector = Icons.Rounded.WarningAmber,
+                                  contentDescription = null,
+                                  tint = MaterialTheme.colorScheme.error,
+                                  modifier = Modifier.size(16.dp),
+                              )
+                              Text(
+                                  text = embeddingGemmaTooLongEntryIds.size.toString(),
+                                  style = MaterialTheme.typography.labelSmall,
+                                  fontWeight = FontWeight.SemiBold,
+                                  color = MaterialTheme.colorScheme.error,
+                              )
+                              Icon(
+                                  imageVector = Icons.Rounded.ChevronRight,
+                                  contentDescription = null,
+                                  tint = MaterialTheme.colorScheme.error,
+                                  modifier = Modifier.size(20.dp),
+                              )
+                            }
+                          }
+                        }
                         val reloadActionEnabled =
                             !isEmbeddingGemmaDownloading && !isEmbeddingGemmaIndexing
                         if (isEmbeddingGemmaIndexing) {
@@ -2805,9 +2922,12 @@ fun SettingsScreen(
                                         ScreenshotTextEmbeddingDatabase(context.applicationContext)
                                     db.clearAll()
                                     db.close()
+                                    EmbeddingGemmaSkippedStore.saveEntryIds(
+                                        context.applicationContext, emptySet())
                                     withContext(Dispatchers.Main) {
                                       embeddingGemmaIndexedCount = 0
                                       embeddingGemmaIndexingStatus = null
+                                      embeddingGemmaTooLongEntryIds = emptySet()
                                     }
                                   }
                                 },
@@ -2822,6 +2942,15 @@ fun SettingsScreen(
                           )
                         }
                       }
+                    }
+                    if (embeddingGemmaIndexingStatus != null &&
+                        embeddingGemmaTooLongEntryIds.isEmpty()) {
+                      Spacer(modifier = Modifier.height(6.dp))
+                      Text(
+                          text = embeddingGemmaIndexingStatus.orEmpty(),
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.primary,
+                      )
                     }
                   }
                 }

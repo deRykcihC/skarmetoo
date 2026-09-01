@@ -2,6 +2,8 @@
 <resources>
     <string name="app_name">skarmetoo</string>
     <string name="settings">Settings</string>
+    <string name="cpu_temperature_unavailable">CPU temp unavailable</string>
+    <string name="cpu_temperature_content_description">CPU temperature. Tap to switch units.</string>
     <string name="timeline">Timeline</string>
     <string name="manage_folders">Manage Folders</string>
     <string name="add_media_folder">Add Media Folder</string>
@@ -246,6 +248,11 @@
     <string name="embeddinggemma_embedding_failed">Embedding failed: %1$s</string>
     <string name="embeddinggemma_empty_vector">EmbeddingGemma returned no vector.</string>
     <string name="embeddinggemma_failed_count">EmbeddingGemma failed %1$d.</string>
+    <string name="embeddinggemma_context_too_long_skipped">%1$d image context is too long and skipped</string>
+    <string name="edit_generated_context">Edit generated context</string>
+    <string name="save_generated_context">Save</string>
+    <string name="embeddinggemma_skipped_images_title">Context too long</string>
+    <string name="embeddinggemma_skipped_images_none">No skipped images</string>
     <string name="embeddinggemma_failed_count_detail">EmbeddingGemma failed %1$d. %2$s</string>
     <string name="embeddinggemma_indexing_failed">EmbeddingGemma indexing failed.</string>
     <string name="search_index_title">SEARCH INDEX</string>

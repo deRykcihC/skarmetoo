@@ -26,7 +26,9 @@ class EmbeddingGemma(private val context: Context) {
 
   companion object {
     private const val TAG = "EmbeddingGemma"
-    private const val MAX_TEXT_CHARS = 4096
+    private const val MAX_TEXT_CHARS = 8192
+    private const val TOO_MANY_TOKENS_ERROR =
+        "Text is too long for EmbeddingGemma (maximum 512 tokens). Shorten the text and try again."
 
     const val DEFAULT_MODEL_NAME = "embeddinggemma-300m.tflite"
     const val SENTENCEPIECE_MODEL_NAME = "sentencepiece.model"
@@ -38,33 +40,13 @@ class EmbeddingGemma(private val context: Context) {
     const val SENTENCEPIECE_DOWNLOAD_URL =
         "$MODEL_REPO_URL/resolve/main/$SENTENCEPIECE_FILE_NAME?download=true"
 
-    private val MODEL_NAME_CANDIDATES =
-        listOf(
-            DEFAULT_MODEL_NAME,
-            MODEL_FILE_NAME,
-            "embeddinggemma.tflite",
-            "embedding_gemma.tflite",
-            "embeddinggemma-300m-q8.tflite",
-            "embeddinggemma-300m_seq256.tflite",
-            "embeddinggemma-300m_seq512.tflite",
-        )
+    fun isTextTooLongError(message: String?): Boolean = message == TOO_MANY_TOKENS_ERROR
 
-    fun defaultModelFile(context: Context): File? {
-      val filesDir = context.filesDir
-      MODEL_NAME_CANDIDATES.map { File(filesDir, it) }
-          .firstOrNull { it.exists() }
-          ?.let {
-            return it
-          }
-      return filesDir.listFiles()?.firstOrNull { file ->
-        file.isFile &&
-            file.extension.equals("tflite", ignoreCase = true) &&
-            file.name.contains("embeddinggemma", ignoreCase = true)
-      }
-    }
+    fun defaultModelFile(context: Context): File? =
+        File(context.filesDir, MODEL_FILE_NAME).takeIf { it.exists() }
 
     fun hasRequiredFiles(context: Context): Boolean =
-        defaultModelFile(context)?.exists() == true &&
+        File(context.filesDir, MODEL_FILE_NAME).exists() &&
             File(context.filesDir, SENTENCEPIECE_MODEL_NAME).exists()
 
     fun migrateLegacyTokenizerName(context: Context) {
@@ -89,7 +71,7 @@ class EmbeddingGemma(private val context: Context) {
               listOf(
                   DownloadSpec(
                       url = MODEL_DOWNLOAD_URL,
-                      outputName = DEFAULT_MODEL_NAME,
+                      outputName = MODEL_FILE_NAME,
                       progressStart = 0f,
                       progressEnd = 0.98f,
                   ),
@@ -313,7 +295,15 @@ class EmbeddingGemma(private val context: Context) {
             Log.d(TAG, "Generated text embedding in ${SystemClock.uptimeMillis() - start}ms")
             vector
           } catch (e: Exception) {
-            lastError = e.localizedMessage ?: e.javaClass.simpleName
+            val message = e.localizedMessage ?: e.message.orEmpty()
+            lastError =
+                if (message.contains("tokens.size()") ||
+                    message.contains("max_input_size") ||
+                    message.contains("RET_CHECK")) {
+                  TOO_MANY_TOKENS_ERROR
+                } else {
+                  message.ifBlank { e.javaClass.simpleName }
+                }
             Log.e(TAG, "Failed to generate EmbeddingGemma vector", e)
             null
           }

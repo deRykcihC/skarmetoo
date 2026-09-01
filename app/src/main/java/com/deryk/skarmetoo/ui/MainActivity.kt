@@ -44,6 +44,7 @@ import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.screens.DetailScreen
 import com.deryk.skarmetoo.ui.screens.DuplicateImagesScreen
+import com.deryk.skarmetoo.ui.screens.EmbeddingGemmaSkippedImagesScreen
 import com.deryk.skarmetoo.ui.screens.GalleryScreen
 import com.deryk.skarmetoo.ui.screens.MoreModelsScreen
 import com.deryk.skarmetoo.ui.screens.OnboardingScreen
@@ -175,6 +176,7 @@ object Routes {
   const val SETTINGS = "settings"
   const val MORE_MODELS = "more_models"
   const val DUPLICATE_IMAGES = "duplicate_images"
+  const val EMBEDDING_GEMMA_SKIPPED_IMAGES = "embedding_gemma_skipped_images"
   const val GALLERY = "gallery"
   const val DETAIL = "detail/{id}"
   const val DUPLICATE_DETAIL = "detail/{id}/duplicate"
@@ -371,10 +373,17 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
     Row(
         modifier =
             Modifier.fillMaxSize()
-                .padding(
-                    top = innerPadding.calculateTopPadding(),
-                    bottom = bottomPadding,
-                )) {
+                 .padding(
+                     top =
+                         if (currentRoute == Routes.GALLERY) {
+                           innerPadding.calculateTopPadding() * 0.5f + 8.dp
+                         } else if (isLandscape && currentRoute == Routes.SETTINGS) {
+                           innerPadding.calculateTopPadding() * 0.5f
+                         } else {
+                           innerPadding.calculateTopPadding()
+                         },
+                     bottom = bottomPadding,
+                 )) {
           NavHost(
               navController = navController,
               startDestination = startDestination,
@@ -386,7 +395,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                 val targetIndex = routeOrder.indexOf(targetRoute)
 
                 if (initialRoute == Routes.SETTINGS &&
-                    (targetRoute == Routes.MORE_MODELS || targetRoute == Routes.DUPLICATE_IMAGES)) {
+                    (targetRoute == Routes.MORE_MODELS ||
+                        targetRoute == Routes.DUPLICATE_IMAGES ||
+                        targetRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)) {
                   slideInHorizontally(initialOffsetX = { it }) + fadeIn()
                 } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
                   slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
@@ -409,7 +420,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                 val targetIndex = routeOrder.indexOf(targetRoute)
 
                 if (initialRoute == Routes.SETTINGS &&
-                    (targetRoute == Routes.MORE_MODELS || targetRoute == Routes.DUPLICATE_IMAGES)) {
+                    (targetRoute == Routes.MORE_MODELS ||
+                        targetRoute == Routes.DUPLICATE_IMAGES ||
+                        targetRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)) {
                   slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
                 } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
                   slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
@@ -429,7 +442,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                 val initialRoute = initialState.destination.route
                 val targetRoute = targetState.destination.route
                 if ((initialRoute == Routes.MORE_MODELS ||
-                    initialRoute == Routes.DUPLICATE_IMAGES) && targetRoute == Routes.SETTINGS) {
+                    initialRoute == Routes.DUPLICATE_IMAGES ||
+                    initialRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) &&
+                    targetRoute == Routes.SETTINGS) {
                   slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
                 } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
                   slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
@@ -441,7 +456,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                 val initialRoute = initialState.destination.route
                 val targetRoute = targetState.destination.route
                 if ((initialRoute == Routes.MORE_MODELS ||
-                    initialRoute == Routes.DUPLICATE_IMAGES) && targetRoute == Routes.SETTINGS) {
+                    initialRoute == Routes.DUPLICATE_IMAGES ||
+                    initialRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) &&
+                    targetRoute == Routes.SETTINGS) {
                   slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
                 } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
                   slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
@@ -469,6 +486,18 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                   onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
                   onOpenMoreModels = { navController.navigate(Routes.MORE_MODELS) },
                   onOpenDuplicateImages = { navController.navigate(Routes.DUPLICATE_IMAGES) },
+                  onOpenSkippedImages = {
+                    navController.navigate(Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)
+                  },
+              )
+            }
+            composable(Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
+              EmbeddingGemmaSkippedImagesScreen(
+                  viewModel = viewModel,
+                  onBack = { navController.popBackStack() },
+                  onScreenshotClick = { id ->
+                    navController.navigate(Routes.detail(id))
+                  },
               )
             }
             composable(Routes.DUPLICATE_IMAGES) {
@@ -509,7 +538,8 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                   semanticViewModel = semanticViewModel,
                   entryId = id,
                   onBack = {
-                    if (previousRoute == Routes.DUPLICATE_IMAGES) {
+                    if (previousRoute == Routes.DUPLICATE_IMAGES ||
+                        previousRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
                       navController.popBackStack()
                     } else {
                       navController.popBackStack(Routes.GALLERY, inclusive = false)
@@ -519,6 +549,9 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                     viewModel.setSearchQuery(tag)
                     if (previousRoute == Routes.DUPLICATE_IMAGES) {
                       navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
+                    } else if (previousRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
+                      navController.popBackStack(
+                          Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES, inclusive = false)
                     } else {
                       navController.popBackStack(Routes.GALLERY, inclusive = false)
                     }
