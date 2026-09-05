@@ -39,6 +39,25 @@ object ImportedGgufModelStore {
     )
   }
 
+  suspend fun deleteImportedFiles(context: Context): Boolean =
+      withContext(Dispatchers.IO) {
+        val modelFile = getModelFile(context)
+        val mmprojFile = getMmprojFile(context)
+        val deleted =
+            (modelFile == null || modelFile.delete()) && (mmprojFile == null || mmprojFile.delete())
+        if (deleted) clearReferences(context)
+        deleted
+      }
+
+  fun clearReferences(context: Context) {
+    context
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .remove(MODEL_PATH_KEY)
+        .remove(MMPROJ_PATH_KEY)
+        .apply()
+  }
+
   suspend fun importFile(context: Context, uri: Uri, role: FileRole): File =
       withContext(Dispatchers.IO) {
         val displayName = queryDisplayName(context, uri)

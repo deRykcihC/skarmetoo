@@ -373,17 +373,17 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
     Row(
         modifier =
             Modifier.fillMaxSize()
-                 .padding(
-                     top =
-                         if (currentRoute == Routes.GALLERY) {
-                           innerPadding.calculateTopPadding() * 0.5f + 8.dp
-                         } else if (isLandscape && currentRoute == Routes.SETTINGS) {
-                           innerPadding.calculateTopPadding() * 0.5f
-                         } else {
-                           innerPadding.calculateTopPadding()
-                         },
-                     bottom = bottomPadding,
-                 )) {
+                .padding(
+                    top =
+                        if (currentRoute == Routes.GALLERY) {
+                          innerPadding.calculateTopPadding() * 0.5f + 8.dp
+                        } else if (isLandscape && currentRoute == Routes.SETTINGS) {
+                          innerPadding.calculateTopPadding() * 0.5f
+                        } else {
+                          innerPadding.calculateTopPadding()
+                        },
+                    bottom = bottomPadding,
+                )) {
           NavHost(
               navController = navController,
               startDestination = startDestination,
@@ -495,9 +495,7 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
               EmbeddingGemmaSkippedImagesScreen(
                   viewModel = viewModel,
                   onBack = { navController.popBackStack() },
-                  onScreenshotClick = { id ->
-                    navController.navigate(Routes.detail(id))
-                  },
+                  onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
               )
             }
             composable(Routes.DUPLICATE_IMAGES) {
@@ -509,6 +507,7 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
             }
             composable(Routes.MORE_MODELS) {
               MoreModelsScreen(
+                  viewModel = viewModel,
                   onBack = { navController.popBackStack() },
                   onActivateModel = { model ->
                     viewModel.setGgufModelAsActive(model)

@@ -2,7 +2,6 @@
 <resources>
     <string name="app_name">skarmetoo</string>
     <string name="settings">Settings</string>
-    <string name="cpu_temperature_unavailable">CPU temp unavailable</string>
     <string name="cpu_temperature_content_description">CPU temperature. Tap to switch units.</string>
     <string name="timeline">Timeline</string>
     <string name="manage_folders">Manage Folders</string>
@@ -15,6 +14,19 @@
     <string name="buy_me_a_coffee">Buy me a coffee</string>
     <string name="analyzed">ANALYZED</string>
     <string name="total_images">TOTAL IMAGES</string>
+    <string name="analytics_title">ANALYTICS</string>
+    <string name="analytics_title_enabled">ANALYTICS+</string>
+    <string name="analytics_show_latest">SHOW LATEST</string>
+    <string name="benchmark_average">Average</string>
+    <string name="benchmark_average_value">%1$s / %2$d img</string>
+    <string name="benchmark_fastest">Fastest</string>
+    <string name="benchmark_slowest">Slowest</string>
+    <string name="benchmark_speed_title">Speed over time</string>
+    <string name="benchmark_cpu">CPU</string>
+    <string name="benchmark_ram">RAM</string>
+    <string name="benchmark_empty">Starts with your next analyzed image</string>
+    <string name="benchmark_speed_chart_description">Recent image processing time line graph</string>
+    <string name="benchmark_resource_chart_description">Overlapping CPU and RAM utilization line graph</string>
     <string name="ai_model">Analysis Model</string>
     <string name="on_device_analysis_model">On-device analysis model</string>
     <string name="desktop_ollama_model">Desktop LM Studio</string>
@@ -199,6 +211,7 @@
     <string name="onboarding_page10_title">Advanced Settings</string>
     <string name="onboarding_page10_desc">Fine-tune image resolution, concurrent analysis instances, and enable a Play/Pause toggle. These options are experimental, use at your own risk, as they may cause instability on less capable hardware.</string>
     <string name="more_models">More models</string>
+    <string name="model_lfm_title">LFM 2.5 VL</string>
     <string name="model_lfm_desc">Ultra-efficient vision model optimized for speed and low thermal impact.</string>
     <string name="beta">BETA</string>
     <string name="look_similar_title">Look similar</string>
@@ -297,7 +310,11 @@
     <string name="import_section_title">Import</string>
     <string name="import_guide_title">Choose a small vision model</string>
     <string name="import_guide_desc">Look for a compact GGUF vision model and its matching mmproj .gguf projector from Hugging Face or another trusted source.</string>
-    <string name="loaded_models">Loaded models</string>
+    <string name="available_models">Available models</string>
+    <string name="available_models_empty_desc">Downloaded models will appear here.</string>
+    <string name="delete_model">Delete model</string>
+    <string name="model_deleted">Model deleted</string>
+    <string name="model_delete_failed">Could not delete model</string>
     <string name="importing_model">Importing…</string>
     <string name="gguf_import_success">Imported %1$s</string>
     <string name="gguf_import_failed">Could not import file: %1$s</string>

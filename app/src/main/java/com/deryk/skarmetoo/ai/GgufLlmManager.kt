@@ -589,10 +589,10 @@ class GgufLlmManager(private val context: Context) {
 
   fun deleteModel(modelInfo: GgufModelInfo): Boolean {
     val f = File(context.filesDir, modelInfo.fileName)
-    if (f.exists()) f.delete()
+    var deleted = !f.exists() || f.delete()
     if (modelInfo.isVision && modelInfo.mmprojFile.isNotBlank()) {
       val mmprojF = File(context.filesDir, modelInfo.mmprojFile)
-      if (mmprojF.exists()) mmprojF.delete()
+      deleted = (!mmprojF.exists() || mmprojF.delete()) && deleted
     }
     if (loadedModel?.fileName == modelInfo.fileName) {
       try {
@@ -604,7 +604,7 @@ class GgufLlmManager(private val context: Context) {
       loadedModel = null
       _uiState.value = LlmState.Initial
     }
-    return true
+    return deleted
   }
 
   private fun resizeBitmap(originalBitmap: Bitmap, maxSize: Int): Bitmap {

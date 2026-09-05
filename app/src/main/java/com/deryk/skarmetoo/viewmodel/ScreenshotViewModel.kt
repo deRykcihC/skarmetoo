@@ -18,6 +18,7 @@ import com.deryk.skarmetoo.ai.AicoreManager
 import com.deryk.skarmetoo.ai.EmbeddingGemma
 import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.GgufModelInfo
+import com.deryk.skarmetoo.ai.ImportedGgufModelStore
 import com.deryk.skarmetoo.ai.LlmManager
 import com.deryk.skarmetoo.data.DataManager
 import com.deryk.skarmetoo.data.ImageHasher
@@ -29,6 +30,7 @@ import com.deryk.skarmetoo.network.DesktopJobSettings
 import com.deryk.skarmetoo.network.LanProtocol
 import com.deryk.skarmetoo.network.LanServer
 import com.deryk.skarmetoo.service.AnalysisService
+import com.deryk.skarmetoo.util.DevicePerformanceMonitor
 import com.google.mlkit.genai.common.FeatureStatus
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +41,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -91,6 +94,32 @@ data class DesktopAnalysisProgress(
     val lastError: String? = null,
 )
 
+data class ProcessingTimeSample(
+    val recordedAtMillis: Long,
+    val durationMillis: Long,
+)
+
+data class ResourceUsageSample(
+    val recordedAtMillis: Long,
+    val cpuPercent: Float?,
+    val ramPercent: Float?,
+)
+
+data class AnalysisBenchmarkState(
+    val processingTimes: List<ProcessingTimeSample> = emptyList(),
+    val resourceUsage: List<ResourceUsageSample> = emptyList(),
+) {
+  val averageDurationMillis: Long?
+    get() =
+        processingTimes.takeIf { it.isNotEmpty() }?.map { it.durationMillis }?.average()?.toLong()
+
+  val fastestDurationMillis: Long?
+    get() = processingTimes.minOfOrNull { it.durationMillis }
+
+  val slowestDurationMillis: Long?
+    get() = processingTimes.maxOfOrNull { it.durationMillis }
+}
+
 class ScreenshotViewModel(application: Application) : AndroidViewModel(application) {
   private val db = ScreenshotDatabase(application)
   val llmManager = LlmManager.getInstance(application)
@@ -114,6 +143,39 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val onboardingPrefs =
       application.getSharedPreferences(
           "skarmetoo_onboarding_prefs", android.content.Context.MODE_PRIVATE)
+
+  private val performanceMonitor = DevicePerformanceMonitor(application)
+  private val _analysisBenchmark =
+      MutableStateFlow(
+          AnalysisBenchmarkState(
+              processingTimes = restoreProcessingTimeSamples(),
+              resourceUsage = restoreResourceUsageSamples(),
+          ))
+  val analysisBenchmark: StateFlow<AnalysisBenchmarkState> = _analysisBenchmark.asStateFlow()
+  private val _analyticsEnabled = MutableStateFlow(prefs.getBoolean(PREF_ANALYTICS_ENABLED, true))
+  val analyticsEnabled: StateFlow<Boolean> = _analyticsEnabled.asStateFlow()
+  private var performanceSamplingJob: kotlinx.coroutines.Job? = null
+
+  fun setAnalyticsEnabled(enabled: Boolean) {
+    if (_analyticsEnabled.value == enabled) return
+
+    _analyticsEnabled.value = enabled
+    prefs.edit().putBoolean(PREF_ANALYTICS_ENABLED, enabled).apply()
+
+    if (enabled) {
+      val activeIds = _activeAnalysisIds.value
+      if (activeIds.isNotEmpty()) {
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        _activeBenchmarkStartTimes.value = activeIds.associateWith { startedAt }
+      }
+      if (_isAnalysisRunning.value || activeIds.isNotEmpty()) {
+        startPerformanceSampling()
+      }
+    } else {
+      _activeBenchmarkStartTimes.value = emptyMap()
+      stopPerformanceSampling()
+    }
+  }
 
   private val _clickedImageBounds = MutableStateFlow<ClickedImageBounds?>(null)
   val clickedImageBounds: StateFlow<ClickedImageBounds?> = _clickedImageBounds.asStateFlow()
@@ -191,6 +253,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   // at the start/end of each entry's analysis so the UI never flickers the progress bar.
   private val _activeAnalysisIds = MutableStateFlow<Set<Long>>(emptySet())
   val activeAnalysisIds: StateFlow<Set<Long>> = _activeAnalysisIds.asStateFlow()
+
+  private val _activeBenchmarkStartTimes = MutableStateFlow<Map<Long, Long>>(emptyMap())
+  val activeBenchmarkStartTimes: StateFlow<Map<Long, Long>> =
+      _activeBenchmarkStartTimes.asStateFlow()
 
   // Debounce refreshEntries to avoid UI jank from rapid calls during concurrent analysis
   private val _refreshRequest = MutableStateFlow(System.currentTimeMillis())
@@ -646,6 +712,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     _currentImageProgress.value = 0f
     _activeAnalysisIds.value = emptySet()
     _entryProgressMap.value = emptyMap()
+    _activeBenchmarkStartTimes.value = emptyMap()
+    stopPerformanceSampling()
 
     analysisJob?.cancel()
     try {
@@ -1352,6 +1420,50 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
   }
 
+  suspend fun deleteDownloadedModel(modelType: ModelType): Boolean =
+      withContext(Dispatchers.IO) {
+        if (modelType != ModelType.GEMMA_3N && modelType != ModelType.GEMMA_4) {
+          return@withContext false
+        }
+
+        val wasSelected = _selectedModel.value == modelType
+        if (wasSelected) stopAllAnalysisForModelSwitch("deleteDownloadedModel:${modelType.name}")
+
+        val modelFile = java.io.File(getApplication<Application>().filesDir, modelType.fileName)
+        val deleted = !modelFile.exists() || modelFile.delete()
+        refreshModelDownloadStatus()
+        if (deleted && wasSelected) clearDeletedModelSelection()
+        deleted
+      }
+
+  suspend fun deleteDownloadedGgufModel(modelInfo: GgufModelInfo): Boolean =
+      withContext(Dispatchers.IO) {
+        val wasSelected =
+            _selectedModel.value == ModelType.GGUF &&
+                (ggufManager.activeModelInfo.value?.fileName == modelInfo.fileName ||
+                    prefs.getString("last_gguf_model", null) == modelInfo.fileName)
+        if (wasSelected) {
+          stopAllAnalysisForModelSwitch("deleteDownloadedGgufModel:${modelInfo.fileName}")
+        }
+
+        val importedModel = ImportedGgufModelStore.getModelInfo(getApplication())
+        val deleted = ggufManager.deleteModel(modelInfo)
+        if (deleted && importedModel?.fileName == modelInfo.fileName) {
+          ImportedGgufModelStore.clearReferences(getApplication())
+        }
+        if (deleted && wasSelected) clearDeletedModelSelection()
+        deleted
+      }
+
+  private fun clearDeletedModelSelection() {
+    _selectedModel.value = null
+    _isModelFound.value = false
+    _isModelReady.value = false
+    prefs.edit().remove("selected_model").remove("last_gguf_model").apply()
+    clearModelSwitchStatus()
+    setModelStatusImmediate("Please load a model")
+  }
+
   private fun refreshModelDownloadStatus() {
     val context = getApplication<Application>()
     val isDownloading = _isDownloadingModel.value
@@ -1816,6 +1928,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   companion object {
     private const val EXPERIMENTAL_BATCH_SIZE = 1000
+    private const val MAX_TIME_SAMPLES = 1000
+    private const val MAX_RESOURCE_SAMPLES = 1000
+    private const val RESOURCE_SAMPLE_INTERVAL_MILLIS = 2_000L
+    private const val PREF_ANALYTICS_ENABLED = "analytics_enabled"
+    private const val PREF_PROCESSING_TIME_SAMPLES = "analysis_processing_time_samples"
+    private const val PREF_RESOURCE_USAGE_SAMPLES = "analysis_resource_usage_samples"
   }
 
   // Loading state so UI can show a spinner instead of "no screenshots yet"
@@ -2508,6 +2626,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         return
       }
       _isAnalysisRunning.value = true
+      startPerformanceSampling()
 
       val total = allUnprocessed.size
       val concurrency =
@@ -2606,6 +2725,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         }
       }
 
+      stopPerformanceSampling()
       if (isAnalysisSessionActive(sessionToken)) {
         _analysisProgress.value = 0 to total
 
@@ -2619,6 +2739,8 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       if (isAnalysisSessionActive(sessionToken)) {
         isAnalyzing.set(false)
         _isAnalysisRunning.value = false
+        _activeBenchmarkStartTimes.value = emptyMap()
+        stopPerformanceSampling()
         stopAnalysisService()
       } else {
         Log.d(TAG, "Skipped stale queue finalizer for token=$sessionToken")
@@ -2721,6 +2843,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       return false
     }
 
+    if (_analyticsEnabled.value) {
+      _activeBenchmarkStartTimes.update {
+        it + (entry.id to android.os.SystemClock.elapsedRealtime())
+      }
+    }
+    val hasRecordedBenchmark = java.util.concurrent.atomic.AtomicBoolean(false)
+
     val targetLang =
         when (_analysisLanguage.value) {
           "en" -> "English"
@@ -2744,6 +2873,17 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       }
     }
     val onResult: (String, String, String) -> Unit = { summary, tags, modelUsed ->
+      val completedAtMillis = android.os.SystemClock.elapsedRealtime()
+      val benchmarkStartedAtMillis = _activeBenchmarkStartTimes.value[entry.id]
+      val shouldRecordBenchmark =
+          _analyticsEnabled.value &&
+              benchmarkStartedAtMillis != null &&
+              isAnalysisSessionActive(sessionToken) &&
+              hasRecordedBenchmark.compareAndSet(false, true)
+      _activeBenchmarkStartTimes.update { it - entry.id }
+      if (shouldRecordBenchmark) {
+        recordProcessingTime(completedAtMillis - benchmarkStartedAtMillis)
+      }
       viewModelScope.launch(Dispatchers.IO) {
         if (!isAnalysisSessionActive(sessionToken)) {
           Log.d(TAG, "Dropped stale result for id=${entry.id}, token=$sessionToken")
@@ -2767,6 +2907,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       }
     }
     val onError: (String) -> Unit = { error ->
+      _activeBenchmarkStartTimes.update { it - entry.id }
       viewModelScope.launch(Dispatchers.IO) {
         if (!isAnalysisSessionActive(sessionToken)) {
           Log.d(TAG, "Dropped stale error for id=${entry.id}, token=$sessionToken: $error")
@@ -2962,6 +3103,8 @@ TAGS: [extracted tag1, tag2, tag3]"""
           bitmap.recycle()
         }
 
+    _activeBenchmarkStartTimes.update { it - entry.id }
+
     if (result == null && isAnalysisSessionActive(sessionToken)) {
       // Un-hang the database if timeout occurred
       db.setAnalyzing(entry.id, false)
@@ -3003,9 +3146,14 @@ TAGS: [extracted tag1, tag2, tag3]"""
       }
       refreshEntries()
 
-      _analysisProgress.value = 1 to 1
-      analyzeEntrySuspend(entry)
-      _analysisProgress.value = null
+      startPerformanceSampling()
+      try {
+        _analysisProgress.value = 1 to 1
+        analyzeEntrySuspend(entry)
+      } finally {
+        _analysisProgress.value = null
+        stopPerformanceSampling()
+      }
 
       if (wasQueueRunning) {
         // Resume the background queue now that the priority image is done
@@ -3061,6 +3209,106 @@ TAGS: [extracted tag1, tag2, tag3]"""
 
   fun getStats(): Pair<Int, Int> {
     return db.getEntryCount() to db.getAnalyzedCount()
+  }
+
+  private fun startPerformanceSampling() {
+    if (!_analyticsEnabled.value) return
+    if (performanceSamplingJob?.isActive == true) return
+    performanceMonitor.reset()
+    performanceSamplingJob =
+        viewModelScope.launch(Dispatchers.IO) {
+          delay(1_000L)
+          while (isActive) {
+            if (!_analyticsEnabled.value ||
+                _isAnalysisPaused.value ||
+                _activeBenchmarkStartTimes.value.isEmpty()) {
+              performanceMonitor.reset()
+            } else {
+              val usage = performanceMonitor.sample()
+              if (_analyticsEnabled.value && _activeBenchmarkStartTimes.value.isNotEmpty()) {
+                val sample =
+                    ResourceUsageSample(
+                        recordedAtMillis = System.currentTimeMillis(),
+                        cpuPercent = usage.cpuPercent,
+                        ramPercent = usage.ramPercent,
+                    )
+                _analysisBenchmark.update { current ->
+                  current.copy(
+                      resourceUsage =
+                          (current.resourceUsage + sample).takeLast(MAX_RESOURCE_SAMPLES))
+                }
+                persistResourceUsageSamples(_analysisBenchmark.value.resourceUsage)
+              }
+            }
+            delay(RESOURCE_SAMPLE_INTERVAL_MILLIS)
+          }
+        }
+  }
+
+  private fun stopPerformanceSampling() {
+    performanceSamplingJob?.cancel()
+    performanceSamplingJob = null
+    persistResourceUsageSamples(_analysisBenchmark.value.resourceUsage)
+  }
+
+  @Synchronized
+  private fun recordProcessingTime(durationMillis: Long) {
+    if (!_analyticsEnabled.value || durationMillis <= 0L) return
+    val sample =
+        ProcessingTimeSample(
+            recordedAtMillis = System.currentTimeMillis(),
+            durationMillis = durationMillis,
+        )
+    _analysisBenchmark.update { current ->
+      current.copy(processingTimes = (current.processingTimes + sample).takeLast(MAX_TIME_SAMPLES))
+    }
+    persistProcessingTimeSamples(_analysisBenchmark.value.processingTimes)
+  }
+
+  private fun restoreProcessingTimeSamples(): List<ProcessingTimeSample> =
+      prefs
+          .getString(PREF_PROCESSING_TIME_SAMPLES, null)
+          ?.split(';')
+          ?.mapNotNull { encoded ->
+            val fields = encoded.split(',')
+            val timestamp = fields.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+            val duration = fields.getOrNull(1)?.toLongOrNull() ?: return@mapNotNull null
+            if (duration <= 0L) null else ProcessingTimeSample(timestamp, duration)
+          }
+          ?.takeLast(MAX_TIME_SAMPLES)
+          .orEmpty()
+
+  private fun persistProcessingTimeSamples(samples: List<ProcessingTimeSample>) {
+    val encoded = samples.joinToString(";") { "${it.recordedAtMillis},${it.durationMillis}" }
+    prefs.edit().putString(PREF_PROCESSING_TIME_SAMPLES, encoded).apply()
+  }
+
+  private fun restoreResourceUsageSamples(): List<ResourceUsageSample> =
+      prefs
+          .getString(PREF_RESOURCE_USAGE_SAMPLES, null)
+          ?.split(';')
+          ?.mapNotNull { encoded ->
+            val fields = encoded.split(',')
+            val timestamp = fields.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+            val cpuPercent =
+                fields.getOrNull(1)?.toFloatOrNull()?.takeIf { it.isFinite() }?.coerceIn(0f, 100f)
+            val ramPercent =
+                fields.getOrNull(2)?.toFloatOrNull()?.takeIf { it.isFinite() }?.coerceIn(0f, 100f)
+            ResourceUsageSample(
+                recordedAtMillis = timestamp,
+                cpuPercent = cpuPercent,
+                ramPercent = ramPercent,
+            )
+          }
+          ?.takeLast(MAX_RESOURCE_SAMPLES)
+          .orEmpty()
+
+  private fun persistResourceUsageSamples(samples: List<ResourceUsageSample>) {
+    val encoded =
+        samples.joinToString(";") {
+          "${it.recordedAtMillis},${it.cpuPercent ?: "-"},${it.ramPercent ?: "-"}"
+        }
+    prefs.edit().putString(PREF_RESOURCE_USAGE_SAMPLES, encoded).apply()
   }
 
   fun exportData(uri: Uri) {
@@ -3126,6 +3374,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
   }
 
   override fun onCleared() {
+    stopPerformanceSampling()
     lanServer.stop()
     super.onCleared()
     clearModelSwitchStatus()

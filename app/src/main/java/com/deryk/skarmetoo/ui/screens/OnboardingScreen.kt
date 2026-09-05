@@ -304,7 +304,7 @@ fun OnboardingScreen(viewModel: ScreenshotViewModel, onFinish: () -> Unit) {
                       Column(modifier = Modifier.weight(1f)) {
                         FlowRow {
                           Text(
-                              LFM2_5_MODEL.displayName,
+                              stringResource(R.string.model_lfm_title),
                               style = MaterialTheme.typography.titleSmall,
                               fontWeight =
                                   if (isLfmSelected) FontWeight.Bold else FontWeight.Medium,

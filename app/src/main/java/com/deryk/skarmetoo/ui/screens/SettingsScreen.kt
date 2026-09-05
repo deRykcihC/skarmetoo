@@ -6,14 +6,18 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -29,7 +33,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -59,11 +68,13 @@ import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import com.deryk.skarmetoo.ui.theme.MiSansFamily
 import com.deryk.skarmetoo.util.CpuTemperature
+import com.deryk.skarmetoo.viewmodel.AnalysisBenchmarkState
 import com.deryk.skarmetoo.viewmodel.ModelType
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import com.deryk.skarmetoo.viewmodel.SemanticSearchViewModel
 import com.deryk.skarmetoo.viewmodel.TemperatureUnit
 import com.google.mlkit.genai.common.FeatureStatus
+import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -80,6 +91,8 @@ private data class MediaStoreAlbumRef(
     val name: String,
     val bucketId: String,
 )
+
+private const val LIVE_CHART_POINT_COUNT = 50
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -317,8 +330,7 @@ fun SettingsScreen(
             if (EmbeddingGemma.isTextTooLongError(error)) {
               tooLongCount++
               tooLongEntryIds += entry.id
-              EmbeddingGemmaSkippedStore.saveEntryIds(
-                  context.applicationContext, tooLongEntryIds)
+              EmbeddingGemmaSkippedStore.saveEntryIds(context.applicationContext, tooLongEntryIds)
             } else if (firstFailure == null) {
               firstFailure =
                   error?.let { context.getString(R.string.embeddinggemma_embedding_failed, it) }
@@ -469,6 +481,12 @@ fun SettingsScreen(
 
   val totalImages by viewModel.totalImageCount.collectAsState()
   val analyzedImages by viewModel.analyzedImageCount.collectAsState()
+  val analysisBenchmark by viewModel.analysisBenchmark.collectAsState()
+  val activeBenchmarkStartTimes by viewModel.activeBenchmarkStartTimes.collectAsState()
+  val analyticsEnabled by viewModel.analyticsEnabled.collectAsState()
+  var speedChartIsLive by remember { mutableStateOf(true) }
+  var resourceChartIsLive by remember { mutableStateOf(true) }
+  var analyticsLiveResetKey by remember { mutableIntStateOf(0) }
   val isDark = LocalIsDarkMode.current
   val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -506,28 +524,30 @@ fun SettingsScreen(
 
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
               Row(verticalAlignment = Alignment.CenterVertically) {
-                val temperatureContentDescription =
-                    stringResource(R.string.cpu_temperature_content_description)
-                Surface(
-                    onClick =
-                        hapticOnClick {
-                          viewModel.setTemperatureUnit(
-                              if (temperatureUnit == TemperatureUnit.CELSIUS) {
-                                TemperatureUnit.FAHRENHEIT
-                              } else {
-                                TemperatureUnit.CELSIUS
-                              })
-                        },
-                    modifier =
-                        Modifier.height(42.dp)
-                            .semantics { contentDescription = temperatureContentDescription },
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(14.dp),
-                ) {
-                  Box(modifier = Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
+                cpuTemperatureCelsius?.let { temperature ->
+                  val temperatureContentDescription =
+                      stringResource(R.string.cpu_temperature_content_description)
+                  Surface(
+                      onClick =
+                          hapticOnClick {
+                            viewModel.setTemperatureUnit(
+                                if (temperatureUnit == TemperatureUnit.CELSIUS) {
+                                  TemperatureUnit.FAHRENHEIT
+                                } else {
+                                  TemperatureUnit.CELSIUS
+                                })
+                          },
+                      modifier =
+                          Modifier.height(42.dp).semantics {
+                            contentDescription = temperatureContentDescription
+                          },
+                      color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                      shape = RoundedCornerShape(14.dp),
+                  ) {
+                    Box(modifier = Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
                       Text(
                           text =
-                              cpuTemperatureCelsius?.let { temperature ->
+                              run {
                                 val displayTemperature =
                                     if (temperatureUnit == TemperatureUnit.CELSIUS) {
                                       temperature
@@ -535,20 +555,20 @@ fun SettingsScreen(
                                       temperature * 9f / 5f + 32f
                                     }
                                 "${displayTemperature.roundToInt()}°${
-                                  if (temperatureUnit == TemperatureUnit.CELSIUS) "C" else "F"
-                                }"
-                              } ?: stringResource(R.string.cpu_temperature_unavailable),
-                          modifier =
-                              Modifier.padding(horizontal = 10.dp),
+                              if (temperatureUnit == TemperatureUnit.CELSIUS) "C" else "F"
+                            }"
+                              },
+                          modifier = Modifier.padding(horizontal = 10.dp),
                           style = MaterialTheme.typography.labelMedium,
                           fontFamily = MiSansFamily,
                           fontWeight = FontWeight.Bold,
                           color = MaterialTheme.colorScheme.onSurfaceVariant,
                       )
+                    }
                   }
-                }
 
-                Spacer(modifier = Modifier.width(6.dp))
+                  Spacer(modifier = Modifier.width(6.dp))
+                }
 
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -558,51 +578,144 @@ fun SettingsScreen(
                       modifier = Modifier.padding(4.dp),
                       horizontalArrangement = Arrangement.spacedBy(4.dp),
                       verticalAlignment = Alignment.CenterVertically) {
-                      IconButton(
-                          onClick = hapticOnClick(onRevisitTutorial),
-                          modifier = Modifier.size(34.dp)) {
-                            Icon(
-                                Icons.Rounded.MenuBook,
-                                contentDescription = "Tutorial",
-                                modifier = Modifier.size(20.dp))
-                          }
-                      IconButton(
-                          onClick = hapticOnClick { viewModel.setDarkMode(!isDark) },
-                          modifier = Modifier.size(34.dp)) {
-                            Icon(
-                                if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                contentDescription = "Toggle Dark Mode",
-                                modifier = Modifier.size(20.dp))
-                          }
-                      IconButton(
-                          onClick = hapticOnClick(onStartScreenSaver),
-                          modifier = Modifier.size(34.dp)) {
-                            Icon(
-                                Icons.Rounded.Monitor,
-                                contentDescription = "Screen Saver",
-                                modifier = Modifier.size(20.dp))
-                          }
-                      IconButton(
-                          onClick =
-                              hapticOnClick {
-                                val nextLang =
-                                    when (currentLanguage) {
-                                      "en" -> "zh-rTW"
-                                      else -> "en"
-                                    }
-                                viewModel.setAppLanguage(nextLang)
-                              },
-                          modifier = Modifier.size(34.dp)) {
-                            Icon(
-                                Icons.Rounded.Language,
-                                contentDescription = "Language",
-                                modifier = Modifier.size(20.dp))
-                          }
-                  }
+                        IconButton(
+                            onClick = hapticOnClick(onRevisitTutorial),
+                            modifier = Modifier.size(34.dp)) {
+                              Icon(
+                                  Icons.Rounded.MenuBook,
+                                  contentDescription = "Tutorial",
+                                  modifier = Modifier.size(20.dp))
+                            }
+                        IconButton(
+                            onClick = hapticOnClick { viewModel.setDarkMode(!isDark) },
+                            modifier = Modifier.size(34.dp)) {
+                              Icon(
+                                  if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                                  contentDescription = "Toggle Dark Mode",
+                                  modifier = Modifier.size(20.dp))
+                            }
+                        IconButton(
+                            onClick = hapticOnClick(onStartScreenSaver),
+                            modifier = Modifier.size(34.dp)) {
+                              Icon(
+                                  Icons.Rounded.Monitor,
+                                  contentDescription = "Screen Saver",
+                                  modifier = Modifier.size(20.dp))
+                            }
+                        IconButton(
+                            onClick =
+                                hapticOnClick {
+                                  val nextLang =
+                                      when (currentLanguage) {
+                                        "en" -> "zh-rTW"
+                                        else -> "en"
+                                      }
+                                  viewModel.setAppLanguage(nextLang)
+                                },
+                            modifier = Modifier.size(34.dp)) {
+                              Icon(
+                                  Icons.Rounded.Language,
+                                  contentDescription = "Language",
+                                  modifier = Modifier.size(20.dp))
+                            }
+                      }
                 }
               }
             }
           }
+
+          Row(
+              modifier =
+                  Modifier.fillMaxWidth()
+                      .height(34.dp)
+                      .padding(start = 16.dp, end = 16.dp, bottom = 2.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            val analyticsTitle =
+                stringResource(
+                    if (analyticsEnabled) R.string.analytics_title_enabled
+                    else R.string.analytics_title)
+            Surface(
+                onClick = hapticOnClick { viewModel.setAnalyticsEnabled(!analyticsEnabled) },
+                modifier = Modifier.fillMaxHeight(),
+                shape = RoundedCornerShape(10.dp),
+                color =
+                    if (analyticsEnabled) MaterialTheme.colorScheme.surfaceContainerHigh
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor =
+                    if (analyticsEnabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            ) {
+              Box(
+                  modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
+                  contentAlignment = Alignment.Center,
+              ) {
+                Text(
+                    analyticsTitle.uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                )
+              }
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            androidx.compose.animation.AnimatedVisibility(
+                visible = analyticsEnabled && (!speedChartIsLive || !resourceChartIsLive),
+                enter =
+                    androidx.compose.animation.fadeIn(
+                        animationSpec =
+                            androidx.compose.animation.core.tween(durationMillis = 180)),
+                exit =
+                    androidx.compose.animation.fadeOut(
+                        animationSpec =
+                            androidx.compose.animation.core.tween(durationMillis = 120)),
+            ) {
+              Surface(
+                  onClick = hapticOnClick { analyticsLiveResetKey += 1 },
+                  modifier = Modifier.fillMaxHeight(),
+                  shape = RoundedCornerShape(10.dp),
+                  color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                  contentColor = MaterialTheme.colorScheme.onSurface,
+              ) {
+                Box(
+                    modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                  Text(
+                      stringResource(R.string.analytics_show_latest).uppercase(),
+                      style = MaterialTheme.typography.labelMedium,
+                      fontWeight = FontWeight.Bold,
+                      letterSpacing = 1.sp,
+                  )
+                }
+              }
+            }
+          }
+
+          androidx.compose.animation.AnimatedVisibility(
+              visible = analyticsEnabled,
+              enter =
+                  androidx.compose.animation.expandVertically() +
+                      androidx.compose.animation.fadeIn(),
+              exit =
+                  androidx.compose.animation.shrinkVertically() +
+                      androidx.compose.animation.fadeOut(),
+          ) {
+            Column {
+              Spacer(modifier = Modifier.height(8.dp))
+
+              AnalysisBenchmarkCard(
+                  benchmark = analysisBenchmark,
+                  activeProcessingStartTimes = activeBenchmarkStartTimes.values,
+                  liveResetKey = analyticsLiveResetKey,
+                  onSpeedLiveViewChanged = { speedChartIsLive = it },
+                  onResourceLiveViewChanged = { resourceChartIsLive = it },
+                  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+              )
+            }
+          }
+
+          Spacer(modifier = Modifier.height(12.dp))
 
           // ===== Stats cards row =====
           Row(
@@ -1364,7 +1477,7 @@ fun SettingsScreen(
                   Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                       Text(
-                          LFM2_5_MODEL.displayName,
+                          stringResource(R.string.model_lfm_title),
                           style = MaterialTheme.typography.titleSmall,
                           fontWeight = if (isLfmSelected) FontWeight.Bold else FontWeight.Medium,
                       )
@@ -2943,14 +3056,21 @@ fun SettingsScreen(
                         }
                       }
                     }
-                    if (embeddingGemmaIndexingStatus != null &&
-                        embeddingGemmaTooLongEntryIds.isEmpty()) {
+                    val indexingStatus = embeddingGemmaIndexingStatus
+                    if (indexingStatus != null && embeddingGemmaTooLongEntryIds.isEmpty()) {
                       Spacer(modifier = Modifier.height(6.dp))
-                      Text(
-                          text = embeddingGemmaIndexingStatus.orEmpty(),
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.primary,
-                      )
+                      Surface(
+                          modifier = Modifier.fillMaxWidth(),
+                          shape = RoundedCornerShape(8.dp),
+                          color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                      ) {
+                        Text(
+                            text = indexingStatus,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                      }
                     }
                   }
                 }
@@ -4177,6 +4297,559 @@ fun SettingsScreen(
           }
         },
     )
+  }
+}
+
+@Composable
+private fun AnalysisBenchmarkCard(
+    benchmark: AnalysisBenchmarkState,
+    activeProcessingStartTimes: Collection<Long>,
+    liveResetKey: Int,
+    onSpeedLiveViewChanged: (Boolean) -> Unit,
+    onResourceLiveViewChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+  val speedValues = benchmark.processingTimes.map { it.durationMillis / 1000f }
+  val latestUsage = benchmark.resourceUsage.lastOrNull()
+  val showResourceUsage =
+      latestUsage?.let { it.cpuPercent != null || it.ramPercent != null } == true
+  val primary = MaterialTheme.colorScheme.primary
+  val secondary = MaterialTheme.colorScheme.tertiary
+  val isDark = LocalIsDarkMode.current
+  val averageContainer = if (isDark) Color(0xFF1A2E42) else Color(0xFFE3F2FD)
+  val averageContent = if (isDark) Color(0xFF90CAF9) else Color(0xFF1565C0)
+  val fastestContainer = if (isDark) Color(0xFF173A2A) else Color(0xFFE8F5E9)
+  val fastestContent = if (isDark) Color(0xFFA5D6A7) else Color(0xFF2E7D32)
+  var benchmarkClock by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+
+  LaunchedEffect(activeProcessingStartTimes) {
+    benchmarkClock = SystemClock.elapsedRealtime()
+    while (activeProcessingStartTimes.isNotEmpty()) {
+      kotlinx.coroutines.delay(250L)
+      benchmarkClock = SystemClock.elapsedRealtime()
+    }
+  }
+
+  val displayedAverageDuration =
+      if (activeProcessingStartTimes.isEmpty()) {
+        benchmark.averageDurationMillis
+      } else {
+        val completedTotal = benchmark.processingTimes.sumOf { it.durationMillis }
+        val activeTotal =
+            activeProcessingStartTimes.sumOf { startedAt ->
+              (benchmarkClock - startedAt).coerceAtLeast(0L)
+            }
+        (completedTotal + activeTotal) /
+            (benchmark.processingTimes.size + activeProcessingStartTimes.size)
+      }
+  val displayedAverageImageCount = benchmark.processingTimes.size + activeProcessingStartTimes.size
+
+  Card(
+      modifier = modifier,
+      shape = RoundedCornerShape(24.dp),
+      colors =
+          CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+      elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+  ) {
+    Box(
+        modifier =
+            Modifier.padding(6.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    shape = RoundedCornerShape(19.dp),
+                ),
+    ) {
+      Column {
+        Row(
+            modifier =
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 19.dp, topEnd = 19.dp)),
+        ) {
+          BenchmarkMetric(
+              label = stringResource(R.string.benchmark_average),
+              value =
+                  stringResource(
+                      R.string.benchmark_average_value,
+                      formatBenchmarkSeconds(displayedAverageDuration),
+                      displayedAverageImageCount,
+                  ),
+              containerColor = averageContainer,
+              contentColor = averageContent,
+              shape = RoundedCornerShape(0.dp),
+              modifier = Modifier.weight(1f),
+          )
+          BenchmarkMetric(
+              label = stringResource(R.string.benchmark_fastest),
+              value = formatBenchmarkSeconds(benchmark.fastestDurationMillis),
+              containerColor = fastestContainer,
+              contentColor = fastestContent,
+              shape = RoundedCornerShape(0.dp),
+              modifier = Modifier.width(80.dp),
+          )
+          BenchmarkMetric(
+              label = stringResource(R.string.benchmark_slowest),
+              value = formatBenchmarkSeconds(benchmark.slowestDurationMillis),
+              containerColor = MaterialTheme.colorScheme.errorContainer,
+              contentColor = MaterialTheme.colorScheme.onErrorContainer,
+              shape =
+                  RoundedCornerShape(
+                      topStart = 0.dp,
+                      topEnd = 0.dp,
+                      bottomEnd = 0.dp,
+                      bottomStart = 0.dp,
+                  ),
+              modifier = Modifier.width(80.dp),
+          )
+        }
+
+        Column {
+          BenchmarkChartSurface(
+              title = stringResource(R.string.benchmark_speed_title),
+              edgeToEdgeContent = true,
+              shape =
+                  if (showResourceUsage) {
+                    RoundedCornerShape(0.dp)
+                  } else {
+                    RoundedCornerShape(
+                        topStart = 0.dp,
+                        topEnd = 0.dp,
+                        bottomEnd = 19.dp,
+                        bottomStart = 19.dp,
+                    )
+                  },
+          ) {
+            if (speedValues.isEmpty()) {
+              BenchmarkEmptyChart()
+            } else {
+              SpeedLineChart(
+                  values = speedValues,
+                  lineColor = primary,
+                  contentDescription = stringResource(R.string.benchmark_speed_chart_description),
+                  liveResetKey = liveResetKey,
+                  onLiveViewChanged = onSpeedLiveViewChanged,
+              )
+            }
+          }
+
+          if (showResourceUsage) {
+            BenchmarkChartSurface(
+                title = null,
+                edgeToEdgeContent = true,
+                shape =
+                    RoundedCornerShape(
+                        topStart = 0.dp,
+                        topEnd = 0.dp,
+                        bottomEnd = 19.dp,
+                        bottomStart = 19.dp,
+                    ),
+                trailing = {
+                  BenchmarkLegend(
+                      label = stringResource(R.string.benchmark_cpu),
+                      value = latestUsage?.cpuPercent,
+                      color = primary,
+                  )
+                  Spacer(modifier = Modifier.width(10.dp))
+                  BenchmarkLegend(
+                      label = stringResource(R.string.benchmark_ram),
+                      value = latestUsage?.ramPercent,
+                      color = secondary,
+                  )
+                },
+            ) {
+              ResourceUsageLineChart(
+                  cpuValues = benchmark.resourceUsage.map { it.cpuPercent },
+                  ramValues = benchmark.resourceUsage.map { it.ramPercent },
+                  cpuColor = primary,
+                  ramColor = secondary,
+                  contentDescription =
+                      stringResource(R.string.benchmark_resource_chart_description),
+                  liveResetKey = liveResetKey,
+                  onLiveViewChanged = onResourceLiveViewChanged,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun BenchmarkMetric(
+    label: String,
+    value: String,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(16.dp),
+) {
+  Surface(modifier = modifier, shape = shape, color = containerColor) {
+    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp)) {
+      Text(
+          text = label,
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.Medium,
+          color = contentColor.copy(alpha = 0.76f),
+      )
+      Spacer(modifier = Modifier.height(3.dp))
+      Text(
+          text = value,
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.Bold,
+          color = Color.Black,
+          maxLines = 1,
+      )
+    }
+  }
+}
+
+@Composable
+private fun BenchmarkChartSurface(
+    title: String?,
+    edgeToEdgeContent: Boolean = false,
+    shape: Shape = RoundedCornerShape(18.dp),
+    trailing: @Composable RowScope.() -> Unit = {},
+    content: @Composable () -> Unit,
+) {
+  Box(
+      modifier =
+          Modifier.fillMaxWidth()
+              .background(
+                  color = MaterialTheme.colorScheme.surfaceContainer,
+                  shape = shape,
+              ),
+  ) {
+    Column {
+      Row(
+          modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp),
+          verticalAlignment = Alignment.CenterVertically,
+      ) {
+        if (title != null) {
+          Text(
+              text = title,
+              modifier = Modifier.weight(1f),
+              style = MaterialTheme.typography.labelLarge,
+              fontWeight = FontWeight.Bold,
+          )
+        } else {
+          Spacer(modifier = Modifier.weight(1f))
+        }
+        trailing()
+      }
+      Spacer(modifier = Modifier.height(8.dp))
+      Box(
+          modifier =
+              if (edgeToEdgeContent) Modifier.fillMaxWidth()
+              else Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
+      ) {
+        content()
+      }
+    }
+  }
+}
+
+@Composable
+private fun BenchmarkLegend(label: String, value: Float?, color: Color) {
+  BenchmarkSplitPill(
+      label = label,
+      value = value?.roundToInt()?.let { "$it%" } ?: "-",
+      containerColor = color,
+      contentColor = contentColorFor(color),
+  )
+}
+
+@Composable
+private fun BenchmarkSplitPill(
+    label: String,
+    value: String,
+    containerColor: Color,
+    contentColor: Color,
+) {
+  Row(
+      modifier = Modifier.clip(RoundedCornerShape(8.dp)),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Box(modifier = Modifier.background(containerColor)) {
+      Text(
+          text = label,
+          modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.Bold,
+          color = contentColor,
+      )
+    }
+    Box(modifier = Modifier.background(contentColor)) {
+      Text(
+          text = value,
+          modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.Bold,
+          color = containerColor,
+      )
+    }
+  }
+}
+
+@Composable
+private fun BenchmarkEmptyChart() {
+  Box(
+      modifier = Modifier.fillMaxWidth().height(82.dp),
+      contentAlignment = Alignment.Center,
+  ) {
+    Text(
+        text = stringResource(R.string.benchmark_empty),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+        textAlign = TextAlign.Center,
+    )
+  }
+}
+
+@Composable
+private fun SpeedLineChart(
+    values: List<Float>,
+    lineColor: Color,
+    contentDescription: String,
+    liveResetKey: Int,
+    onLiveViewChanged: (Boolean) -> Unit,
+) {
+  val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+  val minimumVisibleCount = minOf(4, values.size)
+  val liveVisibleCount = minOf(LIVE_CHART_POINT_COUNT, values.size)
+  var visibleCount by remember { mutableIntStateOf(liveVisibleCount) }
+  var isLiveView by remember { mutableStateOf(true) }
+
+  LaunchedEffect(liveResetKey) {
+    isLiveView = true
+    visibleCount = liveVisibleCount
+  }
+  LaunchedEffect(values.size) {
+    if (isLiveView) {
+      visibleCount = liveVisibleCount
+    } else {
+      visibleCount = visibleCount.coerceIn(minimumVisibleCount, values.size)
+      isLiveView = visibleCount == liveVisibleCount
+    }
+  }
+  LaunchedEffect(isLiveView) { onLiveViewChanged(isLiveView) }
+  DisposableEffect(Unit) { onDispose { onLiveViewChanged(true) } }
+
+  val displayedValues = values.takeLast(visibleCount)
+  Canvas(
+      modifier =
+          Modifier.fillMaxWidth()
+              .height(88.dp)
+              .pointerInput(values.size) {
+                awaitEachGesture {
+                  while (true) {
+                    val event = awaitPointerEvent()
+                    if (event.changes.count { it.pressed } >= 2) {
+                      val zoomChange = event.calculateZoom()
+                      if (zoomChange.isFinite() && zoomChange > 0f && zoomChange != 1f) {
+                        val newVisibleCount =
+                            (visibleCount / zoomChange)
+                                .roundToInt()
+                                .coerceIn(minimumVisibleCount, values.size)
+                        if (newVisibleCount != visibleCount) {
+                          visibleCount = newVisibleCount
+                          isLiveView = newVisibleCount == liveVisibleCount
+                          event.changes.forEach { it.consume() }
+                        }
+                      }
+                    }
+                    if (event.changes.none { it.pressed }) break
+                  }
+                }
+              }
+              .semantics { this.contentDescription = contentDescription }) {
+        val verticalInset = 3.dp.toPx()
+        val top = verticalInset
+        val bottom = size.height - verticalInset
+        val horizontalInset = 0f
+        repeat(3) { index ->
+          val y = top + (bottom - top) * index / 2f
+          drawLine(
+              gridColor,
+              start = androidx.compose.ui.geometry.Offset(horizontalInset, y),
+              end = androidx.compose.ui.geometry.Offset(size.width - horizontalInset, y))
+        }
+
+        val maximum = (displayedValues.maxOrNull() ?: 1f).coerceAtLeast(0.1f) * 1.08f
+        fun x(index: Int): Float =
+            if (displayedValues.size == 1) size.width / 2f
+            else
+                horizontalInset +
+                    (size.width - horizontalInset * 2f) * index / (displayedValues.size - 1f)
+        fun y(value: Float): Float = bottom - (value / maximum).coerceIn(0f, 1f) * (bottom - top)
+
+        if (displayedValues.size == 1) {
+          drawCircle(
+              lineColor,
+              radius = 3.5.dp.toPx(),
+              center = androidx.compose.ui.geometry.Offset(x(0), y(displayedValues[0])))
+          return@Canvas
+        }
+
+        val linePath =
+            Path().apply {
+              moveTo(x(0), y(displayedValues[0]))
+              displayedValues.drop(1).forEachIndexed { index, value ->
+                lineTo(x(index + 1), y(value))
+              }
+            }
+        val fillPath =
+            Path().apply {
+              moveTo(x(0), y(displayedValues.first()))
+              displayedValues.drop(1).forEachIndexed { index, value ->
+                lineTo(x(index + 1), y(value))
+              }
+              lineTo(size.width - horizontalInset, bottom)
+              lineTo(horizontalInset, bottom)
+              close()
+            }
+        drawPath(fillPath, color = lineColor.copy(alpha = 0.10f))
+        drawPath(
+            linePath,
+            color = lineColor,
+            style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
+        drawCircle(
+            lineColor,
+            radius = 3.dp.toPx(),
+            center =
+                androidx.compose.ui.geometry.Offset(
+                    x(displayedValues.lastIndex),
+                    y(displayedValues.last()),
+                ))
+      }
+}
+
+@Composable
+private fun ResourceUsageLineChart(
+    cpuValues: List<Float?>,
+    ramValues: List<Float?>,
+    cpuColor: Color,
+    ramColor: Color,
+    contentDescription: String,
+    liveResetKey: Int,
+    onLiveViewChanged: (Boolean) -> Unit,
+) {
+  val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+  val sampleCount = minOf(cpuValues.size, ramValues.size)
+  val minimumVisibleCount = minOf(4, sampleCount)
+  val liveVisibleCount = minOf(LIVE_CHART_POINT_COUNT, sampleCount)
+  var visibleCount by remember { mutableIntStateOf(liveVisibleCount) }
+  var isLiveView by remember { mutableStateOf(true) }
+
+  LaunchedEffect(liveResetKey) {
+    isLiveView = true
+    visibleCount = liveVisibleCount
+  }
+  LaunchedEffect(sampleCount) {
+    if (isLiveView) {
+      visibleCount = liveVisibleCount
+    } else {
+      visibleCount = visibleCount.coerceIn(minimumVisibleCount, sampleCount)
+      isLiveView = visibleCount == liveVisibleCount
+    }
+  }
+  LaunchedEffect(isLiveView) { onLiveViewChanged(isLiveView) }
+  DisposableEffect(Unit) { onDispose { onLiveViewChanged(true) } }
+
+  val displayedCpuValues = cpuValues.takeLast(visibleCount)
+  val displayedRamValues = ramValues.takeLast(visibleCount)
+  Canvas(
+      modifier =
+          Modifier.fillMaxWidth()
+              .height(88.dp)
+              .pointerInput(sampleCount) {
+                awaitEachGesture {
+                  while (true) {
+                    val event = awaitPointerEvent()
+                    if (event.changes.count { it.pressed } >= 2) {
+                      val zoomChange = event.calculateZoom()
+                      if (zoomChange.isFinite() && zoomChange > 0f && zoomChange != 1f) {
+                        val newVisibleCount =
+                            (visibleCount / zoomChange)
+                                .roundToInt()
+                                .coerceIn(minimumVisibleCount, sampleCount)
+                        if (newVisibleCount != visibleCount) {
+                          visibleCount = newVisibleCount
+                          isLiveView = newVisibleCount == liveVisibleCount
+                          event.changes.forEach { it.consume() }
+                        }
+                      }
+                    }
+                    if (event.changes.none { it.pressed }) break
+                  }
+                }
+              }
+              .semantics { this.contentDescription = contentDescription }) {
+        val verticalInset = 3.dp.toPx()
+        val top = verticalInset
+        val bottom = size.height - verticalInset
+        repeat(3) { index ->
+          val y = top + (bottom - top) * index / 2f
+          drawLine(
+              gridColor,
+              start = androidx.compose.ui.geometry.Offset(0f, y),
+              end = androidx.compose.ui.geometry.Offset(size.width, y))
+        }
+
+        fun drawSeries(values: List<Float?>, color: Color) {
+          fun x(index: Int): Float =
+              if (values.size == 1) size.width / 2f else size.width * index / (values.size - 1f)
+          fun y(value: Float): Float = bottom - (value.coerceIn(0f, 100f) / 100f) * (bottom - top)
+          var path: Path? = null
+          values.forEachIndexed { index, value ->
+            if (value == null) {
+              path?.let {
+                drawPath(
+                    it,
+                    color = color,
+                    style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round),
+                )
+              }
+              path = null
+            } else {
+              val existingPath = path
+              if (existingPath == null) {
+                path = Path().apply { moveTo(x(index), y(value)) }
+              } else {
+                existingPath.lineTo(x(index), y(value))
+              }
+            }
+          }
+          path?.let {
+            drawPath(
+                it,
+                color = color,
+                style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round),
+            )
+          }
+
+          values.lastOrNull()?.let { latestValue ->
+            drawCircle(
+                color,
+                radius = 2.75.dp.toPx(),
+                center =
+                    androidx.compose.ui.geometry.Offset(
+                        x(values.lastIndex),
+                        y(latestValue),
+                    ))
+          }
+        }
+
+        drawSeries(displayedRamValues, ramColor)
+        drawSeries(displayedCpuValues, cpuColor)
+      }
+}
+
+private fun formatBenchmarkSeconds(durationMillis: Long?): String {
+  if (durationMillis == null) return "—"
+  val seconds = durationMillis / 1000.0
+  return if (seconds > 999.9) {
+    "999s+"
+  } else {
+    String.format(Locale.getDefault(), "%.1fs", seconds)
   }
 }
 

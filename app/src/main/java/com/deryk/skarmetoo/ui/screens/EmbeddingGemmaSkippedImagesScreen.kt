@@ -1,5 +1,6 @@
 package com.deryk.skarmetoo.ui.screens
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +53,8 @@ fun EmbeddingGemmaSkippedImagesScreen(
   val entries by viewModel.entries.collectAsState()
   val skippedIds = remember { EmbeddingGemmaSkippedStore.getEntryIds(context) }
   val skippedEntries = remember(entries, skippedIds) { entries.filter { it.id in skippedIds } }
+  val gridColumns =
+      if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) 5 else 3
 
   LaunchedEffect(Unit) { viewModel.refreshEntries() }
 
@@ -86,7 +90,7 @@ fun EmbeddingGemmaSkippedImagesScreen(
       }
     } else {
       LazyVerticalGrid(
-          columns = GridCells.Fixed(3),
+          columns = GridCells.Fixed(gridColumns),
           modifier = Modifier.fillMaxSize(),
           contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 24.dp),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
