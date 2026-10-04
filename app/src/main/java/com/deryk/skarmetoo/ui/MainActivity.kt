@@ -25,15 +25,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import androidx.navigation.NamedNavArgument
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -41,15 +46,22 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.deryk.skarmetoo.R
+import com.deryk.skarmetoo.network.BenchmarkLeaderboardClient
+import com.deryk.skarmetoo.network.LeaderboardMessagingService
+import com.deryk.skarmetoo.ui.components.ExpressiveNavigationItem
+import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationBottomInset
+import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationEndInset
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.screens.DetailScreen
 import com.deryk.skarmetoo.ui.screens.DuplicateImagesScreen
 import com.deryk.skarmetoo.ui.screens.EmbeddingGemmaSkippedImagesScreen
 import com.deryk.skarmetoo.ui.screens.GalleryScreen
+import com.deryk.skarmetoo.ui.screens.LeaderboardScreen
 import com.deryk.skarmetoo.ui.screens.MoreModelsScreen
 import com.deryk.skarmetoo.ui.screens.OnboardingScreen
 import com.deryk.skarmetoo.ui.screens.ScreenSaver
 import com.deryk.skarmetoo.ui.screens.SettingsScreen
+import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.ui.theme.SkarmetooTheme
 import com.deryk.skarmetoo.ui.theme.uiScaleForDensityDpi
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
@@ -75,6 +87,8 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+
+    LeaderboardMessagingService.ensureNotificationChannel(this)
 
     _isPickMode.value =
         intent?.action == Intent.ACTION_PICK || intent?.action == Intent.ACTION_GET_CONTENT
@@ -108,6 +122,9 @@ class MainActivity : ComponentActivity() {
             val locale =
                 when (currentLanguage) {
                   "zh-rTW" -> java.util.Locale("zh", "TW")
+                  // Normalize the temporary Simplified Chinese preference to the app's
+                  // supported Traditional Chinese locale.
+                  "zh-rCN" -> java.util.Locale("zh", "TW")
                   else -> java.util.Locale(currentLanguage)
                 }
             java.util.Locale.setDefault(locale)
@@ -174,6 +191,7 @@ class MainActivity : ComponentActivity() {
 object Routes {
   const val ONBOARDING = "onboarding"
   const val SETTINGS = "settings"
+  const val LEADERBOARD = "leaderboard"
   const val MORE_MODELS = "more_models"
   const val DUPLICATE_IMAGES = "duplicate_images"
   const val EMBEDDING_GEMMA_SKIPPED_IMAGES = "embedding_gemma_skipped_images"
@@ -205,9 +223,11 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
   val context = LocalContext.current
   val semanticViewModel: SemanticSearchViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 
-  val showBottomBar =
-      !isPickMode && (currentRoute == Routes.SETTINGS || currentRoute == Routes.GALLERY)
+  val showBottomBar = !isPickMode && currentRoute in listOf(Routes.GALLERY, Routes.SETTINGS)
   val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+  val density = LocalDensity.current
+  var bottomBarHeight by remember(density) { mutableStateOf(0.dp) }
+  var landscapePillWidth by remember(density) { mutableStateOf(0.dp) }
   val activeAnalysisIds by viewModel.activeAnalysisIds.collectAsState()
   val isAnalysisRunning by viewModel.isAnalysisRunning.collectAsState()
   val isAnalysisPaused by viewModel.isAnalysisPaused.collectAsState()
@@ -217,10 +237,13 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
   val isModelReady by viewModel.isModelReady.collectAsState()
   val desktopProgress by viewModel.desktopProgress.collectAsState()
   val selectedModel by viewModel.selectedModel.collectAsState()
+  val benchmarkLeaderboardOptedIn by viewModel.benchmarkLeaderboardOptedIn.collectAsState()
 
   val galleryScrollState = androidx.compose.foundation.rememberScrollState()
   var isScreenSaverActive by remember { mutableStateOf(false) }
   var focusActiveAnalysisRequest by remember { mutableStateOf(false) }
+  var landscapeControlsVisible by remember { mutableStateOf(true) }
+  LaunchedEffect(currentRoute, isLandscape) { landscapeControlsVisible = true }
   val isEasterEgg = remember { kotlin.random.Random.nextFloat() < 0.069f }
   val logoRes = if (isEasterEgg) R.drawable.app_logo_rainbow else R.drawable.app_logo
 
@@ -238,7 +261,17 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
     val action = intent.action
     val uri = intent.data
 
-    if (action == "SHOW_GALLERY") {
+    if (action == BenchmarkLeaderboardClient.ACTION_SHOW_LEADERBOARD) {
+      intent.setAction(null)
+      val currentRoute = navController.currentBackStackEntry?.destination?.route
+      if (currentRoute != Routes.LEADERBOARD) {
+        navController.navigate(Routes.LEADERBOARD) {
+          popUpTo(navController.graph.startDestinationId) { saveState = true }
+          launchSingleTop = true
+          restoreState = true
+        }
+      }
+    } else if (action == "SHOW_GALLERY") {
       intent.setAction(null) // Clear action so we don't repeatedly navigate on recomposition
       val currentRoute = navController.currentBackStackEntry?.destination?.route
       if (currentRoute != Routes.GALLERY) {
@@ -283,6 +316,67 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
+  val navigationStatus: @Composable () -> Unit = {
+    val isDesktopActive = selectedModel == com.deryk.skarmetoo.viewmodel.ModelType.DESKTOP && desktopProgress.isRunning
+    val hasAnalysisWork = isAnalysisPaused || isAnalysisRunning || pendingCount > 0 || analyzingCount > 0 || isDesktopActive
+    val statusColor = if (hasAnalysisWork) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer
+    Surface(
+        modifier = Modifier.height(56.dp).clip(androidx.compose.foundation.shape.CircleShape)
+            .combinedClickable(
+                onClick = hapticOnClick {
+                  if (isModelReady && pendingCount > 0 && !isAnalysisRunning) viewModel.analyzeUnprocessed()
+                },
+                onDoubleClick = {
+                  if (activeAnalysisIds.isNotEmpty() || analyzingCount > 0) {
+                    if (currentRoute != Routes.GALLERY) {
+                      navController.navigate(Routes.GALLERY) {
+                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                      }
+                    }
+                    focusActiveAnalysisRequest = true
+                  } else if (isModelReady) viewModel.forceAnalyzeUnprocessed()
+                },
+            ),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = if (hasAnalysisWork) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = statusColor,
+        shadowElevation = 2.dp,
+    ) {
+      Row(
+          modifier = Modifier.padding(horizontal = 12.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        if (isAnalysisRunning && !isDesktopActive && analyzingCount <= 1) {
+          CircularProgressIndicator(
+              progress = { currentImageProgress }, modifier = Modifier.size(18.dp),
+              strokeWidth = 2.dp, color = statusColor,
+              trackColor = MaterialTheme.colorScheme.errorContainer,
+          )
+        } else {
+          Icon(
+              when {
+                isDesktopActive -> Icons.Rounded.Computer
+                isAnalysisPaused && activeAnalysisIds.isEmpty() -> Icons.Rounded.Pause
+                hasAnalysisWork -> Icons.Rounded.Schedule
+                else -> Icons.Rounded.CheckCircle
+              },
+              contentDescription = null, modifier = Modifier.size(18.dp),
+          )
+        }
+        Text(
+            text = if (isDesktopActive) (desktopProgress.total - desktopProgress.processed).coerceAtLeast(0).toString()
+                else if (hasAnalysisWork) (pendingCount + analyzingCount).toString()
+                else stringResource(R.string.done),
+            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+      }
+    }
+  }
+
   Scaffold(
       topBar = {
         if (isPickMode) {
@@ -302,429 +396,40 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
       bottomBar = {
         AnimatedVisibility(
             visible = showBottomBar && !isLandscape,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            enter =
+                slideInVertically(animationSpec = AppMotion.spatial(), initialOffsetY = { it }) +
+                    fadeIn(animationSpec = AppMotion.effects()),
+            exit =
+                slideOutVertically(animationSpec = AppMotion.spatial(), targetOffsetY = { it }) +
+                    fadeOut(animationSpec = AppMotion.fastEffects()),
         ) {
-          NavigationBar(tonalElevation = 4.dp) {
-            NavigationBarItem(
-                selected = currentRoute == Routes.GALLERY,
-                onClick =
-                    hapticOnClick {
-                      if (currentRoute != Routes.GALLERY) {
-                        navController.navigate(Routes.GALLERY) {
-                          popUpTo(navController.graph.startDestinationId) { saveState = true }
-                          launchSingleTop = true
-                          restoreState = true
-                        }
+          Box(
+              modifier =
+                  Modifier.fillMaxWidth()
+                      .onSizeChanged { size ->
+                        bottomBarHeight = with(density) { size.height.toDp() }
                       }
-                    },
-                icon = {
-                  Icon(
-                      if (currentRoute == Routes.GALLERY) Icons.Rounded.Home
-                      else Icons.Outlined.Home,
-                      "Home",
-                  )
-                },
-                label = { Text(stringResource(R.string.gallery)) },
-                colors =
-                    NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-            )
-            NavigationBarItem(
-                selected = currentRoute == Routes.SETTINGS,
-                onClick =
-                    hapticOnClick {
-                      if (currentRoute != Routes.SETTINGS) {
-                        navController.navigate(Routes.SETTINGS) {
-                          popUpTo(navController.graph.startDestinationId) { saveState = true }
-                          launchSingleTop = true
-                          restoreState = true
-                        }
-                      }
-                    },
-                icon = {
-                  Icon(
-                      if (currentRoute == Routes.SETTINGS) Icons.Rounded.Settings
-                      else Icons.Outlined.Settings,
-                      "Settings",
-                  )
-                },
-                label = { Text(stringResource(R.string.settings)) },
-                colors =
-                    NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                    ),
-            )
-          }
-        }
-      },
-  ) { innerPadding ->
-    val bottomPadding by
-        animateDpAsState(
-            targetValue = innerPadding.calculateBottomPadding(),
-            label = "bottomPadding",
-        )
-    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS)
-    Row(
-        modifier =
-            Modifier.fillMaxSize()
-                .padding(
-                    top =
-                        if (currentRoute == Routes.GALLERY) {
-                          innerPadding.calculateTopPadding() * 0.5f + 8.dp
-                        } else if (isLandscape && currentRoute == Routes.SETTINGS) {
-                          innerPadding.calculateTopPadding() * 0.5f
-                        } else {
-                          innerPadding.calculateTopPadding()
-                        },
-                    bottom = bottomPadding,
-                )) {
-          NavHost(
-              navController = navController,
-              startDestination = startDestination,
-              modifier = Modifier.weight(1f).fillMaxHeight(),
-              enterTransition = {
-                val initialRoute = initialState.destination.route
-                val targetRoute = targetState.destination.route
-                val initialIndex = routeOrder.indexOf(initialRoute)
-                val targetIndex = routeOrder.indexOf(targetRoute)
-
-                if (initialRoute == Routes.SETTINGS &&
-                    (targetRoute == Routes.MORE_MODELS ||
-                        targetRoute == Routes.DUPLICATE_IMAGES ||
-                        targetRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)) {
-                  slideInHorizontally(initialOffsetX = { it }) + fadeIn()
-                } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
-                  slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
-                } else if (initialIndex != -1 &&
-                    targetIndex != -1 &&
-                    targetRoute != Routes.GALLERY) {
-                  if (targetIndex > initialIndex) {
-                    slideInHorizontally(initialOffsetX = { it }) + fadeIn()
-                  } else {
-                    slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
-                  }
-                } else {
-                  fadeIn()
-                }
-              },
-              exitTransition = {
-                val initialRoute = initialState.destination.route
-                val targetRoute = targetState.destination.route
-                val initialIndex = routeOrder.indexOf(initialRoute)
-                val targetIndex = routeOrder.indexOf(targetRoute)
-
-                if (initialRoute == Routes.SETTINGS &&
-                    (targetRoute == Routes.MORE_MODELS ||
-                        targetRoute == Routes.DUPLICATE_IMAGES ||
-                        targetRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)) {
-                  slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
-                } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
-                  slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
-                } else if (initialIndex != -1 &&
-                    targetIndex != -1 &&
-                    targetRoute != Routes.GALLERY) {
-                  if (targetIndex > initialIndex) {
-                    slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
-                  } else {
-                    slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
-                  }
-                } else {
-                  fadeOut()
-                }
-              },
-              popEnterTransition = {
-                val initialRoute = initialState.destination.route
-                val targetRoute = targetState.destination.route
-                if ((initialRoute == Routes.MORE_MODELS ||
-                    initialRoute == Routes.DUPLICATE_IMAGES ||
-                    initialRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) &&
-                    targetRoute == Routes.SETTINGS) {
-                  slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
-                } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
-                  slideInHorizontally(initialOffsetX = { -it }) + fadeIn()
-                } else {
-                  fadeIn()
-                }
-              },
-              popExitTransition = {
-                val initialRoute = initialState.destination.route
-                val targetRoute = targetState.destination.route
-                if ((initialRoute == Routes.MORE_MODELS ||
-                    initialRoute == Routes.DUPLICATE_IMAGES ||
-                    initialRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) &&
-                    targetRoute == Routes.SETTINGS) {
-                  slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
-                } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
-                  slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
-                } else {
-                  fadeOut()
-                }
-              },
+                      .windowInsetsPadding(
+                          WindowInsets.navigationBars.only(
+                              WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                      .padding(horizontal = 24.dp, vertical = 8.dp),
+              contentAlignment = Alignment.Center,
           ) {
-            composable(Routes.ONBOARDING) {
-              OnboardingScreen(
-                  viewModel = viewModel,
-                  onFinish = {
-                    viewModel.setHasSeenOnboarding(true)
-                    navController.navigate(Routes.GALLERY) {
-                      popUpTo(Routes.ONBOARDING) { inclusive = true }
-                    }
-                  })
-            }
-            composable(Routes.SETTINGS) {
-              SettingsScreen(
-                  viewModel = viewModel,
-                  semanticViewModel = semanticViewModel,
-                  onStartScreenSaver = { isScreenSaverActive = true },
-                  logoRes = logoRes,
-                  onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
-                  onOpenMoreModels = { navController.navigate(Routes.MORE_MODELS) },
-                  onOpenDuplicateImages = { navController.navigate(Routes.DUPLICATE_IMAGES) },
-                  onOpenSkippedImages = {
-                    navController.navigate(Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)
-                  },
-              )
-            }
-            composable(Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
-              EmbeddingGemmaSkippedImagesScreen(
-                  viewModel = viewModel,
-                  onBack = { navController.popBackStack() },
-                  onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
-              )
-            }
-            composable(Routes.DUPLICATE_IMAGES) {
-              DuplicateImagesScreen(
-                  viewModel = viewModel,
-                  onBack = { navController.popBackStack() },
-                  onScreenshotClick = { id -> navController.navigate(Routes.duplicateDetail(id)) },
-              )
-            }
-            composable(Routes.MORE_MODELS) {
-              MoreModelsScreen(
-                  viewModel = viewModel,
-                  onBack = { navController.popBackStack() },
-                  onActivateModel = { model ->
-                    viewModel.setGgufModelAsActive(model)
-                    navController.popBackStack()
-                  },
-              )
-            }
-            composable(Routes.GALLERY) {
-              GalleryScreen(
-                  viewModel = viewModel,
-                  onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
-                  scrollState = galleryScrollState,
-                  logoRes = logoRes,
-                  isPickMode = isPickMode,
-                  focusActiveAnalysisRequest = focusActiveAnalysisRequest,
-                  onFocusActiveAnalysisHandled = { focusActiveAnalysisRequest = false },
-              )
-            }
-            composable(
-                Routes.DETAIL,
-                arguments = listOf(navArgument("id") { type = NavType.LongType }),
-            ) { backStackEntry ->
-              val id = backStackEntry.arguments?.getLong("id") ?: return@composable
-              val previousRoute = navController.previousBackStackEntry?.destination?.route
-              DetailScreen(
-                  viewModel = viewModel,
-                  semanticViewModel = semanticViewModel,
-                  entryId = id,
-                  onBack = {
-                    if (previousRoute == Routes.DUPLICATE_IMAGES ||
-                        previousRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
-                      navController.popBackStack()
-                    } else {
-                      navController.popBackStack(Routes.GALLERY, inclusive = false)
-                    }
-                  },
-                  onTagClick = { tag ->
-                    viewModel.setSearchQuery(tag)
-                    if (previousRoute == Routes.DUPLICATE_IMAGES) {
-                      navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
-                    } else if (previousRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
-                      navController.popBackStack(
-                          Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES, inclusive = false)
-                    } else {
-                      navController.popBackStack(Routes.GALLERY, inclusive = false)
-                    }
-                  },
-                  onScreenshotClick = { matchedId ->
-                    navController.navigate(Routes.detail(matchedId))
-                  })
-            }
-            composable(
-                Routes.DUPLICATE_DETAIL,
-                arguments = listOf(navArgument("id") { type = NavType.LongType }),
-            ) { backStackEntry ->
-              val id = backStackEntry.arguments?.getLong("id") ?: return@composable
-              val entries by viewModel.entries.collectAsState()
-              val duplicateSwipeEntryIds =
-                  remember(id, entries) {
-                    val imageHash = entries.firstOrNull { it.id == id }?.imageHash.orEmpty()
-                    if (imageHash.isBlank()) {
-                      null
-                    } else {
-                      entries
-                          .filter { it.imageHash == imageHash }
-                          .sortedByDescending { it.sortKey }
-                          .map { it.id }
-                          .takeIf { it.size > 1 }
-                    }
-                  }
-              DetailScreen(
-                  viewModel = viewModel,
-                  semanticViewModel = semanticViewModel,
-                  entryId = id,
-                  onBack = {
-                    navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
-                  },
-                  onTagClick = { tag ->
-                    viewModel.setSearchQuery(tag)
-                    navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
-                  },
-                  onScreenshotClick = { matchedId ->
-                    navController.navigate(Routes.duplicateDetail(matchedId))
-                  },
-                  swipeEntryIds = duplicateSwipeEntryIds,
-              )
-            }
-          }
-
-          AnimatedVisibility(
-              visible = showBottomBar && isLandscape,
-              enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
-              exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
-          ) {
-            NavigationRail(
-                modifier = Modifier.fillMaxHeight(),
-                containerColor =
-                    if (currentRoute == Routes.GALLERY || currentRoute == Routes.SETTINGS) {
-                      Color.Transparent
-                    } else MaterialTheme.colorScheme.surfaceContainer,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-              Spacer(modifier = Modifier.height(12.dp))
-              Image(
-                  painter = painterResource(id = logoRes),
-                  contentDescription = stringResource(R.string.logo),
-                  modifier = Modifier.size(40.dp).align(Alignment.CenterHorizontally),
-              )
-              Spacer(modifier = Modifier.height(10.dp))
-              val isDesktopActive =
-                  selectedModel == com.deryk.skarmetoo.viewmodel.ModelType.DESKTOP &&
-                      desktopProgress.isRunning
-              val desktopPending =
-                  if (isDesktopActive)
-                      (desktopProgress.total - desktopProgress.processed).coerceAtLeast(0)
-                  else 0
-              val hasAnalysisWork =
-                  isAnalysisPaused ||
-                      isAnalysisRunning ||
-                      pendingCount > 0 ||
-                      analyzingCount > 0 ||
-                      isDesktopActive
-              Surface(
-                  modifier =
-                      Modifier.align(Alignment.CenterHorizontally)
-                          .size(56.dp)
-                          .clip(RoundedCornerShape(16.dp))
-                          .combinedClickable(
-                              onDoubleClick = {
-                                if (activeAnalysisIds.isNotEmpty() || analyzingCount > 0) {
-                                  if (currentRoute != Routes.GALLERY) {
-                                    navController.navigate(Routes.GALLERY) {
-                                      popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                      }
-                                      launchSingleTop = true
-                                      restoreState = true
-                                    }
-                                  }
-                                  focusActiveAnalysisRequest = true
-                                } else if (isModelReady) {
-                                  viewModel.forceAnalyzeUnprocessed()
-                                }
-                              },
-                              onClick = {
-                                if (isModelReady && pendingCount > 0 && !isAnalysisRunning) {
-                                  viewModel.analyzeUnprocessed()
-                                }
-                              },
-                          ),
-                  shape = RoundedCornerShape(16.dp),
-                  color =
-                      if (hasAnalysisWork) MaterialTheme.colorScheme.errorContainer
-                      else MaterialTheme.colorScheme.secondaryContainer,
-              ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                  when {
-                    isDesktopActive ->
-                        Icon(
-                            Icons.Rounded.Computer,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    isAnalysisPaused && activeAnalysisIds.isEmpty() ->
-                        Icon(
-                            Icons.Rounded.Pause,
-                            contentDescription = stringResource(R.string.pause),
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    analyzingCount == 1 || isAnalysisRunning ->
-                        CircularProgressIndicator(
-                            progress = { currentImageProgress },
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.error,
-                            trackColor = MaterialTheme.colorScheme.errorContainer,
-                        )
-                    hasAnalysisWork ->
-                        Icon(
-                            Icons.Rounded.Schedule,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    else ->
-                        Icon(
-                            Icons.Rounded.CheckCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                  }
-                  Spacer(modifier = Modifier.height(3.dp))
-                  Text(
-                      text =
-                          if (isDesktopActive) {
-                            desktopPending.toString()
-                          } else if (hasAnalysisWork) {
-                            (pendingCount + analyzingCount).toString()
-                          } else {
-                            stringResource(R.string.done)
-                          },
-                      style = MaterialTheme.typography.labelMedium,
-                      fontWeight = FontWeight.Bold,
-                      color =
-                          if (hasAnalysisWork) MaterialTheme.colorScheme.error
-                          else MaterialTheme.colorScheme.onSecondaryContainer,
-                  )
-                }
-              }
-              Spacer(modifier = Modifier.weight(1f))
-              NavigationRailItem(
+              navigationStatus()
+              NavigationBar(
+                modifier =
+                    Modifier.width(184.dp)
+                        .height(64.dp) // Match the Details floating toolbar height.
+                        .clip(RoundedCornerShape(32.dp)),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp,
+                windowInsets = WindowInsets(0, 0, 0, 0),
+            ) {
+              ExpressiveNavigationItem(
                   selected = currentRoute == Routes.GALLERY,
                   onClick =
                       hapticOnClick {
@@ -736,22 +441,15 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                           }
                         }
                       },
-                  icon = {
-                    Icon(
-                        if (currentRoute == Routes.GALLERY) Icons.Rounded.Home
-                        else Icons.Outlined.Home,
-                        stringResource(R.string.gallery),
-                    )
-                  },
-                  label = { Text(stringResource(R.string.gallery)) },
-                  colors =
-                      NavigationRailItemDefaults.colors(
-                          indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                          selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                          selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                      ),
+                  icon =
+                      if (currentRoute == Routes.GALLERY) Icons.Rounded.Home
+                      else Icons.Outlined.Home,
+                  label = stringResource(R.string.gallery),
+                  indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                  selectedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                  modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
               )
-              NavigationRailItem(
+              ExpressiveNavigationItem(
                   selected = currentRoute == Routes.SETTINGS,
                   onClick =
                       hapticOnClick {
@@ -763,25 +461,556 @@ fun MainApp(viewModel: ScreenshotViewModel, isPickMode: Boolean = false) {
                           }
                         }
                       },
-                  icon = {
-                    Icon(
-                        if (currentRoute == Routes.SETTINGS) Icons.Rounded.Settings
-                        else Icons.Outlined.Settings,
-                        stringResource(R.string.settings),
-                    )
-                  },
-                  label = { Text(stringResource(R.string.settings)) },
-                  colors =
-                      NavigationRailItemDefaults.colors(
-                          indicatorColor = MaterialTheme.colorScheme.tertiaryContainer,
-                          selectedIconColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                          selectedTextColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                      ),
+                  icon =
+                      if (currentRoute == Routes.SETTINGS) Icons.Rounded.Settings
+                      else Icons.Outlined.Settings,
+                  label = stringResource(R.string.settings),
+                  indicatorColor = MaterialTheme.colorScheme.tertiaryContainer,
+                  selectedContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                  modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
               )
-              Spacer(modifier = Modifier.weight(1f))
+            }
             }
           }
         }
+      },
+  ) { innerPadding ->
+    val routeOrder = listOf(Routes.GALLERY, Routes.SETTINGS)
+    val detailRoutes = setOf(Routes.DETAIL, Routes.DUPLICATE_DETAIL)
+    fun navigateToSwipedDetail(route: String, direction: Int) {
+      navController.navigate(route)
+      // Store direction on this navigation entry, so later image taps can't inherit it.
+      navController.currentBackStackEntry?.savedStateHandle?.set(
+          "detailImageSwipeDirection", direction)
+    }
+
+    val secondaryRoutes =
+        setOf(
+            Routes.DETAIL,
+            Routes.DUPLICATE_DETAIL,
+            Routes.MORE_MODELS,
+            Routes.DUPLICATE_IMAGES,
+            Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES,
+            Routes.LEADERBOARD,
+            Routes.ONBOARDING,
+        )
+    val systemBottomPadding =
+        ScaffoldDefaults.contentWindowInsets.asPaddingValues().calculateBottomPadding()
+
+    fun NavGraphBuilder.insetComposable(
+        route: String,
+        arguments: List<NamedNavArgument> = emptyList(),
+        content: @Composable (NavBackStackEntry) -> Unit,
+    ) {
+      composable(route, arguments = arguments) { entry ->
+        // Insets belong to this destination so the outgoing screen stays still during navigation.
+        val isMainScreen = entry.destination.route in routeOrder
+        val topPadding =
+            if (isLandscape && isMainScreen) {
+              innerPadding.calculateTopPadding() * 0.5f
+            } else if (!isPickMode && isMainScreen) {
+              (innerPadding.calculateTopPadding() - 12.dp).coerceAtLeast(0.dp)
+            } else {
+              innerPadding.calculateTopPadding()
+            }
+        // Pages draw behind the system navigation area; their controls apply their own safe insets.
+        val cutoutPadding = WindowInsets.displayCutout.asPaddingValues()
+        val layoutDirection = LocalLayoutDirection.current
+        // Use the device's cutout inset, allowing the page's existing content margin to supply
+        // part of that spacing rather than adding a second margin beyond the safe boundary.
+        val landscapeStartPadding =
+            (cutoutPadding.calculateStartPadding(layoutDirection) -
+                if (entry.destination.route == Routes.GALLERY) 12.dp else 8.dp).coerceAtLeast(0.dp)
+        val landscapeEndPadding =
+            (cutoutPadding.calculateEndPadding(layoutDirection) - 8.dp).coerceAtLeast(0.dp)
+        Box(
+            Modifier.fillMaxSize()
+                .then(
+                    if (isLandscape && isMainScreen)
+                        Modifier.padding(start = landscapeStartPadding, end = landscapeEndPadding)
+                    else Modifier)
+                .padding(top = topPadding),
+        ) {
+          CompositionLocalProvider(
+              LocalFloatingNavigationBottomInset provides
+                  if (!isPickMode && !isLandscape && isMainScreen)
+                      bottomBarHeight.coerceAtLeast(systemBottomPadding)
+                  else 0.dp,
+              LocalFloatingNavigationEndInset provides
+                  if (!isPickMode && isLandscape && isMainScreen)
+                      (landscapePillWidth.coerceAtLeast(96.dp) - landscapeEndPadding).coerceAtLeast(0.dp)
+                  else 0.dp,
+          ) {
+            content(entry)
+          }
+        }
+      }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+      NavHost(
+          navController = navController,
+          startDestination = startDestination,
+          modifier = Modifier.fillMaxSize(),
+          enterTransition = {
+            val initialRoute = initialState.destination.route
+            val targetRoute = targetState.destination.route
+            val initialIndex = routeOrder.indexOf(initialRoute)
+            val targetIndex = routeOrder.indexOf(targetRoute)
+
+            if (isLandscape && initialRoute in routeOrder && targetRoute in routeOrder) {
+              val direction = if (routeOrder.indexOf(targetRoute) > routeOrder.indexOf(initialRoute)) 1 else -1
+              slideInVertically(animationSpec = AppMotion.spatial(), initialOffsetY = { it * direction }) +
+                  fadeIn(animationSpec = AppMotion.effects())
+            } else if (initialRoute in detailRoutes && targetRoute in detailRoutes) {
+              val direction = targetState.savedStateHandle.get<Int>("detailImageSwipeDirection") ?: 1
+              slideInHorizontally(
+                  animationSpec = AppMotion.spatial(), initialOffsetX = { it * direction })
+            } else if (initialRoute == Routes.GALLERY && targetRoute == Routes.DETAIL) {
+              slideInHorizontally(animationSpec = AppMotion.spatial(), initialOffsetX = { it })
+            } else if (initialRoute == Routes.SETTINGS &&
+                (targetRoute == Routes.MORE_MODELS ||
+                    targetRoute == Routes.DUPLICATE_IMAGES ||
+                    targetRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)) {
+              slideInHorizontally(animationSpec = AppMotion.spatial(), initialOffsetX = { it }) +
+                  fadeIn(animationSpec = AppMotion.effects())
+            } else if (targetRoute in secondaryRoutes) {
+              slideInHorizontally(animationSpec = AppMotion.spatial(), initialOffsetX = { it })
+            } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+              slideInHorizontally(animationSpec = AppMotion.spatial(), initialOffsetX = { -it }) +
+                  fadeIn(animationSpec = AppMotion.effects())
+            } else if (initialIndex != -1 && targetIndex != -1 && targetRoute != Routes.GALLERY) {
+              if (targetIndex > initialIndex) {
+                slideInHorizontally(animationSpec = AppMotion.spatial(), initialOffsetX = { it }) +
+                    fadeIn(animationSpec = AppMotion.effects())
+              } else {
+                slideInHorizontally(animationSpec = AppMotion.spatial(), initialOffsetX = { -it }) +
+                    fadeIn(animationSpec = AppMotion.effects())
+              }
+            } else {
+              fadeIn(animationSpec = AppMotion.effects())
+            }
+          },
+          exitTransition = {
+            val initialRoute = initialState.destination.route
+            val targetRoute = targetState.destination.route
+            val initialIndex = routeOrder.indexOf(initialRoute)
+            val targetIndex = routeOrder.indexOf(targetRoute)
+
+            if (isLandscape && initialRoute in routeOrder && targetRoute in routeOrder) {
+              val direction = if (routeOrder.indexOf(targetRoute) > routeOrder.indexOf(initialRoute)) 1 else -1
+              slideOutVertically(animationSpec = AppMotion.spatial(), targetOffsetY = { -it * direction }) +
+                  fadeOut(animationSpec = AppMotion.fastEffects())
+            } else if (initialRoute in detailRoutes && targetRoute in detailRoutes) {
+              val direction = targetState.savedStateHandle.get<Int>("detailImageSwipeDirection") ?: 1
+              slideOutHorizontally(
+                  animationSpec = AppMotion.spatial(), targetOffsetX = { -it * direction })
+            } else if (initialRoute == Routes.GALLERY && targetRoute == Routes.DETAIL) {
+              slideOutHorizontally(animationSpec = AppMotion.spatial(), targetOffsetX = { -it })
+            } else if (initialRoute == Routes.SETTINGS &&
+                (targetRoute == Routes.MORE_MODELS ||
+                    targetRoute == Routes.DUPLICATE_IMAGES ||
+                    targetRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)) {
+              slideOutHorizontally(animationSpec = AppMotion.spatial(), targetOffsetX = { -it }) +
+                  fadeOut(animationSpec = AppMotion.fastEffects())
+            } else if (targetRoute in secondaryRoutes) {
+              slideOutHorizontally(animationSpec = AppMotion.spatial(), targetOffsetX = { -it })
+            } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+              slideOutHorizontally(animationSpec = AppMotion.spatial(), targetOffsetX = { it }) +
+                  fadeOut(animationSpec = AppMotion.fastEffects())
+            } else if (initialIndex != -1 && targetIndex != -1 && targetRoute != Routes.GALLERY) {
+              if (targetIndex > initialIndex) {
+                slideOutHorizontally(animationSpec = AppMotion.spatial(), targetOffsetX = { -it }) +
+                    fadeOut(animationSpec = AppMotion.fastEffects())
+              } else {
+                slideOutHorizontally(animationSpec = AppMotion.spatial(), targetOffsetX = { it }) +
+                    fadeOut(animationSpec = AppMotion.fastEffects())
+              }
+            } else {
+              fadeOut(animationSpec = AppMotion.fastEffects())
+            }
+          },
+          popEnterTransition = {
+            val initialRoute = initialState.destination.route
+            val targetRoute = targetState.destination.route
+            if (isLandscape && initialRoute in routeOrder && targetRoute in routeOrder) {
+              val direction = if (routeOrder.indexOf(targetRoute) > routeOrder.indexOf(initialRoute)) 1 else -1
+              slideInVertically(animationSpec = AppMotion.spatial(), initialOffsetY = { it * direction }) +
+                  fadeIn(animationSpec = AppMotion.effects())
+            } else if (initialRoute in detailRoutes && targetRoute in detailRoutes) {
+              // Undo the direction recorded when the departing image was pushed.
+              val direction = initialState.savedStateHandle.get<Int>("detailImageSwipeDirection") ?: 1
+              slideInHorizontally(
+                  animationSpec = AppMotion.linear(300), initialOffsetX = { -it * direction })
+            } else if (initialRoute in secondaryRoutes) {
+              // Duration-based slides can be scrubbed by NavHost's predictive back progress.
+              slideInHorizontally(animationSpec = AppMotion.linear(300), initialOffsetX = { -it })
+            } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+              slideInHorizontally(animationSpec = AppMotion.spatial(), initialOffsetX = { -it }) +
+                  fadeIn(animationSpec = AppMotion.effects())
+            } else {
+              fadeIn(animationSpec = AppMotion.effects())
+            }
+          },
+          popExitTransition = {
+            val initialRoute = initialState.destination.route
+            val targetRoute = targetState.destination.route
+            if (isLandscape && initialRoute in routeOrder && targetRoute in routeOrder) {
+              val direction = if (routeOrder.indexOf(targetRoute) > routeOrder.indexOf(initialRoute)) 1 else -1
+              slideOutVertically(animationSpec = AppMotion.spatial(), targetOffsetY = { -it * direction }) +
+                  fadeOut(animationSpec = AppMotion.fastEffects())
+            } else if (initialRoute in detailRoutes && targetRoute in detailRoutes) {
+              val direction = initialState.savedStateHandle.get<Int>("detailImageSwipeDirection") ?: 1
+              slideOutHorizontally(
+                  animationSpec = AppMotion.linear(300), targetOffsetX = { it * direction })
+            } else if (initialRoute in secondaryRoutes) {
+              slideOutHorizontally(animationSpec = AppMotion.linear(300), targetOffsetX = { it })
+            } else if (initialRoute == Routes.SETTINGS && targetRoute == Routes.GALLERY) {
+              slideOutHorizontally(animationSpec = AppMotion.spatial(), targetOffsetX = { it }) +
+                  fadeOut(animationSpec = AppMotion.fastEffects())
+            } else {
+              fadeOut(animationSpec = AppMotion.fastEffects())
+            }
+          },
+      ) {
+        insetComposable(Routes.ONBOARDING) {
+          OnboardingScreen(
+              viewModel = viewModel,
+              onFinish = {
+                viewModel.setHasSeenOnboarding(true)
+                navController.navigate(Routes.GALLERY) {
+                  popUpTo(Routes.ONBOARDING) { inclusive = true }
+                }
+              })
+        }
+        insetComposable(Routes.SETTINGS) {
+          SettingsScreen(
+              viewModel = viewModel,
+              semanticViewModel = semanticViewModel,
+              onStartScreenSaver = { isScreenSaverActive = true },
+              logoRes = logoRes,
+              onRevisitTutorial = { navController.navigate(Routes.ONBOARDING) },
+              onOpenMoreModels = { navController.navigate(Routes.MORE_MODELS) },
+              onOpenDuplicateImages = { navController.navigate(Routes.DUPLICATE_IMAGES) },
+              onOpenSkippedImages = {
+                navController.navigate(Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES)
+              },
+              onOpenLeaderboard = { navController.navigate(Routes.LEADERBOARD) },
+          )
+        }
+        insetComposable(Routes.LEADERBOARD) {
+          LeaderboardScreen(
+              currentDeviceId = viewModel.benchmarkDeviceId,
+              leaderboardOptedIn = benchmarkLeaderboardOptedIn,
+              onLeaderboardOptInChanged = viewModel::setBenchmarkLeaderboardOptedIn,
+              onBack = { navController.popBackStack() },
+          )
+        }
+        insetComposable(Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
+          EmbeddingGemmaSkippedImagesScreen(
+              viewModel = viewModel,
+              onBack = { navController.popBackStack() },
+              onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
+          )
+        }
+        insetComposable(Routes.DUPLICATE_IMAGES) {
+          DuplicateImagesScreen(
+              viewModel = viewModel,
+              onBack = { navController.popBackStack() },
+              onScreenshotClick = { id -> navController.navigate(Routes.duplicateDetail(id)) },
+          )
+        }
+        insetComposable(Routes.MORE_MODELS) {
+          MoreModelsScreen(
+              viewModel = viewModel,
+              onBack = { navController.popBackStack() },
+              onActivateModel = { model ->
+                viewModel.setGgufModelAsActive(model)
+                navController.popBackStack()
+              },
+          )
+        }
+        insetComposable(Routes.GALLERY) {
+          GalleryScreen(
+              viewModel = viewModel,
+              onScreenshotClick = { id -> navController.navigate(Routes.detail(id)) },
+              scrollState = galleryScrollState,
+              logoRes = logoRes,
+              isPickMode = isPickMode,
+              focusActiveAnalysisRequest = focusActiveAnalysisRequest,
+              onFocusActiveAnalysisHandled = { focusActiveAnalysisRequest = false },
+              landscapeControlsVisible = landscapeControlsVisible,
+              onHideLandscapeControls = { landscapeControlsVisible = false },
+          )
+        }
+        insetComposable(
+            Routes.DETAIL,
+            arguments = listOf(navArgument("id") { type = NavType.LongType }),
+        ) { backStackEntry ->
+          val id = backStackEntry.arguments?.getLong("id") ?: return@insetComposable
+          val previousRoute = navController.previousBackStackEntry?.destination?.route
+          DetailScreen(
+              viewModel = viewModel,
+              semanticViewModel = semanticViewModel,
+              entryId = id,
+              onBack = { navController.popBackStack(Routes.GALLERY, inclusive = false) },
+              onTagClick = { tag ->
+                viewModel.setSearchQuery(tag)
+                if (previousRoute == Routes.DUPLICATE_IMAGES) {
+                  navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
+                } else if (previousRoute == Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES) {
+                  navController.popBackStack(
+                      Routes.EMBEDDING_GEMMA_SKIPPED_IMAGES, inclusive = false)
+                } else {
+                  navController.popBackStack(Routes.GALLERY, inclusive = false)
+                }
+              },
+              onScreenshotClick = { matchedId -> navController.navigate(Routes.detail(matchedId)) },
+              onImageSwipe = { matchedId, direction ->
+                navigateToSwipedDetail(Routes.detail(matchedId), direction)
+              },
+          )
+        }
+        insetComposable(
+            Routes.DUPLICATE_DETAIL,
+            arguments = listOf(navArgument("id") { type = NavType.LongType }),
+        ) { backStackEntry ->
+          val id = backStackEntry.arguments?.getLong("id") ?: return@insetComposable
+          val entries by viewModel.entries.collectAsState()
+          val duplicateSwipeEntryIds =
+              remember(id, entries) {
+                val imageHash = entries.firstOrNull { it.id == id }?.imageHash.orEmpty()
+                if (imageHash.isBlank()) {
+                  null
+                } else {
+                  entries
+                      .filter { it.imageHash == imageHash }
+                      .sortedByDescending { it.sortKey }
+                      .map { it.id }
+                      .takeIf { it.size > 1 }
+                }
+              }
+          DetailScreen(
+              viewModel = viewModel,
+              semanticViewModel = semanticViewModel,
+              entryId = id,
+              onBack = { navController.popBackStack(Routes.GALLERY, inclusive = false) },
+              onTagClick = { tag ->
+                viewModel.setSearchQuery(tag)
+                navController.popBackStack(Routes.DUPLICATE_IMAGES, inclusive = false)
+              },
+              onScreenshotClick = { matchedId ->
+                navController.navigate(Routes.duplicateDetail(matchedId))
+              },
+              onImageSwipe = { matchedId, direction ->
+                navigateToSwipedDetail(Routes.duplicateDetail(matchedId), direction)
+              },
+              swipeEntryIds = duplicateSwipeEntryIds,
+          )
+        }
+      }
+
+      AnimatedVisibility(
+          visible = showBottomBar && isLandscape && landscapeControlsVisible,
+          modifier =
+              Modifier.align(Alignment.CenterEnd)
+                  .onSizeChanged { size ->
+                    landscapePillWidth = with(density) { size.width.toDp() }
+                  }
+                  .windowInsetsPadding(
+                      WindowInsets.systemBars
+                          .union(WindowInsets.displayCutout)
+                          .only(WindowInsetsSides.Vertical + WindowInsetsSides.End))
+                  .padding(horizontal = 8.dp, vertical = 8.dp),
+          enter =
+              slideInHorizontally(animationSpec = AppMotion.timed(240), initialOffsetX = { it }) +
+                  fadeIn(animationSpec = AppMotion.effects()),
+          exit =
+              slideOutHorizontally(animationSpec = AppMotion.linear(240), targetOffsetX = { it }) +
+                  fadeOut(animationSpec = AppMotion.fastEffects()),
+      ) {
+        Surface(
+            modifier = Modifier.width(80.dp),
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp,
+        ) {
+          Column(
+              modifier = Modifier.padding(vertical = 12.dp),
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Image(
+                painter = painterResource(id = logoRes),
+                contentDescription = stringResource(R.string.logo),
+                modifier = Modifier.size(40.dp).align(Alignment.CenterHorizontally),
+            )
+            val isDesktopActive =
+                selectedModel == com.deryk.skarmetoo.viewmodel.ModelType.DESKTOP &&
+                    desktopProgress.isRunning
+            val desktopPending =
+                if (isDesktopActive)
+                    (desktopProgress.total - desktopProgress.processed).coerceAtLeast(0)
+                else 0
+            val hasAnalysisWork =
+                isAnalysisPaused ||
+                    isAnalysisRunning ||
+                    pendingCount > 0 ||
+                    analyzingCount > 0 ||
+                    isDesktopActive
+            Surface(
+                modifier =
+                    Modifier.align(Alignment.CenterHorizontally)
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .combinedClickable(
+                            onDoubleClick = {
+                              if (activeAnalysisIds.isNotEmpty() || analyzingCount > 0) {
+                                if (currentRoute != Routes.GALLERY) {
+                                  navController.navigate(Routes.GALLERY) {
+                                    popUpTo(navController.graph.startDestinationId) {
+                                      saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                  }
+                                }
+                                focusActiveAnalysisRequest = true
+                              } else if (isModelReady) {
+                                viewModel.forceAnalyzeUnprocessed()
+                              }
+                            },
+                            onClick = {
+                              if (isModelReady && pendingCount > 0 && !isAnalysisRunning) {
+                                viewModel.analyzeUnprocessed()
+                              }
+                            },
+                        ),
+                shape = RoundedCornerShape(16.dp),
+                color =
+                    if (hasAnalysisWork) MaterialTheme.colorScheme.errorContainer
+                    else MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+              Column(
+                  modifier = Modifier.fillMaxSize(),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.Center,
+              ) {
+                when {
+                  isDesktopActive ->
+                      Icon(
+                          Icons.Rounded.Computer,
+                          contentDescription = null,
+                          modifier = Modifier.size(16.dp),
+                          tint = MaterialTheme.colorScheme.error,
+                      )
+                  isAnalysisPaused && activeAnalysisIds.isEmpty() ->
+                      Icon(
+                          Icons.Rounded.Pause,
+                          contentDescription = stringResource(R.string.pause),
+                          modifier = Modifier.size(16.dp),
+                          tint = MaterialTheme.colorScheme.error,
+                      )
+                  analyzingCount == 1 || isAnalysisRunning ->
+                      CircularProgressIndicator(
+                          progress = { currentImageProgress },
+                          modifier = Modifier.size(16.dp),
+                          strokeWidth = 2.dp,
+                          color = MaterialTheme.colorScheme.error,
+                          trackColor = MaterialTheme.colorScheme.errorContainer,
+                      )
+                  hasAnalysisWork ->
+                      Icon(
+                          Icons.Rounded.Schedule,
+                          contentDescription = null,
+                          modifier = Modifier.size(16.dp),
+                          tint = MaterialTheme.colorScheme.error,
+                      )
+                  else ->
+                      Icon(
+                          Icons.Rounded.CheckCircle,
+                          contentDescription = null,
+                          modifier = Modifier.size(16.dp),
+                          tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                      )
+                }
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text =
+                        if (isDesktopActive) {
+                          desktopPending.toString()
+                        } else if (hasAnalysisWork) {
+                          (pendingCount + analyzingCount).toString()
+                        } else {
+                          stringResource(R.string.done)
+                        },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color =
+                        if (hasAnalysisWork) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+              }
+            }
+            ExpressiveNavigationItem(
+                selected = currentRoute == Routes.GALLERY,
+                onClick =
+                    hapticOnClick {
+                      if (currentRoute != Routes.GALLERY) {
+                        navController.navigate(Routes.GALLERY) {
+                          popUpTo(navController.graph.startDestinationId) { saveState = true }
+                          launchSingleTop = true
+                          restoreState = true
+                        }
+                      }
+                    },
+                icon =
+                    if (currentRoute == Routes.GALLERY) Icons.Rounded.Home else Icons.Outlined.Home,
+                label = stringResource(R.string.gallery),
+                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                selectedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.width(64.dp),
+            )
+            ExpressiveNavigationItem(
+                selected = currentRoute == Routes.SETTINGS,
+                onClick =
+                    hapticOnClick {
+                      if (currentRoute != Routes.SETTINGS) {
+                        navController.navigate(Routes.SETTINGS) {
+                          popUpTo(navController.graph.startDestinationId) { saveState = true }
+                          launchSingleTop = true
+                          restoreState = true
+                        }
+                      }
+                    },
+                icon =
+                    if (currentRoute == Routes.SETTINGS) Icons.Rounded.Settings
+                    else Icons.Outlined.Settings,
+                label = stringResource(R.string.settings),
+                indicatorColor = MaterialTheme.colorScheme.tertiaryContainer,
+                selectedContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.width(64.dp),
+            )
+          }
+        }
+      }
+      AnimatedVisibility(
+          visible = showBottomBar && isLandscape && !landscapeControlsVisible,
+          modifier = Modifier.align(Alignment.CenterEnd)
+              .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End))
+              .padding(end = 8.dp),
+          enter = fadeIn(animationSpec = AppMotion.timed(240)),
+          exit = fadeOut(animationSpec = AppMotion.linear(120)),
+      ) {
+        FilledTonalIconButton(
+            onClick = hapticOnClick { landscapeControlsVisible = true },
+            modifier = Modifier.size(48.dp),
+            shape = androidx.compose.foundation.shape.CircleShape,
+        ) {
+          Icon(Icons.Rounded.ChevronLeft, stringResource(R.string.show_navigation))
+        }
+      }
+    }
   }
 
   if (isScreenSaverActive) {

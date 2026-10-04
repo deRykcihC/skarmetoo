@@ -4,14 +4,9 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
@@ -25,6 +20,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,6 +30,7 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.*
@@ -51,6 +48,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -62,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -72,6 +71,8 @@ import coil.compose.AsyncImage
 import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.components.rememberSquigglePillShape
+import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import com.deryk.skarmetoo.util.ShareUtils
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
@@ -81,6 +82,24 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.launch
+
+@Composable
+private fun DetailTagPill(tag: String, onClick: () -> Unit) {
+  val interactionSource = remember(tag) { MutableInteractionSource() }
+  OutlinedCard(
+      interactionSource = interactionSource,
+      shape = rememberSquigglePillShape(interactionSource),
+      border = CardDefaults.outlinedCardBorder(),
+      onClick = onClick,
+  ) {
+    Text(
+        text = tag,
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+  }
+}
 
 @OptIn(
     ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
@@ -92,6 +111,7 @@ fun DetailScreen(
     onBack: () -> Unit,
     onTagClick: (String) -> Unit = {},
     onScreenshotClick: (Long) -> Unit = {},
+    onImageSwipe: ((Long, Int) -> Unit)? = null,
     swipeEntryIds: List<Long>? = null,
 ) {
   val entries by viewModel.entries.collectAsState()
@@ -111,6 +131,7 @@ fun DetailScreen(
   }
 
   val coroutineScope = rememberCoroutineScope()
+  var imageAspectRatio by remember(entry.imageUri) { mutableFloatStateOf(4f / 3f) }
 
   var noteText by remember(entry.note) { mutableStateOf(entry.note) }
   var summaryText by remember(entry.id, entry.summary) { mutableStateOf(entry.summary) }
@@ -122,16 +143,10 @@ fun DetailScreen(
   val isPending = entry.summary.isBlank() && !isActivelyAnalyzing
   val analyzingCount by viewModel.analyzingImageCount.collectAsState()
 
-  // Double-tap detection for status button
-  var lastTapTime by remember { mutableStateOf(0L) }
-
-  // Save note when leaving page
-  DisposableEffect(Unit) { onDispose { viewModel.updateNote(entryId, noteText) } }
-
-  BackHandler {
-    viewModel.updateNote(entryId, noteText)
-    onBack()
-  }
+  // Let NavHost seek its back transition during the system gesture. Save the latest
+  // note only when this destination leaves composition, including completed back swipes.
+  val latestNoteText by rememberUpdatedState(noteText)
+  DisposableEffect(entryId) { onDispose { viewModel.updateNote(entryId, latestNoteText) } }
 
   val isSemanticModelReady by semanticViewModel.isModelReady.collectAsState()
   val similarScreenshots by semanticViewModel.similarScreenshots.collectAsState()
@@ -145,8 +160,7 @@ fun DetailScreen(
   val dragProgress = remember { Animatable(0f) }
   val density = androidx.compose.ui.platform.LocalDensity.current
   val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-  val landscapeActionRailWidth = 80.dp
-  val showDetailsTitle = LocalConfiguration.current.screenWidthDp >= 390
+  var bottomToolbarHeight by remember(density) { mutableStateOf(80.dp) }
   val maxDragPx = remember(density) { with(density) { 180.dp.toPx() } }
   val albumImageUris = remember(albumImages) { albumImages.map { it.uri.toString() } }
   val entryIdByImageUri =
@@ -177,26 +191,30 @@ fun DetailScreen(
     val nextIndex = (currentSwipeIndex + direction).coerceIn(0, swipeItemCount - 1)
     if (nextIndex == currentSwipeIndex) return
 
+    fun showSwipeTarget(id: Long) {
+      if (onImageSwipe != null) onImageSwipe(id, direction) else onScreenshotClick(id)
+    }
+
     isSwitchingAlbumImage = true
     viewModel.updateNote(entryId, noteText)
 
     if (swipeEntryIds != null) {
       val nextEntryId = swipeIds.getOrNull(nextIndex)
       if (nextEntryId != null) {
-        onScreenshotClick(nextEntryId)
+        showSwipeTarget(nextEntryId)
       }
       isSwitchingAlbumImage = false
     } else {
       val nextUriString = albumImageUris[nextIndex]
       val nextEntryId = entryIdByImageUri[nextUriString]
       if (nextEntryId != null) {
-        onScreenshotClick(nextEntryId)
+        showSwipeTarget(nextEntryId)
         isSwitchingAlbumImage = false
       } else {
         viewModel.getOrCreateEntryForUri(Uri.parse(nextUriString)) { newId ->
           isSwitchingAlbumImage = false
           if (newId > 0L) {
-            onScreenshotClick(newId)
+            showSwipeTarget(newId)
           }
         }
       }
@@ -291,7 +309,7 @@ fun DetailScreen(
                   (260 * dragProgress.value.coerceIn(0f, 1f)).toInt().coerceAtLeast(120)
               dragProgress.animateTo(
                   targetValue = 0f,
-                  animationSpec = tween(durationMillis = resetDurationMs, easing = LinearEasing),
+                  animationSpec = AppMotion.timed(resetDurationMs),
               )
               isResettingLoader = false
               isLoaderActive = false
@@ -366,16 +384,14 @@ fun DetailScreen(
                 launch {
                   dragProgress.animateTo(
                       targetValue = 0f,
-                      animationSpec =
-                          tween(durationMillis = resetDurationMs, easing = LinearEasing),
+                      animationSpec = AppMotion.timed(resetDurationMs),
                   )
                 }
                 launch {
                   if (landscapeScrollState.value > resetScrollTarget) {
                     landscapeScrollState.animateScrollTo(
                         value = resetScrollTarget,
-                        animationSpec =
-                            tween(durationMillis = resetDurationMs, easing = LinearEasing),
+                        animationSpec = AppMotion.timed(resetDurationMs),
                     )
                   }
                 }
@@ -477,222 +493,15 @@ fun DetailScreen(
     Column(
         modifier =
             Modifier.fillMaxSize()
-                .padding(start = if (isLandscape) landscapeActionRailWidth else 0.dp),
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
     ) {
       if (!isLandscape) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-          IconButton(
-              onClick =
-                  hapticOnClick {
-                    viewModel.updateNote(entryId, noteText)
-                    onBack()
-                  }) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
-              }
-          if (showDetailsTitle) {
-            Text(
-                stringResource(R.string.details_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-          }
-          Spacer(modifier = Modifier.weight(1f))
-
-          CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(14.dp),
-            ) {
-              Row(
-                  modifier = Modifier.padding(4.dp),
-                  horizontalArrangement = Arrangement.spacedBy(4.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-              ) {
-                // Custom Rendered Share Card Button
-                IconButton(
-                    onClick =
-                        hapticOnClick {
-                          ShareUtils.shareScreenshotContent(context, entry, noteText)
-                        },
-                    modifier = Modifier.size(34.dp)) {
-                      Icon(
-                          Icons.Rounded.Style,
-                          "Generate Share Card",
-                          modifier = Modifier.size(20.dp),
-                      )
-                    }
-
-                // Open Original Screenshot Button
-                IconButton(
-                    onClick =
-                        hapticOnClick {
-                          try {
-                            val intent =
-                                Intent(Intent.ACTION_VIEW).apply {
-                                  setDataAndType(Uri.parse(entry.imageUri), "image/*")
-                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                            context.startActivity(
-                                Intent.createChooser(
-                                    intent, context.getString(R.string.open_original_screenshot)))
-                          } catch (e: Exception) {
-                            Toast.makeText(
-                                    context,
-                                    context.getString(R.string.open_original_screenshot_failed),
-                                    Toast.LENGTH_SHORT)
-                                .show()
-                          }
-                        },
-                    modifier = Modifier.size(34.dp)) {
-                      Icon(
-                          Icons.AutoMirrored.Rounded.OpenInNew,
-                          stringResource(R.string.open_original_screenshot),
-                          modifier = Modifier.size(20.dp),
-                      )
-                    }
-
-                // Direct Original Screenshot Share Button
-                IconButton(
-                    onClick =
-                        hapticOnClick {
-                          try {
-                            val intent =
-                                Intent(Intent.ACTION_SEND).apply {
-                                  type = "image/*"
-                                  putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
-                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                            context.startActivity(
-                                Intent.createChooser(intent, "Share Original Screenshot"))
-                          } catch (e: Exception) {
-                            Toast.makeText(
-                                    context,
-                                    "Failed to share original screenshot",
-                                    Toast.LENGTH_SHORT)
-                                .show()
-                          }
-                        },
-                    modifier = Modifier.size(34.dp)) {
-                      Icon(
-                          Icons.Rounded.Share,
-                          "Share Original",
-                          modifier = Modifier.size(20.dp),
-                      )
-                    }
-              }
-            }
-          }
-          Spacer(modifier = Modifier.width(12.dp))
-
-          // Status pill — exact copy of home page style
-          if (isActivelyAnalyzing) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                modifier = Modifier.clip(RoundedCornerShape(16.dp)),
-            ) {
-              Row(
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-              ) {
-                if (analyzingCount > 1) {
-                  Box(
-                      modifier =
-                          Modifier.size(16.dp)
-                              .background(
-                                  MaterialTheme.colorScheme.error,
-                                  androidx.compose.foundation.shape.CircleShape),
-                      contentAlignment = Alignment.Center) {
-                        Text(
-                            text = if (analyzingCount > 5) "5+" else analyzingCount.toString(),
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            fontWeight = FontWeight.Bold,
-                        )
-                      }
-                } else {
-                  CircularProgressIndicator(
-                      progress = { entryProgressMap[entry.id] ?: currentImageProgress },
-                      modifier = Modifier.size(14.dp),
-                      strokeWidth = 2.dp,
-                      color = MaterialTheme.colorScheme.error,
-                      trackColor = MaterialTheme.colorScheme.errorContainer,
-                  )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    stringResource(R.string.analyzing),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error,
-                )
-              }
-            }
-          } else if (isPending) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                modifier =
-                    Modifier.clip(RoundedCornerShape(16.dp))
-                        .combinedClickable(
-                            onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
-                            onClick = hapticOnClick {},
-                        ),
-            ) {
-              Row(
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Icon(
-                    Icons.Rounded.Schedule,
-                    null,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.error,
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    stringResource(R.string.pending),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error,
-                )
-              }
-            }
-          } else {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                modifier =
-                    Modifier.clip(RoundedCornerShape(16.dp))
-                        .combinedClickable(
-                            onDoubleClick = { if (isModelReady) viewModel.analyzeEntry(entry) },
-                            onClick = hapticOnClick {},
-                        ),
-            ) {
-              Row(
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Icon(
-                    Icons.Rounded.CheckCircle,
-                    null,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    stringResource(R.string.done),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-              }
-            }
-          }
-        }
+        Text(
+            text = stringResource(R.string.details_title),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
       }
 
       Box(
@@ -701,7 +510,7 @@ fun DetailScreen(
                   .then(
                       if (isLandscape) Modifier
                       else Modifier.nestedScroll(nestedScrollConnection))) {
-            val imageSection: @Composable () -> Unit = {
+            val imageSection: @Composable (androidx.compose.ui.unit.Dp?) -> Unit = { imageHeight ->
               Column {
                 Card(
                     shape = RoundedCornerShape(16.dp),
@@ -719,16 +528,27 @@ fun DetailScreen(
                     val mainImageAlpha by
                         animateFloatAsState(
                             targetValue = if (isMainImageLoaded) 1f else 0f,
-                            animationSpec = tween(durationMillis = 350),
+                            animationSpec = AppMotion.effects(),
                             label = "mainImageFade",
                         )
 
                     AsyncImage(
                         model = entry.imageUri,
                         contentDescription = entry.summary,
-                        onSuccess = { isMainImageLoaded = true },
+                        onSuccess = { state ->
+                          val drawable = state.result.drawable
+                          if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
+                            imageAspectRatio = drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight
+                          }
+                          isMainImageLoaded = true
+                        },
                         modifier =
-                            Modifier.fillMaxWidth().heightIn(max = 350.dp).graphicsLayer {
+                            Modifier.fillMaxWidth()
+                                .then(
+                                    if (imageHeight != null)
+                                        Modifier.height((imageHeight - if (isActivelyAnalyzing) 4.dp else 0.dp).coerceAtLeast(1.dp))
+                                    else Modifier.heightIn(max = 350.dp))
+                                .graphicsLayer {
                               alpha = mainImageAlpha
                             },
                         contentScale = ContentScale.Fit,
@@ -737,7 +557,7 @@ fun DetailScreen(
                     Box(
                         modifier =
                             Modifier.fillMaxWidth()
-                                .height(200.dp)
+                                .height(imageHeight ?: 200.dp)
                                 .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -757,12 +577,20 @@ fun DetailScreen(
                   }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                if (!isLandscape) Spacer(modifier = Modifier.height(20.dp))
               }
             }
 
             val detailsSection: @Composable () -> Unit = {
               Column {
+                if (isLandscape) {
+                  Text(
+                      text = stringResource(R.string.details_title),
+                      style = MaterialTheme.typography.titleLarge,
+                      fontWeight = FontWeight.SemiBold,
+                      modifier = Modifier.padding(bottom = 16.dp),
+                  )
+                }
                 // Summary
                 if (entry.summary.isNotBlank()) {
                   if (isEditingSummary) {
@@ -786,8 +614,8 @@ fun DetailScreen(
                           modifier = Modifier.height(36.dp),
                           contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                       ) {
-                            Text(stringResource(R.string.cancel))
-                          }
+                        Text(stringResource(R.string.cancel))
+                      }
                       TextButton(
                           onClick = {
                             val updatedSummary = summaryText.trim()
@@ -804,12 +632,11 @@ fun DetailScreen(
                       }
                     }
                   } else {
-                    val summaryWithEditIcon =
-                        buildAnnotatedString {
-                          append(entry.summary)
-                          append(" ")
-                          appendInlineContent("editSummary", "Edit")
-                        }
+                    val summaryWithEditIcon = buildAnnotatedString {
+                      append(entry.summary)
+                      append(" ")
+                      appendInlineContent("editSummary", "Edit")
+                    }
                     val summaryInlineContent =
                         mapOf(
                             "editSummary" to
@@ -827,8 +654,8 @@ fun DetailScreen(
                                               Modifier.fillMaxSize()
                                                   .clip(CircleShape)
                                                   .background(
-                                                      MaterialTheme.colorScheme.surfaceVariant
-                                                          .copy(alpha = 0.65f))
+                                                      MaterialTheme.colorScheme.surfaceVariant.copy(
+                                                          alpha = 0.65f))
                                                   .clickable(
                                                       onClick =
                                                           hapticOnClick {
@@ -907,18 +734,7 @@ fun DetailScreen(
                       verticalArrangement = Arrangement.spacedBy(0.dp),
                   ) {
                     entry.getTagList().forEach { tag ->
-                      OutlinedCard(
-                          shape = RoundedCornerShape(20.dp),
-                          border = CardDefaults.outlinedCardBorder(),
-                          onClick = hapticOnClick { onTagClick(tag) },
-                      ) {
-                        Text(
-                            text = tag,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                      }
+                      DetailTagPill(tag = tag, onClick = hapticOnClick { onTagClick(tag) })
                     }
                   }
                 }
@@ -1071,8 +887,8 @@ fun DetailScreen(
                       enter =
                           slideInVertically(
                               initialOffsetY = { -it / 2 },
-                              animationSpec = tween(durationMillis = 260),
-                          ) + fadeIn(animationSpec = tween(durationMillis = 220)),
+                              animationSpec = AppMotion.spatial(),
+                          ) + fadeIn(animationSpec = AppMotion.effects()),
                   ) {
                     Column {
                       Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1141,10 +957,10 @@ fun DetailScreen(
                   val shouldShowLoader = isLoaderActive || progress > 0f || isResettingLoader
                   AnimatedVisibility(
                       visible = shouldShowLoader,
-                      enter = fadeIn(animationSpec = tween(durationMillis = 90)),
+                      enter = fadeIn(animationSpec = AppMotion.fastEffects()),
                       exit =
-                          shrinkVertically(animationSpec = tween(durationMillis = 180)) +
-                              fadeOut(animationSpec = tween(durationMillis = 180)),
+                          shrinkVertically(animationSpec = AppMotion.fastSpatial()) +
+                              fadeOut(animationSpec = AppMotion.fastEffects()),
                   ) {
                     SimilarScreenshotsLoader(progress = progress)
                   }
@@ -1155,8 +971,12 @@ fun DetailScreen(
             if (isLandscape) {
               BoxWithConstraints(
                   modifier = Modifier.fillMaxSize().nestedScroll(landscapeNestedScrollConnection)) {
-                    val imagePanelWidth = (maxWidth * 0.42f).coerceIn(300.dp, 480.dp)
-                    val detailsPanelWidth = (maxWidth * 0.48f).coerceIn(340.dp, 540.dp)
+                    // Portrait images use their natural width; wider images keep the 4:3 cap.
+                    val availableImageHeight = (maxHeight - bottomToolbarHeight - 16.dp).coerceAtLeast(1.dp)
+                    val viewportAspectRatio = imageAspectRatio.coerceIn(0.1f, 4f / 3f)
+                    val imagePanelWidth = (availableImageHeight * viewportAspectRatio).coerceAtMost(maxWidth * 0.6f)
+                    val imagePanelHeight = imagePanelWidth / viewportAspectRatio
+                    val detailsPanelWidth = (maxWidth - imagePanelWidth - 32.dp).coerceAtLeast(1.dp)
                     val similarPanelWidth = (maxWidth * 0.48f).coerceIn(340.dp, 540.dp)
                     Row(
                         modifier =
@@ -1169,16 +989,15 @@ fun DetailScreen(
                           modifier =
                               Modifier.width(imagePanelWidth)
                                   .fillMaxHeight()
-                                  .verticalScroll(rememberScrollState())
-                                  .padding(vertical = 8.dp)) {
-                            imageSection()
+                                  .padding(top = 8.dp, bottom = 8.dp + bottomToolbarHeight)) {
+                            imageSection(imagePanelHeight)
                           }
                       Column(
                           modifier =
                               Modifier.width(detailsPanelWidth)
                                   .fillMaxHeight()
                                   .verticalScroll(rememberScrollState())
-                                  .padding(vertical = 8.dp)) {
+                                  .padding(top = 8.dp, bottom = 8.dp + bottomToolbarHeight)) {
                             detailsSection()
                           }
                       val shouldShowLandscapeLoader =
@@ -1203,7 +1022,7 @@ fun DetailScreen(
                                 Modifier.width(similarPanelWidth)
                                     .fillMaxHeight()
                                     .verticalScroll(rememberScrollState())
-                                    .padding(vertical = 8.dp)) {
+                                    .padding(top = 8.dp, bottom = 8.dp + bottomToolbarHeight)) {
                               similarSection()
                             }
                       }
@@ -1214,8 +1033,9 @@ fun DetailScreen(
                   modifier =
                       Modifier.fillMaxSize()
                           .verticalScroll(scrollState)
-                          .padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    imageSection()
+                          .padding(horizontal = 16.dp, vertical = 8.dp)
+                          .padding(bottom = bottomToolbarHeight)) {
+                    imageSection(null)
                     detailsSection()
                     similarSection()
                   }
@@ -1223,169 +1043,267 @@ fun DetailScreen(
           } // end Box
     } // end outer Column
 
-    if (isLandscape) {
+    DetailBottomToolbar(
+        entry = entry,
+        noteText = noteText,
+        isActivelyAnalyzing = isActivelyAnalyzing,
+        isPending = isPending,
+        analyzingCount = analyzingCount,
+        analysisProgress = { entryProgressMap[entry.id] ?: currentImageProgress },
+        isModelReady = isModelReady,
+        onAnalyze = { viewModel.analyzeEntry(entry) },
+        showImageNavigation = isLandscape,
+        canGoPrevious = !isSwitchingAlbumImage && currentSwipeIndex > 0,
+        canGoNext = !isSwitchingAlbumImage && currentSwipeIndex >= 0 && currentSwipeIndex < swipeItemCount - 1,
+        onPrevious = { switchAlbumImage(-1) },
+        onNext = { switchAlbumImage(1) },
+        onBack =
+            hapticOnClick {
+              viewModel.updateNote(entryId, noteText)
+              onBack()
+            },
+        modifier =
+            Modifier.align(Alignment.BottomCenter).onSizeChanged {
+              bottomToolbarHeight = with(density) { it.height.toDp() }
+            },
+    )
+  }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalFoundationApi::class)
+@Suppress("DEPRECATION") // Fixed three-action group doesn't need the adaptive overflow-menu overload.
+private fun DetailBottomToolbar(
+    entry: ScreenshotEntry,
+    noteText: String,
+    isActivelyAnalyzing: Boolean,
+    isPending: Boolean,
+    analyzingCount: Int,
+    analysisProgress: () -> Float,
+    isModelReady: Boolean,
+    onAnalyze: () -> Unit,
+    showImageNavigation: Boolean,
+    canGoPrevious: Boolean,
+    canGoNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+  val context = LocalContext.current
+  val generateInteractionSource = remember { MutableInteractionSource() }
+  val openInteractionSource = remember { MutableInteractionSource() }
+  val shareInteractionSource = remember { MutableInteractionSource() }
+  val previousInteractionSource = remember { MutableInteractionSource() }
+  val nextInteractionSource = remember { MutableInteractionSource() }
+  val statusColor =
+      if (isActivelyAnalyzing || isPending) MaterialTheme.colorScheme.error
+      else MaterialTheme.colorScheme.onSecondaryContainer
+  Row(
+      modifier =
+          modifier
+              .fillMaxWidth()
+              .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+              .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+              .padding(horizontal = 12.dp, vertical = 8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+    ) {
+      IconButton(
+          onClick = onBack,
+          modifier = Modifier.size(56.dp),
+          shape = CircleShape,
+      ) {
+        Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.back))
+      }
+    }
+    // Three fixed icon actions fit as one connected group; no selection is retained.
+    ButtonGroup(
+        modifier = Modifier.width(172.dp),
+        expandedRatio = 0.12f,
+        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+    ) {
+      FilledTonalButton(
+          onClick = hapticOnClick { ShareUtils.shareScreenshotContent(context, entry, noteText) },
+          modifier = Modifier.weight(1f).height(64.dp).animateWidth(generateInteractionSource),
+          interactionSource = generateInteractionSource,
+          contentPadding = PaddingValues(0.dp),
+          shapes =
+              ButtonShapes(
+                  shape = ButtonGroupDefaults.connectedLeadingButtonShape,
+                  pressedShape = ButtonGroupDefaults.connectedLeadingButtonPressShape,
+              ),
+      ) {
+        Icon(Icons.Rounded.Style, "Generate Share Card")
+      }
+      FilledTonalButton(
+          onClick =
+              hapticOnClick {
+                try {
+                  val intent =
+                      Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(Uri.parse(entry.imageUri), "image/*")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                      }
+                  context.startActivity(
+                      Intent.createChooser(
+                          intent, context.getString(R.string.open_original_screenshot)))
+                } catch (_: Exception) {
+                  Toast.makeText(
+                          context,
+                          context.getString(R.string.open_original_screenshot_failed),
+                          Toast.LENGTH_SHORT)
+                      .show()
+                }
+              },
+          modifier = Modifier.weight(1f).height(64.dp).animateWidth(openInteractionSource),
+          interactionSource = openInteractionSource,
+          contentPadding = PaddingValues(0.dp),
+          shapes =
+              ButtonShapes(
+                  shape = ShapeDefaults.Small,
+                  pressedShape = ButtonGroupDefaults.connectedMiddleButtonPressShape,
+              ),
+      ) {
+        Icon(
+            Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.open_original_screenshot))
+      }
+      FilledTonalButton(
+          onClick =
+              hapticOnClick {
+                try {
+                  val intent =
+                      Intent(Intent.ACTION_SEND).apply {
+                        type = "image/*"
+                        putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                      }
+                  context.startActivity(Intent.createChooser(intent, "Share Original Screenshot"))
+                } catch (_: Exception) {
+                  Toast.makeText(context, "Failed to share original screenshot", Toast.LENGTH_SHORT)
+                      .show()
+                }
+              },
+          modifier = Modifier.weight(1f).height(64.dp).animateWidth(shareInteractionSource),
+          interactionSource = shareInteractionSource,
+          contentPadding = PaddingValues(0.dp),
+          shapes =
+              ButtonShapes(
+                  shape = ButtonGroupDefaults.connectedTrailingButtonShape,
+                  pressedShape = ButtonGroupDefaults.connectedTrailingButtonPressShape,
+              ),
+      ) {
+        Icon(Icons.Rounded.Share, "Share Original")
+      }
+    }
+    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
       Surface(
           modifier =
-              Modifier.align(Alignment.CenterStart).width(landscapeActionRailWidth).fillMaxHeight(),
-          color = Color.Transparent,
+              Modifier
+                  .height(56.dp)
+                  .clip(CircleShape)
+                  .combinedClickable(
+                      onClick = hapticOnClick {},
+                      onDoubleClick = { if (isModelReady && !isActivelyAnalyzing) onAnalyze() },
+                  ),
+          shape = CircleShape,
+          color =
+              if (isActivelyAnalyzing || isPending) MaterialTheme.colorScheme.errorContainer
+              else MaterialTheme.colorScheme.secondaryContainer,
+          contentColor = statusColor,
+          shadowElevation = 2.dp,
       ) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(vertical = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          IconButton(
-              onClick =
-                  hapticOnClick {
-                    viewModel.updateNote(entryId, noteText)
-                    onBack()
-                  }) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
-              }
-          Spacer(modifier = Modifier.height(8.dp))
-          Surface(
-              modifier =
-                  Modifier.size(56.dp)
-                      .clip(RoundedCornerShape(16.dp))
-                      .combinedClickable(
-                          onDoubleClick = {
-                            if (isModelReady && !isActivelyAnalyzing) {
-                              viewModel.analyzeEntry(entry)
-                            }
-                          },
-                          onClick = hapticOnClick {},
-                      ),
-              shape = RoundedCornerShape(16.dp),
-              color =
-                  if (isActivelyAnalyzing || isPending) {
-                    MaterialTheme.colorScheme.errorContainer
-                  } else {
-                    MaterialTheme.colorScheme.secondaryContainer
-                  },
-          ) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+          if (isActivelyAnalyzing && analyzingCount > 1) {
+            Box(
+                modifier = Modifier.size(18.dp).background(statusColor, CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
-              when {
-                isActivelyAnalyzing ->
-                    CircularProgressIndicator(
-                        progress = { entryProgressMap[entry.id] ?: currentImageProgress },
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.error,
-                        trackColor = MaterialTheme.colorScheme.errorContainer,
-                    )
-                isPending ->
-                    Icon(
-                        Icons.Rounded.Schedule,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                else ->
-                    Icon(
-                        Icons.Rounded.CheckCircle,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-              }
-              Spacer(modifier = Modifier.height(3.dp))
               Text(
-                  text =
-                      when {
-                        isActivelyAnalyzing -> analyzingCount.coerceAtLeast(1).toString()
-                        isPending -> stringResource(R.string.pending)
-                        else -> stringResource(R.string.done)
-                      },
-                  style =
-                      if (isPending) MaterialTheme.typography.labelSmall
-                      else MaterialTheme.typography.labelMedium,
+                  if (analyzingCount > 5) "5+" else analyzingCount.toString(),
+                  style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                  color = MaterialTheme.colorScheme.errorContainer,
                   fontWeight = FontWeight.Bold,
-                  color =
-                      if (isActivelyAnalyzing || isPending) MaterialTheme.colorScheme.error
-                      else MaterialTheme.colorScheme.onSecondaryContainer,
-                  maxLines = 1,
               )
             }
+          } else if (isActivelyAnalyzing) {
+            CircularProgressIndicator(
+                progress = analysisProgress,
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = statusColor,
+                trackColor = MaterialTheme.colorScheme.errorContainer,
+            )
+          } else {
+            Icon(
+                if (isPending) Icons.Rounded.Schedule else Icons.Rounded.CheckCircle,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
           }
-          Spacer(modifier = Modifier.weight(1f))
-          CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(14.dp),
-            ) {
-              Column(
-                  modifier = Modifier.padding(4.dp),
-                  verticalArrangement = Arrangement.spacedBy(4.dp),
-                  horizontalAlignment = Alignment.CenterHorizontally,
-              ) {
-                IconButton(
-                    onClick =
-                        hapticOnClick {
-                          ShareUtils.shareScreenshotContent(context, entry, noteText)
-                        },
-                    modifier = Modifier.size(34.dp),
-                ) {
-                  Icon(Icons.Rounded.Style, "Generate Share Card", modifier = Modifier.size(20.dp))
-                }
-                IconButton(
-                    onClick =
-                        hapticOnClick {
-                          try {
-                            val intent =
-                                Intent(Intent.ACTION_VIEW).apply {
-                                  setDataAndType(Uri.parse(entry.imageUri), "image/*")
-                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                            context.startActivity(
-                                Intent.createChooser(
-                                    intent, context.getString(R.string.open_original_screenshot)))
-                          } catch (_: Exception) {
-                            Toast.makeText(
-                                    context,
-                                    context.getString(R.string.open_original_screenshot_failed),
-                                    Toast.LENGTH_SHORT)
-                                .show()
-                          }
-                        },
-                    modifier = Modifier.size(34.dp),
-                ) {
-                  Icon(
-                      Icons.AutoMirrored.Rounded.OpenInNew,
-                      stringResource(R.string.open_original_screenshot),
-                      modifier = Modifier.size(20.dp),
-                  )
-                }
-                IconButton(
-                    onClick =
-                        hapticOnClick {
-                          try {
-                            val intent =
-                                Intent(Intent.ACTION_SEND).apply {
-                                  type = "image/*"
-                                  putExtra(Intent.EXTRA_STREAM, Uri.parse(entry.imageUri))
-                                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                            context.startActivity(
-                                Intent.createChooser(intent, "Share Original Screenshot"))
-                          } catch (_: Exception) {
-                            Toast.makeText(
-                                    context,
-                                    "Failed to share original screenshot",
-                                    Toast.LENGTH_SHORT)
-                                .show()
-                          }
-                        },
-                    modifier = Modifier.size(34.dp),
-                ) {
-                  Icon(Icons.Rounded.Share, "Share Original", modifier = Modifier.size(20.dp))
-                }
-              }
-            }
-          }
-          Spacer(modifier = Modifier.height(8.dp))
+          Text(
+              stringResource(
+                  when {
+                    isActivelyAnalyzing -> R.string.analyzing
+                    isPending -> R.string.pending
+                    else -> R.string.done
+                  }),
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.Bold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+          )
+        }
+      }
+    }
+    if (showImageNavigation) {
+      ButtonGroup(
+          modifier = Modifier.width(114.dp),
+          expandedRatio = 0.12f,
+          horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+      ) {
+        FilledTonalButton(
+            onClick = hapticOnClick(onPrevious),
+            enabled = canGoPrevious,
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ),
+            modifier = Modifier.weight(1f).height(64.dp).animateWidth(previousInteractionSource),
+            interactionSource = previousInteractionSource,
+            contentPadding = PaddingValues(0.dp),
+            shapes = ButtonShapes(
+                shape = ButtonGroupDefaults.connectedLeadingButtonShape,
+                pressedShape = ButtonGroupDefaults.connectedLeadingButtonPressShape,
+            ),
+        ) {
+          Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.previous_image))
+        }
+        FilledTonalButton(
+            onClick = hapticOnClick(onNext),
+            enabled = canGoNext,
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ),
+            modifier = Modifier.weight(1f).height(64.dp).animateWidth(nextInteractionSource),
+            interactionSource = nextInteractionSource,
+            contentPadding = PaddingValues(0.dp),
+            shapes = ButtonShapes(
+                shape = ButtonGroupDefaults.connectedTrailingButtonShape,
+                pressedShape = ButtonGroupDefaults.connectedTrailingButtonPressShape,
+            ),
+        ) {
+          Icon(Icons.AutoMirrored.Rounded.ArrowForward, stringResource(R.string.next_image))
         }
       }
     }
@@ -1454,22 +1372,17 @@ private fun SimilarScreenshotsSection(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-          rows.forEachIndexed { rowIndex, row ->
+          rows.forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-              row.forEachIndexed { colIndex, (matchedEntry, score) ->
-                val tileIndex = rowIndex * 4 + colIndex
+              row.forEach { (matchedEntry, score) ->
                 var isImageLoaded by remember(matchedEntry.id) { mutableStateOf(false) }
                 val imageAlpha by
                     animateFloatAsState(
                         targetValue = if (isImageLoaded) 1f else 0f,
-                        animationSpec =
-                            tween(
-                                durationMillis = 280,
-                                delayMillis = (tileIndex * 24).coerceAtMost(192),
-                            ),
+                        animationSpec = AppMotion.effects(),
                         label = "similarImageFade",
                     )
 
@@ -1540,11 +1453,7 @@ private fun SimilarScreenshotsLoader(progress: Float) {
   val animatedScale by
       animateFloatAsState(
           targetValue = 0.86f + (clampedProgress * 0.14f),
-          animationSpec =
-              spring(
-                  dampingRatio = Spring.DampingRatioMediumBouncy,
-                  stiffness = Spring.StiffnessLow,
-              ),
+          animationSpec = AppMotion.fastSpatial(),
           label = "overscrollLoaderScale",
       )
 

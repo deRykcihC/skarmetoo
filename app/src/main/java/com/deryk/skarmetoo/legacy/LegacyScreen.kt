@@ -1,7 +1,6 @@
 package com.deryk.skarmetoo.legacy
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -51,8 +50,10 @@ import coil.compose.AsyncImage
 import coil.imageLoader
 import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.ui.components.SortOrderIcon
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.findComponentActivity
+import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.viewmodel.ClickedImageBounds
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 
@@ -81,13 +82,13 @@ fun LegacyScreen(
 
   LaunchedEffect(scrollToTopKey) {
     if (scrollToTopKey > 0) {
-      scrollState.animateScrollTo(0)
+      scrollState.animateScrollTo(0, animationSpec = AppMotion.effects())
     }
   }
 
   LaunchedEffect(refreshKey) {
     if (refreshKey > 0) {
-      scrollState.animateScrollTo(0)
+      scrollState.animateScrollTo(0, animationSpec = AppMotion.effects())
       viewModel.refreshImages()
     }
   }
@@ -332,9 +333,8 @@ fun LegacyScreen(
               onClick = hapticOnClick { viewModel.toggleSortOrder() },
               label = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                  Icon(
-                      if (isSortDescending) Icons.Rounded.South else Icons.Rounded.North,
-                      null,
+                  SortOrderIcon(
+                      isSortDescending = isSortDescending,
                       modifier = Modifier.size(16.dp),
                   )
                   Spacer(modifier = Modifier.width(4.dp))
@@ -671,11 +671,12 @@ fun ScreenshotGridItem(
   val isRestricted =
       remember(entry.tags) { entry.getTagList().any { it.equals("restricted", ignoreCase = true) } }
 
-  var isImageLoaded by remember(entry.id) { mutableStateOf(false) }
+  // Saved metadata can assign a new entry ID after this image has already loaded.
+  var isImageLoaded by remember(entry.imageUri) { mutableStateOf(false) }
   val imageAlpha by
       animateFloatAsState(
           targetValue = if (isImageLoaded) 1f else 0f,
-          animationSpec = tween(durationMillis = 350),
+          animationSpec = AppMotion.effects(),
           label = "screenshotGridImageFade",
       )
 
@@ -697,11 +698,13 @@ fun ScreenshotGridItem(
     Column {
       if (entry.imageUri.isNotBlank()) {
         val imageRequest =
-            coil.request.ImageRequest.Builder(context)
-                .data(entry.imageUri)
-                .size(512)
-                .crossfade(true)
-                .build()
+            remember(context, entry.imageUri) {
+              coil.request.ImageRequest.Builder(context)
+                  .data(entry.imageUri)
+                  .size(512)
+                  .crossfade(true)
+                  .build()
+            }
 
         AsyncImage(
             model = imageRequest,

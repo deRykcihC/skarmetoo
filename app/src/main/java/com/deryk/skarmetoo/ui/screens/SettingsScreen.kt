@@ -2,6 +2,7 @@ package com.deryk.skarmetoo.ui.screens
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
@@ -11,6 +12,7 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -19,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -52,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -64,7 +68,12 @@ import com.deryk.skarmetoo.ai.ImportedGgufModelStore
 import com.deryk.skarmetoo.ai.LFM2_5_MODEL
 import com.deryk.skarmetoo.ai.LlmManager
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
+import com.deryk.skarmetoo.network.BenchmarkUploadStatus
+import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationBottomInset
+import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationEndInset
 import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.components.rememberSquigglePillShape
+import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import com.deryk.skarmetoo.ui.theme.MiSansFamily
 import com.deryk.skarmetoo.util.CpuTemperature
@@ -94,7 +103,11 @@ private data class MediaStoreAlbumRef(
 
 private const val LIVE_CHART_POINT_COUNT = 50
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalLayoutApi::class,
+    ExperimentalMaterial3ExpressiveApi::class,
+)
 @Composable
 fun SettingsScreen(
     viewModel: ScreenshotViewModel,
@@ -105,12 +118,15 @@ fun SettingsScreen(
     onOpenMoreModels: () -> Unit = {},
     onOpenDuplicateImages: () -> Unit = {},
     onOpenSkippedImages: () -> Unit = {},
+    onOpenLeaderboard: () -> Unit = {},
 ) {
   val isModelReady by viewModel.isModelReady.collectAsState()
   val modelStatus by viewModel.modelStatus.collectAsState()
   val currentDetailLevel by viewModel.detailLevel.collectAsState()
   val customPrompt by viewModel.customPrompt.collectAsState()
   val context = LocalContext.current
+  val isDebugBuild =
+      remember(context) { context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
   val appVersionName =
       remember(context) {
         runCatching {
@@ -155,6 +171,21 @@ fun SettingsScreen(
       "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true"
 
   val settingsScope = rememberCoroutineScope()
+  // Keep this at screen level: Gemma/Nano cards move when selected, so their local
+  // press animation can otherwise disappear before a fast load is observed.
+  var modelOutlinePulse by remember { mutableStateOf<ModelType?>(null) }
+  var modelOutlinePulseVersion by remember { mutableIntStateOf(0) }
+  fun startModelOutlinePulse(model: ModelType) {
+    modelOutlinePulse = model
+    modelOutlinePulseVersion += 1
+  }
+  LaunchedEffect(modelOutlinePulseVersion) {
+    if (modelOutlinePulse != null) {
+      kotlinx.coroutines.delay(600)
+      modelOutlinePulse = null
+    }
+  }
+
   var showHfLogin by remember { mutableStateOf(false) }
   var hfLoginModelType by remember { mutableStateOf(ModelType.GEMMA_3N) }
   var showEmbeddingGemmaHfLogin by remember { mutableStateOf(false) }
@@ -162,6 +193,7 @@ fun SettingsScreen(
     mutableStateOf(EmbeddingGemma.hasRequiredFiles(context))
   }
   var isEmbeddingGemmaDownloading by remember { mutableStateOf(false) }
+  var embeddingGemmaDownloadFailed by remember { mutableStateOf(false) }
   var embeddingGemmaDownloadProgress by remember { mutableFloatStateOf(0f) }
   var embeddingGemmaError by remember { mutableStateOf<String?>(null) }
   var isEmbeddingGemmaIndexing by remember { mutableStateOf(false) }
@@ -213,6 +245,7 @@ fun SettingsScreen(
   fun startEmbeddingGemmaDownload(cookies: String?) {
     if (isEmbeddingGemmaDownloading) return
     isEmbeddingGemmaDownloading = true
+    embeddingGemmaDownloadFailed = false
     embeddingGemmaDownloadProgress = 0f
     embeddingGemmaError = null
     settingsScope.launch {
@@ -229,10 +262,13 @@ fun SettingsScreen(
               e.localizedMessage ?: context.getString(R.string.embeddinggemma_download_failed)
           embeddingGemmaError =
               if (message.contains("Unauthorized", ignoreCase = true) ||
-                  message.contains("401", ignoreCase = true)) {
-                showEmbeddingGemmaHfLogin = true
+                  message.contains("Forbidden", ignoreCase = true) ||
+                  message.contains("401", ignoreCase = true) ||
+                  message.contains("403", ignoreCase = true)) {
+                embeddingGemmaDownloadFailed = true
                 context.getString(R.string.embeddinggemma_sign_in_required)
               } else {
+                embeddingGemmaDownloadFailed = true
                 message
               }
         }
@@ -484,6 +520,7 @@ fun SettingsScreen(
   val analysisBenchmark by viewModel.analysisBenchmark.collectAsState()
   val activeBenchmarkStartTimes by viewModel.activeBenchmarkStartTimes.collectAsState()
   val analyticsEnabled by viewModel.analyticsEnabled.collectAsState()
+  val benchmarkUploadStatus by viewModel.benchmarkUploadStatus.collectAsState()
   var speedChartIsLive by remember { mutableStateOf(true) }
   var resourceChartIsLive by remember { mutableStateOf(true) }
   var analyticsLiveResetKey by remember { mutableIntStateOf(0) }
@@ -541,8 +578,8 @@ fun SettingsScreen(
                           Modifier.height(42.dp).semantics {
                             contentDescription = temperatureContentDescription
                           },
-                      color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                      shape = RoundedCornerShape(14.dp),
+                      color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                      shape = CircleShape,
                   ) {
                     Box(modifier = Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
                       Text(
@@ -570,17 +607,26 @@ fun SettingsScreen(
                   Spacer(modifier = Modifier.width(6.dp))
                 }
 
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(14.dp),
+                HorizontalFloatingToolbar(
+                    expanded = true,
+                    modifier = Modifier.height(42.dp),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(4.dp),
+                    expandedShadowElevation = 0.dp,
+                    colors =
+                        FloatingToolbarDefaults.standardFloatingToolbarColors(
+                            toolbarContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            toolbarContentColor = MaterialTheme.colorScheme.onSurface,
+                        ),
                 ) {
                   Row(
-                      modifier = Modifier.padding(4.dp),
                       horizontalArrangement = Arrangement.spacedBy(4.dp),
                       verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
                             onClick = hapticOnClick(onRevisitTutorial),
-                            modifier = Modifier.size(34.dp)) {
+                            modifier = Modifier.size(34.dp),
+                            shape = CircleShape,
+                        ) {
                               Icon(
                                   Icons.Rounded.MenuBook,
                                   contentDescription = "Tutorial",
@@ -588,7 +634,9 @@ fun SettingsScreen(
                             }
                         IconButton(
                             onClick = hapticOnClick { viewModel.setDarkMode(!isDark) },
-                            modifier = Modifier.size(34.dp)) {
+                            modifier = Modifier.size(34.dp),
+                            shape = CircleShape,
+                        ) {
                               Icon(
                                   if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
                                   contentDescription = "Toggle Dark Mode",
@@ -596,7 +644,9 @@ fun SettingsScreen(
                             }
                         IconButton(
                             onClick = hapticOnClick(onStartScreenSaver),
-                            modifier = Modifier.size(34.dp)) {
+                            modifier = Modifier.size(34.dp),
+                            shape = CircleShape,
+                        ) {
                               Icon(
                                   Icons.Rounded.Monitor,
                                   contentDescription = "Screen Saver",
@@ -612,7 +662,9 @@ fun SettingsScreen(
                                       }
                                   viewModel.setAppLanguage(nextLang)
                                 },
-                            modifier = Modifier.size(34.dp)) {
+                            modifier = Modifier.size(34.dp),
+                            shape = CircleShape,
+                        ) {
                               Icon(
                                   Icons.Rounded.Language,
                                   contentDescription = "Language",
@@ -631,44 +683,108 @@ fun SettingsScreen(
                       .padding(start = 16.dp, end = 16.dp, bottom = 2.dp),
               verticalAlignment = Alignment.CenterVertically,
           ) {
-            val analyticsTitle =
-                stringResource(
-                    if (analyticsEnabled) R.string.analytics_title_enabled
-                    else R.string.analytics_title)
+            val analyticsTitle = stringResource(R.string.analytics_title)
+            val analyticsSuffix =
+                stringResource(R.string.analytics_title_enabled).removePrefix(analyticsTitle)
+            val analyticsContentColor by
+                animateColorAsState(
+                    targetValue =
+                        when {
+                          !analyticsEnabled -> MaterialTheme.colorScheme.onSurfaceVariant
+                          isDark -> Color(0xFFE8E8E8)
+                          else -> MaterialTheme.colorScheme.onSurface
+                        },
+                    animationSpec = AppMotion.timed(240),
+                    label = "analyticsHeaderContentColor",
+                )
+            val analyticsContainerColor by
+                animateColorAsState(
+                    targetValue =
+                        if (analyticsEnabled) MaterialTheme.colorScheme.surfaceContainerHigh
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    animationSpec = AppMotion.timed(240),
+                    label = "analyticsHeaderContainerColor",
+                )
             Surface(
                 onClick = hapticOnClick { viewModel.setAnalyticsEnabled(!analyticsEnabled) },
                 modifier = Modifier.fillMaxHeight(),
                 shape = RoundedCornerShape(10.dp),
-                color =
-                    if (analyticsEnabled) MaterialTheme.colorScheme.surfaceContainerHigh
-                    else MaterialTheme.colorScheme.surfaceVariant,
-                contentColor =
-                    if (analyticsEnabled) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = analyticsContainerColor,
+                contentColor = analyticsContentColor,
             ) {
-              Box(
+              Row(
                   modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
-                  contentAlignment = Alignment.Center,
+                  verticalAlignment = Alignment.CenterVertically,
               ) {
                 Text(
                     analyticsTitle.uppercase(),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
+                    color = analyticsContentColor,
                     letterSpacing = 1.sp,
                 )
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = analyticsEnabled,
+                    enter =
+                        androidx.compose.animation.expandHorizontally(
+                            animationSpec = AppMotion.timed(240), expandFrom = Alignment.Start) +
+                            androidx.compose.animation.fadeIn(animationSpec = AppMotion.timed(240)),
+                    exit =
+                        androidx.compose.animation.shrinkHorizontally(
+                            animationSpec = AppMotion.linear(240), shrinkTowards = Alignment.Start) +
+                            androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(240)),
+                ) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = analyticsSuffix.uppercase(),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = analyticsContentColor,
+                            letterSpacing = 1.sp,
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        BenchmarkUploadIndicator(status = benchmarkUploadStatus)
+                      }
+                    }
               }
             }
             Spacer(modifier = Modifier.weight(1f))
             androidx.compose.animation.AnimatedVisibility(
+                visible = analyticsEnabled,
+                enter = androidx.compose.animation.fadeIn(animationSpec = AppMotion.effects()),
+                exit = androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(160)),
+            ) {
+              Surface(
+                  onClick = hapticOnClick(onOpenLeaderboard),
+                  modifier = Modifier.fillMaxHeight(),
+                  shape = RoundedCornerShape(10.dp),
+                  color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                  contentColor = MaterialTheme.colorScheme.onSurface,
+              ) {
+                Row(
+                    modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Icon(
+                      Icons.Rounded.Leaderboard,
+                      contentDescription = stringResource(R.string.leaderboard_title),
+                      modifier = Modifier.size(17.dp),
+                  )
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text(
+                      stringResource(R.string.leaderboard_title).uppercase(),
+                      style = MaterialTheme.typography.labelMedium,
+                      fontWeight = FontWeight.Bold,
+                      letterSpacing = 1.sp,
+                  )
+                }
+              }
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+            androidx.compose.animation.AnimatedVisibility(
                 visible = analyticsEnabled && (!speedChartIsLive || !resourceChartIsLive),
-                enter =
-                    androidx.compose.animation.fadeIn(
-                        animationSpec =
-                            androidx.compose.animation.core.tween(durationMillis = 180)),
-                exit =
-                    androidx.compose.animation.fadeOut(
-                        animationSpec =
-                            androidx.compose.animation.core.tween(durationMillis = 120)),
+                enter = androidx.compose.animation.fadeIn(animationSpec = AppMotion.fastEffects()),
+                exit = androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(160)),
             ) {
               Surface(
                   onClick = hapticOnClick { analyticsLiveResetKey += 1 },
@@ -690,16 +806,51 @@ fun SettingsScreen(
                 }
               }
             }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = analyticsEnabled && isDebugBuild,
+                enter = androidx.compose.animation.fadeIn(animationSpec = AppMotion.effects()),
+                exit = androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(160)),
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Surface(
+                    onClick =
+                        hapticOnClick {
+                          viewModel.resetAnalysisBenchmarkForDebug()
+                          speedChartIsLive = true
+                          resourceChartIsLive = true
+                          analyticsLiveResetKey += 1
+                        },
+                    modifier = Modifier.fillMaxHeight(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ) {
+                  Box(
+                      modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
+                      contentAlignment = Alignment.Center,
+                  ) {
+                    Text(
+                        stringResource(R.string.analytics_reset_benchmark),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                    )
+                  }
+                }
+              }
+            }
           }
 
           androidx.compose.animation.AnimatedVisibility(
               visible = analyticsEnabled,
               enter =
-                  androidx.compose.animation.expandVertically() +
-                      androidx.compose.animation.fadeIn(),
+                  androidx.compose.animation.expandVertically(animationSpec = AppMotion.spatial()) +
+                      androidx.compose.animation.fadeIn(animationSpec = AppMotion.effects()),
               exit =
-                  androidx.compose.animation.shrinkVertically() +
-                      androidx.compose.animation.fadeOut(),
+                  androidx.compose.animation.shrinkVertically(
+                      animationSpec = AppMotion.linear(240)) +
+                      androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(160)),
           ) {
             Column {
               Spacer(modifier = Modifier.height(8.dp))
@@ -994,11 +1145,15 @@ fun SettingsScreen(
                       androidx.compose.animation.AnimatedVisibility(
                           visible = showMoreFolders,
                           enter =
-                              androidx.compose.animation.expandVertically() +
-                                  androidx.compose.animation.fadeIn(),
+                              androidx.compose.animation.expandVertically(
+                                  animationSpec = AppMotion.spatial()) +
+                                  androidx.compose.animation.fadeIn(
+                                      animationSpec = AppMotion.effects()),
                           exit =
-                              androidx.compose.animation.shrinkVertically() +
-                                  androidx.compose.animation.fadeOut()) {
+                              androidx.compose.animation.shrinkVertically(
+                                  animationSpec = AppMotion.linear(240)) +
+                                  androidx.compose.animation.fadeOut(
+                                      animationSpec = AppMotion.linear(160))) {
                             Column {
                               albumCounts.forEachIndexed { index, album ->
                                 if (index > 0) Spacer(modifier = Modifier.height(6.dp))
@@ -1206,6 +1361,10 @@ fun SettingsScreen(
               )
               Spacer(modifier = Modifier.height(6.dp))
 
+              val modelOutlineLoading =
+                  modelOutlinePulse == selectedModel ||
+                      (selectedModel != ModelType.DESKTOP &&
+                          !isModelReady && (isModelFound || isDownloadingModel))
               val isGemma3nSelectedForTop = selectedModel == ModelType.GEMMA_3N
               val isDownloadingGemma3n =
                   isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
@@ -1224,6 +1383,7 @@ fun SettingsScreen(
               if (activeImportedModel != null) {
                 ActiveImportedModelCard(
                     model = activeImportedModel,
+                    loading = modelOutlineLoading,
                     mmprojName =
                         java.io.File(context.filesDir, activeImportedModel.mmprojFile).name,
                 )
@@ -1233,10 +1393,14 @@ fun SettingsScreen(
               val lanState by viewModel.lanState.collectAsState()
               val lanAddress by viewModel.lanAddress.collectAsState()
               val isDesktopSelected = selectedModel == ModelType.DESKTOP
-              OutlinedCard(
-                  onClick = hapticOnClick { viewModel.setSelectedModel(ModelType.DESKTOP) },
+              SquiggleOutlinedCard(
+                  loading = modelOutlinePulse == ModelType.DESKTOP,
+                  onClick = hapticOnClick {
+                    startModelOutlinePulse(ModelType.DESKTOP)
+                    viewModel.setSelectedModel(ModelType.DESKTOP)
+                  },
                   modifier = Modifier.fillMaxWidth(),
-                  shape = RoundedCornerShape(14.dp),
+                  cornerRadius = 14.dp,
                   colors =
                       CardDefaults.outlinedCardColors(
                           containerColor =
@@ -1290,11 +1454,13 @@ fun SettingsScreen(
               if (isGemma3nSelectedForTop) {
                 Gemma3nModelCard(
                     selected = true,
+                    loading = modelOutlineLoading,
                     isDownloaded = isGemma3nDownloaded,
                     isDownloading = isDownloadingGemma3n,
                     downloadProgress = downloadProgress,
                     isDark = isDark,
                     onClick = {
+                      startModelOutlinePulse(ModelType.GEMMA_3N)
                       viewModel.setSelectedModel(ModelType.GEMMA_3N)
                       if (isGemma3nDownloaded) {
                         val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
@@ -1311,9 +1477,11 @@ fun SettingsScreen(
               if (isAicoreSelectedForTop) {
                 GeminiNanoModelCard(
                     selected = true,
+                    loading = modelOutlineLoading,
                     aicoreStatus = aicoreStatus,
                     isDark = isDark,
                     onClick = {
+                      startModelOutlinePulse(ModelType.AICORE)
                       viewModel.setSelectedModel(ModelType.AICORE)
                       viewModel.triggerAicoreRescan()
                     },
@@ -1324,9 +1492,14 @@ fun SettingsScreen(
               val isGemma4Selected = selectedModel == ModelType.GEMMA_4 && isGemma4Downloaded
               val isDownloadingGemma4 =
                   isDownloadingModel && downloadingModelType == ModelType.GEMMA_4
-              OutlinedCard(
+              SquiggleOutlinedCard(
+                  loading =
+                      modelOutlinePulse == ModelType.GEMMA_4 ||
+                          (selectedModel == ModelType.GEMMA_4 && modelOutlineLoading) ||
+                          isDownloadingGemma4,
                   onClick =
                       hapticOnClick {
+                        startModelOutlinePulse(ModelType.GEMMA_4)
                         viewModel.setSelectedModel(ModelType.GEMMA_4)
                         if (isGemma4Downloaded) {
                           val path =
@@ -1338,7 +1511,7 @@ fun SettingsScreen(
                         }
                       },
                   modifier = Modifier.fillMaxWidth(),
-                  shape = RoundedCornerShape(14.dp),
+                  cornerRadius = 14.dp,
                   colors =
                       CardDefaults.outlinedCardColors(
                           containerColor =
@@ -1443,9 +1616,13 @@ fun SettingsScreen(
               val isDownloadingLfm =
                   isGgufDownloading && ggufDownloadingModelName == LFM2_5_MODEL.displayName
 
-              OutlinedCard(
+              SquiggleOutlinedCard(
+                  loading =
+                      modelOutlinePulse == ModelType.GGUF ||
+                          (isLfmSelected && modelOutlineLoading) || isDownloadingLfm,
                   onClick =
                       hapticOnClick {
+                        startModelOutlinePulse(ModelType.GGUF)
                         if (isLfmDownloaded) {
                           viewModel.setGgufModelAsActive(LFM2_5_MODEL)
                         } else if (!isGgufDownloading) {
@@ -1459,7 +1636,7 @@ fun SettingsScreen(
                         }
                       },
                   modifier = Modifier.fillMaxWidth(),
-                  shape = RoundedCornerShape(14.dp),
+                  cornerRadius = 14.dp,
                   colors =
                       CardDefaults.outlinedCardColors(
                           containerColor =
@@ -1583,19 +1760,24 @@ fun SettingsScreen(
               androidx.compose.animation.AnimatedVisibility(
                   visible = showMoreModels,
                   enter =
-                      androidx.compose.animation.expandVertically() +
-                          androidx.compose.animation.fadeIn(),
+                      androidx.compose.animation.expandVertically(
+                          animationSpec = AppMotion.spatial()) +
+                          androidx.compose.animation.fadeIn(animationSpec = AppMotion.effects()),
                   exit =
-                      androidx.compose.animation.shrinkVertically() +
-                          androidx.compose.animation.fadeOut()) {
+                      androidx.compose.animation.shrinkVertically(
+                          animationSpec = AppMotion.linear(240)) +
+                          androidx.compose.animation.fadeOut(
+                              animationSpec = AppMotion.linear(160))) {
                     Column {
                       Spacer(modifier = Modifier.height(6.dp))
                       if (!isGemma3nSelectedForTop) {
                         val isGemma3nSelected =
                             selectedModel == ModelType.GEMMA_3N && isGemma3nDownloaded
-                        OutlinedCard(
+                        SquiggleOutlinedCard(
+                            loading = modelOutlinePulse == ModelType.GEMMA_3N || isDownloadingGemma3n,
                             onClick =
                                 hapticOnClick {
+                                  startModelOutlinePulse(ModelType.GEMMA_3N)
                                   viewModel.setSelectedModel(ModelType.GEMMA_3N)
                                   if (isGemma3nDownloaded) {
                                     val path =
@@ -1609,7 +1791,7 @@ fun SettingsScreen(
                                   }
                                 },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
+                            cornerRadius = 14.dp,
                             colors =
                                 CardDefaults.outlinedCardColors(
                                     containerColor =
@@ -1711,14 +1893,16 @@ fun SettingsScreen(
                       if (!isAicoreSelectedForTop) {
                         val isAicoreSelected = selectedModel == ModelType.AICORE
 
-                        OutlinedCard(
+                        SquiggleOutlinedCard(
+                            loading = modelOutlinePulse == ModelType.AICORE,
                             onClick =
                                 hapticOnClick {
+                                  startModelOutlinePulse(ModelType.AICORE)
                                   viewModel.setSelectedModel(ModelType.AICORE)
                                   viewModel.triggerAicoreRescan()
                                 },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
+                            cornerRadius = 14.dp,
                             colors =
                                 CardDefaults.outlinedCardColors(
                                     containerColor =
@@ -1816,10 +2000,10 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                       }
 
-                      OutlinedCard(
+                      SquiggleOutlinedCard(
                           onClick = hapticOnClick(onOpenMoreModels),
                           modifier = Modifier.fillMaxWidth(),
-                          shape = RoundedCornerShape(14.dp),
+                          cornerRadius = 14.dp,
                           colors =
                               CardDefaults.outlinedCardColors(containerColor = Color.Transparent),
                       ) {
@@ -1859,7 +2043,7 @@ fun SettingsScreen(
 
               // Analysis Language Row
               Text(
-                  stringResource(R.string.language),
+                  stringResource(R.string.output_language),
                   style = MaterialTheme.typography.labelMedium,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -1905,11 +2089,14 @@ fun SettingsScreen(
               androidx.compose.animation.AnimatedVisibility(
                   visible = showMoreLanguages,
                   enter =
-                      androidx.compose.animation.expandVertically() +
-                          androidx.compose.animation.fadeIn(),
+                      androidx.compose.animation.expandVertically(
+                          animationSpec = AppMotion.spatial()) +
+                          androidx.compose.animation.fadeIn(animationSpec = AppMotion.effects()),
                   exit =
-                      androidx.compose.animation.shrinkVertically() +
-                          androidx.compose.animation.fadeOut(),
+                      androidx.compose.animation.shrinkVertically(
+                          animationSpec = AppMotion.linear(240)) +
+                          androidx.compose.animation.fadeOut(
+                              animationSpec = AppMotion.linear(160)),
               ) {
                 Column {
                   Spacer(modifier = Modifier.height(8.dp))
@@ -2054,11 +2241,14 @@ fun SettingsScreen(
               androidx.compose.animation.AnimatedVisibility(
                   visible = currentDetailLevel == LlmManager.DetailLevel.CUSTOM,
                   enter =
-                      androidx.compose.animation.expandVertically() +
-                          androidx.compose.animation.fadeIn(),
+                      androidx.compose.animation.expandVertically(
+                          animationSpec = AppMotion.spatial()) +
+                          androidx.compose.animation.fadeIn(animationSpec = AppMotion.effects()),
                   exit =
-                      androidx.compose.animation.shrinkVertically() +
-                          androidx.compose.animation.fadeOut(),
+                      androidx.compose.animation.shrinkVertically(
+                          animationSpec = AppMotion.linear(240)) +
+                          androidx.compose.animation.fadeOut(
+                              animationSpec = AppMotion.linear(160)),
               ) {
                 Column {
                   Spacer(modifier = Modifier.height(12.dp))
@@ -2808,15 +2998,12 @@ fun SettingsScreen(
               OutlinedCard(
                   onClick =
                       hapticOnClick {
-                        if (!isEmbeddingGemmaDownloaded && !isEmbeddingGemmaDownloading) {
-                          val cookies =
-                              android.webkit.CookieManager.getInstance()
-                                  .getCookie("https://huggingface.co")
-                          if (cookies.isNullOrBlank()) {
-                            showEmbeddingGemmaHfLogin = true
-                          } else {
-                            startEmbeddingGemmaDownload(cookies)
-                          }
+                        if (embeddingGemmaDownloadFailed ||
+                            (!isEmbeddingGemmaDownloaded && !isEmbeddingGemmaDownloading)) {
+                          // A Hugging Face session cookie only proves that the user is signed in;
+                          // it does not prove that the gated model license was accepted. Always
+                          // reopen the repo page so a failed/unauthorized download can be fixed.
+                          showEmbeddingGemmaHfLogin = true
                         }
                       },
                   modifier = Modifier.fillMaxWidth(),
@@ -3299,11 +3486,13 @@ fun SettingsScreen(
               androidx.compose.animation.AnimatedVisibility(
                   visible = isAdvancedExpanded,
                   enter =
-                      androidx.compose.animation.expandVertically() +
-                          androidx.compose.animation.fadeIn(),
+                      androidx.compose.animation.expandVertically(
+                          animationSpec = AppMotion.spatial(), expandFrom = Alignment.Top) +
+                          androidx.compose.animation.fadeIn(animationSpec = AppMotion.effects()),
                   exit =
-                      androidx.compose.animation.shrinkVertically() +
-                          androidx.compose.animation.fadeOut(),
+                      androidx.compose.animation.shrinkVertically(
+                          animationSpec = AppMotion.linear(240), shrinkTowards = Alignment.Top) +
+                          androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(160)),
               ) {
                 Column {
                   Spacer(modifier = Modifier.height(16.dp))
@@ -4172,7 +4361,7 @@ fun SettingsScreen(
               modifier =
                   Modifier.fillMaxSize()
                       .horizontalScroll(rememberScrollState())
-                      .padding(horizontal = 8.dp),
+                      .padding(start = 8.dp, end = 8.dp + LocalFloatingNavigationEndInset.current),
               horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
             landscapeSettingsSections.forEach { section ->
@@ -4188,6 +4377,7 @@ fun SettingsScreen(
         }
       } else {
         settingsSections.forEach { section -> section() }
+        Spacer(Modifier.height(LocalFloatingNavigationBottomInset.current))
       }
     }
   }
@@ -4195,11 +4385,16 @@ fun SettingsScreen(
   if (showMediaFolderDialog) {
     val dlgTitle = stringResource(R.string.select_media_folders)
     val dlgNoFolders = stringResource(R.string.no_media_folders_found)
+    val dlgSelectAll = stringResource(R.string.select_all)
     val dlgDeselectAll = stringResource(R.string.deselect_all)
     val dlgDone = stringResource(R.string.done)
 
     var tempSelectedAlbums by
         remember(availableAlbums) { mutableStateOf(selectedAlbums.toMutableSet()) }
+    val allFoldersSelected =
+        availableAlbums.isNotEmpty() &&
+            availableAlbums.all { album -> album.bucketId in tempSelectedAlbums }
+    val dlgToggleAll = if (allFoldersSelected) dlgDeselectAll else dlgSelectAll
 
     AlertDialog(
         onDismissRequest = { showMediaFolderDialog = false },
@@ -4228,12 +4423,12 @@ fun SettingsScreen(
                   availableAlbums.forEach { album ->
                     val isSelected = album.bucketId in tempSelectedAlbums
                     Surface(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        shape = RoundedCornerShape(16.dp),
                         color =
                             if (isSelected)
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                            else Color.Transparent,
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                            else MaterialTheme.colorScheme.surfaceContainerLow,
                         onClick =
                             hapticOnClick {
                               tempSelectedAlbums =
@@ -4244,33 +4439,47 @@ fun SettingsScreen(
                             },
                     ) {
                       Row(
-                          modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                          modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
                           verticalAlignment = Alignment.CenterVertically,
                       ) {
-                        Checkbox(
-                            checked = isSelected,
-                            onCheckedChange = { _ ->
-                              tempSelectedAlbums =
-                                  tempSelectedAlbums.toMutableSet().apply {
-                                    if (album.bucketId in this) remove(album.bucketId)
-                                    else add(album.bucketId)
-                                  }
-                            },
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
                         Column(modifier = Modifier.weight(1f)) {
                           Text(
                               text = album.name,
                               maxLines = 1,
                               overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                               style = MaterialTheme.typography.bodyMedium,
-                              fontWeight = FontWeight.Medium,
+                              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                           )
                           Text(
-                              text = "${album.count} images",
+                              text = stringResource(R.string.media_folder_image_count, album.count),
                               style = MaterialTheme.typography.bodySmall,
                               color = MaterialTheme.colorScheme.onSurfaceVariant,
                           )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Surface(
+                            modifier = Modifier.size(28.dp),
+                            shape = CircleShape,
+                            color =
+                                if (isSelected) MaterialTheme.colorScheme.primary
+                                else Color.Transparent,
+                            border =
+                                if (isSelected) null
+                                else BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline),
+                        ) {
+                          if (isSelected) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                              Icon(
+                                  imageVector = Icons.Rounded.Check,
+                                  contentDescription = null,
+                                  tint = MaterialTheme.colorScheme.onPrimary,
+                                  modifier = Modifier.size(18.dp),
+                              )
+                            }
+                          }
                         }
                       }
                     }
@@ -4283,9 +4492,18 @@ fun SettingsScreen(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            TextButton(onClick = hapticOnClick { tempSelectedAlbums = mutableSetOf<String>() }) {
-              Text(dlgDeselectAll)
-            }
+            TextButton(
+                onClick =
+                    hapticOnClick {
+                      tempSelectedAlbums =
+                          if (allFoldersSelected) {
+                            mutableSetOf()
+                          } else {
+                            availableAlbums.mapTo(mutableSetOf()) { album -> album.bucketId }
+                          }
+                    }) {
+                  Text(dlgToggleAll)
+                }
             Button(
                 onClick =
                     hapticOnClick {
@@ -4301,7 +4519,66 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun AnalysisBenchmarkCard(
+private fun BenchmarkUploadIndicator(status: BenchmarkUploadStatus) {
+  val description =
+      stringResource(
+          when (status) {
+            BenchmarkUploadStatus.WAITING -> R.string.analytics_upload_waiting
+            BenchmarkUploadStatus.UPLOADING -> R.string.analytics_uploading
+            BenchmarkUploadStatus.SYNCED -> R.string.analytics_uploaded
+            BenchmarkUploadStatus.FAILED -> R.string.analytics_upload_failed
+            BenchmarkUploadStatus.UNAVAILABLE -> R.string.analytics_upload_unavailable
+          })
+  val indicatorColor by
+      animateColorAsState(
+          targetValue =
+              when (status) {
+                BenchmarkUploadStatus.WAITING -> MaterialTheme.colorScheme.outline
+                BenchmarkUploadStatus.UPLOADING,
+                BenchmarkUploadStatus.SYNCED -> MaterialTheme.colorScheme.primary
+                BenchmarkUploadStatus.FAILED -> MaterialTheme.colorScheme.error
+                BenchmarkUploadStatus.UNAVAILABLE -> MaterialTheme.colorScheme.onSurfaceVariant
+              },
+          animationSpec = AppMotion.timed(240),
+          label = "benchmarkUploadIndicatorColor",
+      )
+
+  Box(
+      modifier = Modifier.size(17.dp).semantics { contentDescription = description },
+      contentAlignment = Alignment.Center,
+  ) {
+    androidx.compose.animation.Crossfade(
+        targetState = status,
+        animationSpec = AppMotion.timed(240),
+        label = "benchmarkUploadStatus",
+    ) { currentStatus ->
+      if (currentStatus == BenchmarkUploadStatus.UPLOADING) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            color = indicatorColor,
+            strokeWidth = 1.8.dp,
+        )
+      } else {
+        Icon(
+            imageVector =
+                when (currentStatus) {
+                  BenchmarkUploadStatus.WAITING -> Icons.Rounded.CloudUpload
+                  BenchmarkUploadStatus.SYNCED -> Icons.Rounded.CloudDone
+                  BenchmarkUploadStatus.FAILED,
+                  BenchmarkUploadStatus.UNAVAILABLE -> Icons.Rounded.CloudOff
+                  BenchmarkUploadStatus.UPLOADING -> Icons.Rounded.CloudUpload
+                },
+            contentDescription = null,
+            tint = indicatorColor,
+            modifier = Modifier.size(17.dp),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+internal fun AnalysisBenchmarkCard(
     benchmark: AnalysisBenchmarkState,
     activeProcessingStartTimes: Collection<Long>,
     liveResetKey: Int,
@@ -4495,7 +4772,7 @@ private fun BenchmarkMetric(
           text = value,
           style = MaterialTheme.typography.titleMedium,
           fontWeight = FontWeight.Bold,
-          color = Color.Black,
+          color = if (LocalIsDarkMode.current) contentColor else Color.Black,
           maxLines = 1,
       )
     }
@@ -4855,6 +5132,7 @@ private fun formatBenchmarkSeconds(durationMillis: Long?): String {
 
 @Composable
 private fun Gemma3nModelCard(
+    loading: Boolean,
     selected: Boolean,
     isDownloaded: Boolean,
     isDownloading: Boolean,
@@ -4862,10 +5140,11 @@ private fun Gemma3nModelCard(
     isDark: Boolean,
     onClick: () -> Unit,
 ) {
-  OutlinedCard(
+  SquiggleOutlinedCard(
+      loading = loading,
       onClick = hapticOnClick(onClick),
       modifier = Modifier.fillMaxWidth(),
-      shape = RoundedCornerShape(14.dp),
+      cornerRadius = 14.dp,
       colors =
           CardDefaults.outlinedCardColors(
               containerColor =
@@ -4951,15 +5230,17 @@ private fun Gemma3nModelCard(
 
 @Composable
 private fun GeminiNanoModelCard(
+    loading: Boolean,
     selected: Boolean,
     aicoreStatus: Int,
     isDark: Boolean,
     onClick: () -> Unit,
 ) {
-  OutlinedCard(
+  SquiggleOutlinedCard(
+      loading = loading,
       onClick = hapticOnClick(onClick),
       modifier = Modifier.fillMaxWidth(),
-      shape = RoundedCornerShape(14.dp),
+      cornerRadius = 14.dp,
       colors =
           CardDefaults.outlinedCardColors(
               containerColor =
@@ -5052,14 +5333,16 @@ private fun GeminiNanoModelCard(
 
 @Composable
 private fun ActiveImportedModelCard(
+    loading: Boolean,
     model: GgufModelInfo,
     mmprojName: String,
 ) {
   val isDark = LocalIsDarkMode.current
-  OutlinedCard(
+  SquiggleOutlinedCard(
+      loading = loading,
       onClick = {},
       modifier = Modifier.fillMaxWidth(),
-      shape = RoundedCornerShape(14.dp),
+      cornerRadius = 14.dp,
       colors =
           CardDefaults.outlinedCardColors(
               containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -5183,10 +5466,11 @@ private fun DetailLevelCard(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-  OutlinedCard(
-      onClick = { if (enabled) onClick() },
+  SquiggleOutlinedCard(
+      onClick = onClick,
+      enabled = enabled,
       modifier = modifier.height(52.dp).then(if (!enabled) Modifier.alpha(0.5f) else Modifier),
-      shape = RoundedCornerShape(12.dp),
+      cornerRadius = 12.dp,
       colors =
           CardDefaults.outlinedCardColors(
               containerColor =
@@ -5209,4 +5493,29 @@ private fun DetailLevelCard(
       )
     }
   }
+}
+
+/** Shares the tag-pill pulse while preserving each settings card's resting corners. */
+@Composable
+private fun SquiggleOutlinedCard(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 14.dp,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    colors: CardColors = CardDefaults.outlinedCardColors(),
+    border: BorderStroke = CardDefaults.outlinedCardBorder(),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+  val interactionSource = remember { MutableInteractionSource() }
+  OutlinedCard(
+      onClick = onClick,
+      modifier = modifier,
+      enabled = enabled,
+      interactionSource = interactionSource,
+      shape = rememberSquigglePillShape(interactionSource, cornerRadius, continuous = loading),
+      colors = colors,
+      border = border,
+      content = content,
+  )
 }

@@ -2,6 +2,7 @@ package com.deryk.skarmetoo.viewmodel
 
 import android.app.Application
 import android.content.ContentUris
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -26,6 +27,7 @@ import com.deryk.skarmetoo.data.JsonFolderManager
 import com.deryk.skarmetoo.data.ScreenshotDatabase
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
+import com.deryk.skarmetoo.network.BenchmarkLeaderboardClient
 import com.deryk.skarmetoo.network.DesktopJobSettings
 import com.deryk.skarmetoo.network.LanProtocol
 import com.deryk.skarmetoo.network.LanServer
@@ -97,6 +99,9 @@ data class DesktopAnalysisProgress(
 data class ProcessingTimeSample(
     val recordedAtMillis: Long,
     val durationMillis: Long,
+    val imageWidthPixels: Int? = null,
+    val imageHeightPixels: Int? = null,
+    val generatedTextCharacterCount: Int? = null,
 )
 
 data class ResourceUsageSample(
@@ -145,6 +150,17 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           "skarmetoo_onboarding_prefs", android.content.Context.MODE_PRIVATE)
 
   private val performanceMonitor = DevicePerformanceMonitor(application)
+  private val benchmarkLeaderboardClient = BenchmarkLeaderboardClient(application)
+  val benchmarkDeviceId: String
+    get() = benchmarkLeaderboardClient.deviceId
+
+  val benchmarkUploadStatus = benchmarkLeaderboardClient.uploadStatus
+  val benchmarkLeaderboardOptedIn = benchmarkLeaderboardClient.leaderboardOptedIn
+
+  fun setBenchmarkLeaderboardOptedIn(enabled: Boolean) {
+    benchmarkLeaderboardClient.setLeaderboardOptedIn(enabled)
+  }
+
   private val _analysisBenchmark =
       MutableStateFlow(
           AnalysisBenchmarkState(
@@ -159,15 +175,16 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   fun setAnalyticsEnabled(enabled: Boolean) {
     if (_analyticsEnabled.value == enabled) return
 
+    syncFastestBenchmark()
     _analyticsEnabled.value = enabled
     prefs.edit().putBoolean(PREF_ANALYTICS_ENABLED, enabled).apply()
 
     if (enabled) {
       val activeIds = _activeAnalysisIds.value
-      if (activeIds.isNotEmpty()) {
-        val startedAt = android.os.SystemClock.elapsedRealtime()
-        _activeBenchmarkStartTimes.value = activeIds.associateWith { startedAt }
-      }
+      // Do not start timers for images already in progress. Their real start happened while
+      // analytics was disabled, so timing them from this point would create artificially fast
+      // records. New analyses add their own start timestamp when they begin.
+      _activeBenchmarkStartTimes.value = emptyMap()
       if (_isAnalysisRunning.value || activeIds.isNotEmpty()) {
         startPerformanceSampling()
       }
@@ -175,6 +192,37 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       _activeBenchmarkStartTimes.value = emptyMap()
       stopPerformanceSampling()
     }
+  }
+
+  private fun syncFastestBenchmark() {
+    _analysisBenchmark.value.processingTimes
+        .minByOrNull { it.durationMillis }
+        ?.let { fastest ->
+          benchmarkLeaderboardClient.submitFastest(
+              durationMillis = fastest.durationMillis,
+              modelUsed = _selectedModel.value?.displayName,
+              imageWidthPixels = fastest.imageWidthPixels,
+              imageHeightPixels = fastest.imageHeightPixels,
+              generatedTextCharacterCount = fastest.generatedTextCharacterCount,
+          )
+        }
+  }
+
+  fun resetAnalysisBenchmarkForDebug() {
+    val application = getApplication<Application>()
+    if (application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+
+    val shouldResumeSampling =
+        _analyticsEnabled.value &&
+            (_isAnalysisRunning.value || _activeAnalysisIds.value.isNotEmpty())
+    stopPerformanceSampling()
+    _activeBenchmarkStartTimes.value = emptyMap()
+    performanceMonitor.reset()
+    _analysisBenchmark.value = AnalysisBenchmarkState()
+    persistProcessingTimeSamples(emptyList())
+    persistResourceUsageSamples(emptyList())
+    benchmarkLeaderboardClient.resetLocalBenchmarkForDebug()
+    if (shouldResumeSampling) startPerformanceSampling()
   }
 
   private val _clickedImageBounds = MutableStateFlow<ClickedImageBounds?>(null)
@@ -315,9 +363,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     }
   }
 
-  fun loadImagesForBucket(context: android.content.Context, bucketId: String?) {
+  fun loadImagesForBucket(
+      context: android.content.Context,
+      bucketId: String?,
+      publishAfter: kotlinx.coroutines.Deferred<Unit>? = null,
+  ): kotlinx.coroutines.Job {
     val isBucketChanged = !hasLoadedOnce || lastQueriedBucketId != bucketId
-    if (isBucketChanged) {
+    if (isBucketChanged && publishAfter == null) {
       _isMediaStoreLoading.value = true
       _mediaStoreImages.value = emptyList()
     }
@@ -328,9 +380,13 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
     mediaStoreQueryJob =
         viewModelScope.launch(Dispatchers.IO) {
           val loaded = queryMediaStoreImages(context, bucketId)
+          publishAfter?.await()
+          // A cancelled query may still finish its blocking MediaStore call after an album switch.
+          if (!isActive) return@launch
           _mediaStoreImages.value = loaded
           _isMediaStoreLoading.value = false
         }
+    return requireNotNull(mediaStoreQueryJob)
   }
 
   private fun queryMediaStoreImages(
@@ -869,6 +925,18 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   fun setShowPlayPauseToggle(show: Boolean) {
     _showPlayPauseToggle.value = show
     prefs.edit().putBoolean("show_play_pause", show).apply()
+    if (isServiceRunning) {
+      val context = getApplication<Application>()
+      try {
+        context.startService(
+            android.content.Intent(context, AnalysisService::class.java).apply {
+              action = AnalysisService.ACTION_UPDATE
+              putExtra(AnalysisService.EXTRA_SHOW_CONTROLS, show)
+            })
+      } catch (e: Exception) {
+        Log.w(TAG, "Failed to update analysis notification controls", e)
+      }
+    }
   }
 
   private val _isZoomTransitionEnabled =
@@ -898,6 +966,17 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   private val _isAnalysisPaused = MutableStateFlow(prefs.getBoolean("is_analysis_paused", false))
   val isAnalysisPaused: StateFlow<Boolean> = _isAnalysisPaused.asStateFlow()
 
+  private val analysisControlReceiver =
+      object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+          if (intent.action == AnalysisService.ACTION_STOP_PROCESSING &&
+              _showPlayPauseToggle.value && !_isAnalysisPaused.value && isServiceRunning) {
+            // Stop dispatching new work; the current inference can finish safely.
+            toggleAnalysisPause()
+          }
+        }
+      }
+
   fun toggleAnalysisPause() {
     val newPaused =
         synchronized(analysisLifecycleLock) {
@@ -907,6 +986,18 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           paused
         }
 
+    if (isServiceRunning) {
+      val context = getApplication<Application>()
+      try {
+        context.startService(
+            android.content.Intent(context, AnalysisService::class.java).apply {
+              action = AnalysisService.ACTION_UPDATE
+              putExtra(AnalysisService.EXTRA_PAUSED, newPaused)
+            })
+      } catch (e: Exception) {
+        Log.w(TAG, "Failed to update analysis notification pause state", e)
+      }
+    }
     if (!newPaused) {
       // An existing queue resumes through its pause gate. If it happened to finish while paused,
       // the normal launch guards allow exactly one replacement queue.
@@ -1067,6 +1158,11 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
   }
 
   init {
+    androidx.core.content.ContextCompat.registerReceiver(
+        application,
+        analysisControlReceiver,
+        android.content.IntentFilter(AnalysisService.ACTION_STOP_PROCESSING),
+        androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
     llmManager.setMaxConcurrentInstances(_analysisInstanceCount.value)
 
     val currentUris = prefs.getStringSet("saved_folder_uris", emptySet()) ?: emptySet()
@@ -1107,6 +1203,10 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
         } catch (e: Exception) {
           null
         }
+
+    if (_analyticsEnabled.value) {
+      syncFastestBenchmark()
+    }
 
     // Restore selected experimental album
     _selectedExperimentalAlbumId.value = prefs.getString("selected_experimental_album_id", null)
@@ -1651,7 +1751,7 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
           if (status != java.net.HttpURLConnection.HTTP_OK) {
             try {
-              if (status == 401) {
+              if (status == 401 || status == 403) {
                 throw Exception(
                     "Unauthorized: Please sign in to Hugging Face and accept the model's license agreement.")
               }
@@ -2629,11 +2729,12 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
       startPerformanceSampling()
 
       val total = allUnprocessed.size
+      val completedImages = java.util.concurrent.atomic.AtomicInteger(0)
       val concurrency =
           if (_selectedModel.value == ModelType.GGUF) 1
           else _analysisInstanceCount.value.coerceIn(1, 5)
       Log.d(TAG, "Starting analysis queue: $total entries, concurrency=$concurrency")
-      updateAnalysisService(total)
+      updateAnalysisService(total, total, 0)
 
       if (concurrency <= 1) {
         // Sequential mode (original behavior)
@@ -2653,10 +2754,15 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
           val entry = currentUnprocessed.first()
           val remaining = currentUnprocessed.size
           _analysisProgress.value = remaining to total
-          updateAnalysisService(remaining)
+          val notificationTotal = maxOf(total, completedImages.get() + remaining)
+          updateAnalysisService(remaining, notificationTotal, completedImages.get())
           Log.d(TAG, "Analyzing $remaining/$total: id=${entry.id}")
 
           val success = analyzeEntrySuspend(entry = entry, sessionToken = sessionToken)
+          if (success && isAnalysisSessionActive(sessionToken)) {
+            val completed = completedImages.incrementAndGet()
+            updateAnalysisService((remaining - 1).coerceAtLeast(0), notificationTotal, completed)
+          }
 
           if (!success) {
             Log.w(TAG, "Analysis failed for id=${entry.id}, continuing to next...")
@@ -2703,12 +2809,19 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
                     val current = processed.incrementAndGet()
                     val remaining = total - current + 1
                     _analysisProgress.value = remaining to total
-                    updateAnalysisService(remaining)
                     Log.d(TAG, "Analyzing $remaining/$total: id=${entry.id} (worker-$workerId)")
 
                     val success =
                         analyzeEntrySuspend(
                             entry = entry, useConcurrent = true, sessionToken = sessionToken)
+
+                    // Serialize notification updates so workers cannot publish older counts last.
+                    withContext(Dispatchers.Main) {
+                      if (success && isAnalysisSessionActive(sessionToken)) {
+                        val completed = completedImages.incrementAndGet()
+                        updateAnalysisService(total - completed, total, completed)
+                      }
+                    }
 
                     if (!success) {
                       Log.w(TAG, "Analysis failed for id=${entry.id}, continuing to next...")
@@ -2765,18 +2878,24 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
 
   @Volatile private var isServiceRunning = false
 
-  private fun updateAnalysisService(remaining: Int) {
+  private fun updateAnalysisService(remaining: Int, total: Int, completed: Int) {
     if (!_backgroundProcessEnabled.value) return
     val context = getApplication<Application>()
-    if (remaining <= 0) {
-      stopAnalysisService()
-      return
-    }
     val intent =
         android.content.Intent(context, AnalysisService::class.java).apply {
           action =
               if (isServiceRunning) AnalysisService.ACTION_UPDATE else AnalysisService.ACTION_START
           putExtra(AnalysisService.EXTRA_REMAINING, remaining)
+          putExtra(AnalysisService.EXTRA_TOTAL, total)
+          putExtra(AnalysisService.EXTRA_COMPLETED, completed)
+          val notificationModel =
+              if (_selectedModel.value == ModelType.GGUF &&
+                  ggufManager.activeModelInfo.value?.hfRepo?.startsWith("LiquidAI/LFM") == true)
+                  "LFM"
+              else _selectedModel.value?.name ?: "VLM"
+          putExtra(AnalysisService.EXTRA_MODEL, notificationModel)
+          putExtra(AnalysisService.EXTRA_PAUSED, _isAnalysisPaused.value)
+          putExtra(AnalysisService.EXTRA_SHOW_CONTROLS, _showPlayPauseToggle.value)
         }
     try {
       if (!isServiceRunning) {
@@ -2882,7 +3001,14 @@ class ScreenshotViewModel(application: Application) : AndroidViewModel(applicati
               hasRecordedBenchmark.compareAndSet(false, true)
       _activeBenchmarkStartTimes.update { it - entry.id }
       if (shouldRecordBenchmark) {
-        recordProcessingTime(completedAtMillis - benchmarkStartedAtMillis)
+        recordProcessingTime(
+            durationMillis = completedAtMillis - benchmarkStartedAtMillis,
+            modelUsed = modelUsed,
+            imageWidthPixels = bitmap.width,
+            imageHeightPixels = bitmap.height,
+            generatedTextCharacterCount =
+                summary.codePointCount(0, summary.length) + tags.codePointCount(0, tags.length),
+        )
       }
       viewModelScope.launch(Dispatchers.IO) {
         if (!isAnalysisSessionActive(sessionToken)) {
@@ -3252,17 +3378,36 @@ TAGS: [extracted tag1, tag2, tag3]"""
   }
 
   @Synchronized
-  private fun recordProcessingTime(durationMillis: Long) {
+  private fun recordProcessingTime(
+      durationMillis: Long,
+      modelUsed: String?,
+      imageWidthPixels: Int,
+      imageHeightPixels: Int,
+      generatedTextCharacterCount: Int,
+  ) {
     if (!_analyticsEnabled.value || durationMillis <= 0L) return
+    val previousFastest = _analysisBenchmark.value.fastestDurationMillis
     val sample =
         ProcessingTimeSample(
             recordedAtMillis = System.currentTimeMillis(),
             durationMillis = durationMillis,
+            imageWidthPixels = imageWidthPixels,
+            imageHeightPixels = imageHeightPixels,
+            generatedTextCharacterCount = generatedTextCharacterCount,
         )
     _analysisBenchmark.update { current ->
       current.copy(processingTimes = (current.processingTimes + sample).takeLast(MAX_TIME_SAMPLES))
     }
     persistProcessingTimeSamples(_analysisBenchmark.value.processingTimes)
+    if (previousFastest == null || durationMillis < previousFastest) {
+      benchmarkLeaderboardClient.submitFastest(
+          durationMillis = durationMillis,
+          modelUsed = modelUsed,
+          imageWidthPixels = imageWidthPixels,
+          imageHeightPixels = imageHeightPixels,
+          generatedTextCharacterCount = generatedTextCharacterCount,
+      )
+    }
   }
 
   private fun restoreProcessingTimeSamples(): List<ProcessingTimeSample> =
@@ -3273,13 +3418,31 @@ TAGS: [extracted tag1, tag2, tag3]"""
             val fields = encoded.split(',')
             val timestamp = fields.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
             val duration = fields.getOrNull(1)?.toLongOrNull() ?: return@mapNotNull null
-            if (duration <= 0L) null else ProcessingTimeSample(timestamp, duration)
+            val imageWidthPixels = fields.getOrNull(2)?.toIntOrNull()?.takeIf { it > 0 }
+            val imageHeightPixels = fields.getOrNull(3)?.toIntOrNull()?.takeIf { it > 0 }
+            val generatedTextCharacterCount = fields.getOrNull(4)?.toIntOrNull()?.takeIf { it >= 0 }
+            if (duration <= 0L) {
+              null
+            } else {
+              ProcessingTimeSample(
+                  recordedAtMillis = timestamp,
+                  durationMillis = duration,
+                  imageWidthPixels = imageWidthPixels,
+                  imageHeightPixels = imageHeightPixels,
+                  generatedTextCharacterCount = generatedTextCharacterCount,
+              )
+            }
           }
           ?.takeLast(MAX_TIME_SAMPLES)
           .orEmpty()
 
   private fun persistProcessingTimeSamples(samples: List<ProcessingTimeSample>) {
-    val encoded = samples.joinToString(";") { "${it.recordedAtMillis},${it.durationMillis}" }
+    val encoded =
+        samples.joinToString(";") {
+          "${it.recordedAtMillis},${it.durationMillis}," +
+              "${it.imageWidthPixels ?: "-"},${it.imageHeightPixels ?: "-"}," +
+              "${it.generatedTextCharacterCount ?: "-"}"
+        }
     prefs.edit().putString(PREF_PROCESSING_TIME_SAMPLES, encoded).apply()
   }
 
@@ -3374,6 +3537,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
   }
 
   override fun onCleared() {
+    getApplication<Application>().unregisterReceiver(analysisControlReceiver)
     stopPerformanceSampling()
     lanServer.stop()
     super.onCleared()

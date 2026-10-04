@@ -6,9 +6,11 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -23,7 +25,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -46,6 +47,7 @@ import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.GgufModelInfo
 import com.deryk.skarmetoo.ai.ImportedGgufModelStore
 import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.components.SecondaryPageLayout
 import com.deryk.skarmetoo.viewmodel.ModelType
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import java.io.File
@@ -267,39 +269,21 @@ fun MoreModelsScreen(
     }
   }
 
-  Column(
-      modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-  ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-      IconButton(onClick = hapticOnClick(onBack)) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-            contentDescription = stringResource(R.string.back),
-        )
-      }
-      Spacer(modifier = Modifier.width(4.dp))
-      Text(
-          text = stringResource(R.string.more_models),
-          style = MaterialTheme.typography.headlineSmall,
-          fontWeight = FontWeight.Bold,
-      )
-    }
+  val navigationBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
+  SecondaryPageLayout(title = stringResource(R.string.more_models), onBack = onBack) {
     if (isLandscape) {
       Row(
           modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
           horizontalArrangement = Arrangement.spacedBy(20.dp),
       ) {
         Column(
-            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 80.dp + navigationBottomPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = importPaneContent,
         )
         Column(
-            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 80.dp + navigationBottomPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = availableModelsPaneContent,
         )
@@ -309,7 +293,7 @@ fun MoreModelsScreen(
           modifier =
               Modifier.fillMaxSize()
                   .verticalScroll(rememberScrollState())
-                  .padding(horizontal = 16.dp, vertical = 8.dp),
+                  .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 88.dp + navigationBottomPadding),
           verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
         importPaneContent()

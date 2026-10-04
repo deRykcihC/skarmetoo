@@ -134,7 +134,8 @@ class EmbeddingGemma(private val context: Context) {
           }
 
           if (status != HttpURLConnection.HTTP_OK) {
-            if (status == HttpURLConnection.HTTP_UNAUTHORIZED) {
+            if (status == HttpURLConnection.HTTP_UNAUTHORIZED ||
+                status == HttpURLConnection.HTTP_FORBIDDEN) {
               throw IllegalStateException(
                   "Unauthorized: sign in to Hugging Face and accept the EmbeddingGemma license.")
             }

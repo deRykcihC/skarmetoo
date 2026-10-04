@@ -12,7 +12,7 @@ import android.util.LruCache
 import android.util.Size
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -38,6 +38,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -50,11 +51,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -86,6 +90,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -95,11 +100,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -144,8 +151,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.deryk.skarmetoo.R
@@ -153,9 +158,14 @@ import com.deryk.skarmetoo.ai.EmbeddingGemma
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
 import com.deryk.skarmetoo.legacy.ScreenshotGridItem
+import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationBottomInset
+import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationEndInset
 import com.deryk.skarmetoo.ui.components.PillScrollbar
+import com.deryk.skarmetoo.ui.components.SortOrderIcon
 import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.components.rememberSquigglePillShape
 import com.deryk.skarmetoo.ui.findComponentActivity
+import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.viewmodel.AlbumWithThumbnails
 import com.deryk.skarmetoo.viewmodel.ClickedImageBounds
 import com.deryk.skarmetoo.viewmodel.MediaStoreImage
@@ -165,7 +175,9 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
@@ -233,22 +245,28 @@ fun GalleryScreen(
     isPickMode: Boolean = false,
     focusActiveAnalysisRequest: Boolean = false,
     onFocusActiveAnalysisHandled: () -> Unit = {},
+    landscapeControlsVisible: Boolean = true,
+    onHideLandscapeControls: () -> Unit = {},
 ) {
   val context = LocalContext.current
   val haptic = LocalHapticFeedback.current
   val focusManager = LocalFocusManager.current
   val keyboardController = LocalSoftwareKeyboardController.current
   val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+  val floatingNavigationInset = LocalFloatingNavigationBottomInset.current
+  val floatingNavigationEndInset = LocalFloatingNavigationEndInset.current
 
   val images by viewModel.mediaStoreImages.collectAsState()
   val isLoading by viewModel.isMediaStoreLoading.collectAsState()
   var isNavigating by remember { mutableStateOf(false) }
   var lastLoadedAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
+  var hasStartedAlbumLoad by remember { mutableStateOf(false) }
   var rememberedScrollValue by rememberSaveable { mutableIntStateOf(0) }
   var pendingRestoreScrollValue by rememberSaveable { mutableIntStateOf(-1) }
 
   var gridViewportHeightPx by remember { mutableIntStateOf(0) }
   var gridViewportWidthPx by remember { mutableIntStateOf(0) }
+  var renderedRows by remember { mutableIntStateOf(0) }
   var hasScrolledOnLaunch by rememberSaveable { mutableStateOf(false) }
 
   val albumThumbnails by viewModel.albumThumbnails.collectAsState()
@@ -267,8 +285,6 @@ fun GalleryScreen(
   val currentImageProgress by viewModel.currentImageProgress.collectAsState()
   val pendingCount by viewModel.pendingImageCount.collectAsState()
   val analyzingCount by viewModel.analyzingImageCount.collectAsState()
-  val selectedModel by viewModel.selectedModel.collectAsState()
-  val desktopProgress by viewModel.desktopProgress.collectAsState()
   val isSortDescending by viewModel.isSortDescending.collectAsState()
 
   val viewModelSearchQuery by viewModel.searchQuery.collectAsState()
@@ -397,11 +413,32 @@ fun GalleryScreen(
   var isAlbumDrawerExpanded by rememberSaveable { mutableStateOf(false) }
   val isGalleryStylePersisted by viewModel.galleryIsGalleryStyle.collectAsState()
   var isGalleryStyle by remember { mutableStateOf(isGalleryStylePersisted) }
+  var displayedGalleryStyle by remember { mutableStateOf(isGalleryStylePersisted) }
+  val selectedOffsetAnim = remember {
+    Animatable(if (isGalleryStylePersisted) 0.dp else 56.dp, Dp.VectorConverter)
+  }
+  val layoutSlideOffset = remember { Animatable(0f) }
+  val albumSlideOffset = remember { Animatable(0f) }
+  var isAlbumTransitionRunning by remember { mutableStateOf(false) }
+  var carouselCompositionLimit by remember { mutableIntStateOf(Int.MAX_VALUE) }
+  var layoutSettleRequest by remember { mutableIntStateOf(0) }
+
+  fun selectGalleryStyle(galleryStyle: Boolean) {
+    isGalleryStyle = galleryStyle
+    layoutSettleRequest += 1
+  }
   var isPillVisible by rememberSaveable { mutableStateOf(true) }
   var lastScrollOffset by remember { mutableIntStateOf(0) }
 
-  LaunchedEffect(scrollState.value) {
-    if (scrollState.isScrollInProgress) {
+  LaunchedEffect(isLandscape, scrollState.isScrollInProgress) {
+    if (isLandscape && scrollState.isScrollInProgress && !isAlbumTransitionRunning) {
+      onHideLandscapeControls()
+    }
+  }
+
+  LaunchedEffect(scrollState.value, isAlbumTransitionRunning) {
+    // Ignore the outgoing album's fling and the new album's scroll reset during a swap.
+    if (!isAlbumTransitionRunning && scrollState.isScrollInProgress) {
       val delta = scrollState.value - lastScrollOffset
       if (delta > 20) {
         isPillVisible = false
@@ -412,9 +449,33 @@ fun GalleryScreen(
     lastScrollOffset = scrollState.value
   }
 
+  LaunchedEffect(isGalleryStyle, layoutSettleRequest) {
+    val targetGalleryStyle = isGalleryStyle
+    if (!isAlbumTransitionRunning) isPillVisible = true
+    viewModel.setGalleryIsGalleryStyle(targetGalleryStyle)
+    selectedOffsetAnim.animateTo(
+        targetValue = if (targetGalleryStyle) 0.dp else 56.dp,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 380f),
+    )
+  }
+
   LaunchedEffect(isGalleryStyle) {
-    isPillVisible = true
-    viewModel.setGalleryIsGalleryStyle(isGalleryStyle)
+    val targetGalleryStyle = isGalleryStyle
+    if (displayedGalleryStyle != targetGalleryStyle) {
+      // Swap the single image tree offscreen, independently of the selector animation.
+      val exitOffset = if (targetGalleryStyle) 1f else -1f
+      layoutSlideOffset.animateTo(exitOffset, AppMotion.timed(140))
+      // At the top, compose the visible cards first rather than the entire render batch.
+      carouselCompositionLimit =
+          if (targetGalleryStyle && scrollState.value == 0) {
+            (if (isLandscape) 3 else 2) * 2
+          } else {
+            Int.MAX_VALUE
+          }
+      displayedGalleryStyle = targetGalleryStyle
+      layoutSlideOffset.snapTo(-exitOffset)
+    }
+    layoutSlideOffset.animateTo(0f, AppMotion.timed(180))
   }
 
   val sortedAlbums =
@@ -579,7 +640,7 @@ fun GalleryScreen(
   var pinchingPreviewColumns by remember { mutableIntStateOf(gridColumns) }
   var pendingConfirmColumns by remember { mutableStateOf<Int?>(null) }
   val effectiveColumns =
-      if (isGalleryStyle) 2 else (if (isPinching) pinchingPreviewColumns else gridColumns)
+      if (displayedGalleryStyle) 2 else (if (isPinching) pinchingPreviewColumns else gridColumns)
 
   LaunchedEffect(Unit) { viewModel.loadAlbumThumbnails() }
 
@@ -618,19 +679,70 @@ fun GalleryScreen(
   }
 
   LaunchedEffect(selectedAlbumId) {
-    val albumChanged = lastLoadedAlbumId != null && lastLoadedAlbumId != selectedAlbumId
-    pendingRestoreScrollValue =
-        if (albumChanged) {
-          0
-        } else {
-          rememberedScrollValue
-        }
-    viewModel.loadImagesForBucket(context, selectedAlbumId)
-    lastLoadedAlbumId = selectedAlbumId
+    val targetAlbumId = selectedAlbumId
+    val albumChanged = hasStartedAlbumLoad && lastLoadedAlbumId != targetAlbumId
+    val isSwitchTransition = albumChanged || isAlbumTransitionRunning
+    isAlbumTransitionRunning = isSwitchTransition
+    if (isSwitchTransition) isPillVisible = false
+    // "All" is first; use the displayed order, including pinned and reordered albums.
+    fun albumPosition(bucketId: String?): Int =
+        if (bucketId == null) 0
+        else
+            displayAlbums
+                .indexOfFirst { it.album.bucketId == bucketId }
+                .let { if (it < 0) 0 else it + 1 }
+    val exitOffset =
+        if (albumPosition(targetAlbumId) >= albumPosition(lastLoadedAlbumId)) -1f else 1f
+    val publishGate = if (isSwitchTransition) CompletableDeferred<Unit>() else null
+    hasStartedAlbumLoad = true
+    // Query during the outgoing slide, but publish the new list only once it is offscreen.
+    val queryJob = viewModel.loadImagesForBucket(context, targetAlbumId, publishGate)
+    try {
+      if (albumChanged) {
+        albumSlideOffset.animateTo(exitOffset, AppMotion.timed(140))
+        albumSlideOffset.snapTo(-exitOffset)
+      }
+      pendingRestoreScrollValue = if (albumChanged) 0 else rememberedScrollValue
+      publishGate?.complete(Unit)
+      queryJob.join()
+      lastLoadedAlbumId = targetAlbumId
+      if (albumChanged) {
+        val imageCount = viewModel.mediaStoreImages.value.size
+        renderedRows =
+            minOf(INITIAL_RENDER_ROWS, (imageCount + effectiveColumns - 1) / effectiveColumns)
+      }
+      if (isSwitchTransition) {
+        // Let new content and its scroll position reach layout before sliding it in.
+        withFrameNanos {}
+        withFrameNanos {}
+      }
+      albumSlideOffset.animateTo(0f, AppMotion.timed(180))
+      lastScrollOffset = scrollState.value
+      isAlbumTransitionRunning = false
+      // Each album starts with its switch visible, even when it cannot scroll.
+      isPillVisible = true
+    } finally {
+      publishGate?.cancel()
+    }
   }
 
   val rows = remember(filteredImages, effectiveColumns) { filteredImages.chunked(effectiveColumns) }
-  var renderedRows by remember { mutableIntStateOf(0) }
+
+  LaunchedEffect(displayedGalleryStyle, renderedRows, filteredImages.size, isLandscape) {
+    if (!displayedGalleryStyle || carouselCompositionLimit == Int.MAX_VALUE) return@LaunchedEffect
+    // Leave the visible content in place while both independent animations settle.
+    snapshotFlow {
+          selectedOffsetAnim.isRunning || layoutSlideOffset.isRunning || albumSlideOffset.isRunning
+        }
+        .first { running -> !running }
+    val columnCount = if (isLandscape) 3 else 2
+    val targetCount = minOf(filteredImages.size, renderedRows * columnCount)
+    while (carouselCompositionLimit < targetCount) {
+      withFrameNanos {}
+      carouselCompositionLimit =
+          (carouselCompositionLimit + columnCount * 2).coerceAtMost(targetCount)
+    }
+  }
 
   LaunchedEffect(rows.size, pendingRestoreScrollValue) {
     renderedRows =
@@ -704,14 +816,17 @@ fun GalleryScreen(
   val landscapeAlbumPaneWidth by
       animateDpAsState(
           targetValue = if (isAlbumDrawerExpanded) 220.dp else 124.dp,
-          animationSpec = tween(260, easing = FastOutSlowInEasing),
+          animationSpec =
+              if (isAlbumDrawerExpanded) AppMotion.spatial() else AppMotion.linear(240),
           label = "landscapeAlbumPaneWidth",
       )
 
   Box(
       modifier =
-          Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).pointerInput(
-              Unit) {
+          Modifier.fillMaxSize()
+              .background(MaterialTheme.colorScheme.background)
+              .padding(top = if (isLandscape) 8.dp else 0.dp)
+              .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
                       focusManager.clearFocus()
@@ -730,7 +845,8 @@ fun GalleryScreen(
             Row(
                 modifier =
                     Modifier.fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
+                        .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp)
+                        .heightIn(min = 42.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
               Image(
@@ -744,149 +860,6 @@ fun GalleryScreen(
                   style = MaterialTheme.typography.headlineSmall,
                   fontWeight = FontWeight.Bold,
               )
-              Spacer(modifier = Modifier.width(12.dp))
-
-              Row(
-                  modifier = Modifier.weight(1f),
-                  verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Spacer(modifier = Modifier.weight(1f))
-
-                val isDesktopActive =
-                    selectedModel == com.deryk.skarmetoo.viewmodel.ModelType.DESKTOP &&
-                        desktopProgress.isRunning
-                val desktopPending =
-                    if (isDesktopActive)
-                        (desktopProgress.total - desktopProgress.processed).coerceAtLeast(0)
-                    else 0
-                if (isDesktopActive) {
-                  Surface(
-                      shape = RoundedCornerShape(16.dp),
-                      color = MaterialTheme.colorScheme.errorContainer,
-                      modifier =
-                          Modifier.clip(RoundedCornerShape(16.dp)).clickable {
-                            focusNextActiveAnalysis()
-                          },
-                  ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                      Icon(
-                          Icons.Rounded.Computer,
-                          null,
-                          modifier = Modifier.size(14.dp),
-                          tint = MaterialTheme.colorScheme.error,
-                      )
-                      Spacer(modifier = Modifier.width(4.dp))
-                      Text(
-                          stringResource(R.string.items_left, desktopPending.toString()),
-                          style = MaterialTheme.typography.labelMedium,
-                          fontWeight = FontWeight.Bold,
-                          color = MaterialTheme.colorScheme.error,
-                      )
-                    }
-                  }
-                } else if (isAnalysisPaused ||
-                    isAnalysisRunning ||
-                    pendingCount > 0 ||
-                    analyzingCount > 0) {
-                  Surface(
-                      shape = RoundedCornerShape(16.dp),
-                      color = MaterialTheme.colorScheme.errorContainer,
-                      modifier =
-                          Modifier.clip(RoundedCornerShape(16.dp)).clickable {
-                            focusNextActiveAnalysis()
-                          },
-                  ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                      if (isAnalysisPaused && activeAnalysisIds.isEmpty()) {
-                        Icon(
-                            Icons.Rounded.Pause,
-                            contentDescription = stringResource(R.string.pause),
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                      } else if (analyzingCount > 1) {
-                        Box(
-                            modifier =
-                                Modifier.size(16.dp)
-                                    .background(
-                                        MaterialTheme.colorScheme.error,
-                                        androidx.compose.foundation.shape.CircleShape),
-                            contentAlignment = Alignment.Center) {
-                              Text(
-                                  text =
-                                      if (analyzingCount > 5) "5+" else analyzingCount.toString(),
-                                  color = MaterialTheme.colorScheme.errorContainer,
-                                  style =
-                                      MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                  fontWeight = FontWeight.Bold,
-                              )
-                            }
-                      } else if (analyzingCount == 1 || isAnalysisRunning) {
-                        CircularProgressIndicator(
-                            progress = { currentImageProgress },
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.error,
-                            trackColor = MaterialTheme.colorScheme.errorContainer,
-                        )
-                      } else {
-                        Icon(
-                            Icons.Rounded.Schedule,
-                            null,
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                      }
-                      Spacer(modifier = Modifier.width(4.dp))
-                      Text(
-                          stringResource(
-                              R.string.items_left, (pendingCount + analyzingCount).toString()),
-                          style = MaterialTheme.typography.labelMedium,
-                          fontWeight = FontWeight.Bold,
-                          color = MaterialTheme.colorScheme.error,
-                      )
-                    }
-                  }
-                } else {
-                  Surface(
-                      shape = RoundedCornerShape(16.dp),
-                      color = MaterialTheme.colorScheme.secondaryContainer,
-                      modifier =
-                          Modifier.clip(RoundedCornerShape(16.dp))
-                              .combinedClickable(
-                                  onDoubleClick = {
-                                    if (isModelReady) viewModel.forceAnalyzeUnprocessed()
-                                  },
-                                  onClick = hapticOnClick {},
-                              ),
-                  ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                      Icon(
-                          Icons.Rounded.CheckCircle,
-                          null,
-                          modifier = Modifier.size(14.dp),
-                          tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                      )
-                      Spacer(modifier = Modifier.width(4.dp))
-                      Text(
-                          stringResource(R.string.done),
-                          style = MaterialTheme.typography.labelMedium,
-                          fontWeight = FontWeight.Bold,
-                          color = MaterialTheme.colorScheme.onSecondaryContainer,
-                      )
-                    }
-                  }
-                }
-              }
             }
           }
 
@@ -896,12 +869,12 @@ fun GalleryScreen(
               horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
             item {
+              val albumToggleInteraction = remember { MutableInteractionSource() }
               FilterChip(
                   selected = true,
                   onClick =
                       hapticOnClick {
                         if (isLandscape) {
-                          isAlbumRowVisible = true
                           isAlbumDrawerExpanded = !isAlbumDrawerExpanded
                         } else {
                           isAlbumRowVisible = !isAlbumRowVisible
@@ -927,7 +900,8 @@ fun GalleryScreen(
                         modifier = Modifier.size(18.dp),
                     )
                   },
-                  shape = RoundedCornerShape(20.dp),
+                  interactionSource = albumToggleInteraction,
+                  shape = rememberSquigglePillShape(albumToggleInteraction, cornerRadius = 20.dp),
                   colors =
                       FilterChipDefaults.filterChipColors(
                           selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -947,11 +921,7 @@ fun GalleryScreen(
               val glowAlpha by
                   animateFloatAsState(
                       targetValue = targetGlowAlpha,
-                      animationSpec =
-                          tween(
-                              durationMillis = if (targetGlowAlpha >= 0.80f) 650 else 350,
-                              easing = FastOutSlowInEasing,
-                          ),
+                      animationSpec = AppMotion.slowEffects(),
                       label = "EmbeddingSearchGlow")
 
               val glowColor = Color(0xFF2196F3)
@@ -993,9 +963,8 @@ fun GalleryScreen(
                   onClick = hapticOnClick { viewModel.toggleSortOrder() },
                   label = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                      Icon(
-                          if (isSortDescending) Icons.Rounded.South else Icons.Rounded.North,
-                          null,
+                      SortOrderIcon(
+                          isSortDescending = isSortDescending,
                           modifier = Modifier.size(16.dp),
                       )
                       Spacer(modifier = Modifier.width(4.dp))
@@ -1019,7 +988,9 @@ fun GalleryScreen(
               )
             }
             items(allTags, key = { it }) { tag ->
+              val tagInteractionSource = remember { MutableInteractionSource() }
               FilterChip(
+                  interactionSource = tagInteractionSource,
                   selected = selectedTag == tag,
                   onClick = hapticOnClick { selectedTag = if (selectedTag == tag) null else tag },
                   label = {
@@ -1028,15 +999,19 @@ fun GalleryScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                   },
-                  shape = RoundedCornerShape(20.dp),
+                  shape = rememberSquigglePillShape(tagInteractionSource),
               )
             }
           }
 
           AnimatedVisibility(
               visible = !isLandscape && isAlbumRowVisible && albumThumbnails.isNotEmpty(),
-              enter = expandVertically() + fadeIn(),
-              exit = shrinkVertically() + fadeOut()) {
+              enter =
+                  expandVertically(animationSpec = AppMotion.spatial()) +
+                      fadeIn(animationSpec = AppMotion.effects()),
+              exit =
+                  shrinkVertically(animationSpec = AppMotion.linear(240)) +
+                      fadeOut(animationSpec = AppMotion.linear(160))) {
                 BoxWithConstraints(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -1078,7 +1053,9 @@ fun GalleryScreen(
                       albumContentAlpha.snapTo(0.92f)
                       albumContentAlpha.animateTo(
                           targetValue = 1f,
-                          animationSpec = tween(160, easing = FastOutSlowInEasing),
+                          animationSpec =
+                              if (isAlbumDrawerExpanded) AppMotion.fastEffects()
+                              else AppMotion.linear(160),
                       )
                     } else {
                       hasAlbumDrawerTransitioned = true
@@ -1089,7 +1066,9 @@ fun GalleryScreen(
                       animateDpAsState(
                           targetValue =
                               if (isAlbumDrawerExpanded) drawerHeight else compactRowHeight,
-                          animationSpec = tween(260, easing = FastOutSlowInEasing),
+                          animationSpec =
+                              if (isAlbumDrawerExpanded) AppMotion.spatial()
+                              else AppMotion.linear(240),
                           label = "albumDrawerHeight",
                       )
                   val albumDrawerGestureModifier =
@@ -1160,6 +1139,7 @@ fun GalleryScreen(
                             ) {
                               item(key = "all") {
                                 GalleryAlbumThumbnailCard(
+                                    isSwitching = isAlbumTransitionRunning,
                                     albumName = stringResource(R.string.all),
                                     count = allImageCount,
                                     thumbnailUris = allThumbnailUris,
@@ -1183,7 +1163,12 @@ fun GalleryScreen(
 
                                 Box(
                                     modifier =
-                                        (if (isDragging) Modifier else Modifier.animateItem())
+                                        (if (isDragging) Modifier
+                                            else
+                                                Modifier.animateItem(
+                                                    fadeInSpec = AppMotion.effects(),
+                                                    placementSpec = AppMotion.spatial(),
+                                                    fadeOutSpec = AppMotion.fastEffects()))
                                             .offset {
                                               IntOffset(
                                                   if (isDragging) dragOffsetX.roundToInt() else 0,
@@ -1245,8 +1230,15 @@ fun GalleryScreen(
                                                     latestPointerXInItem = null
                                                     edgeScrollJob =
                                                         albumRowDragScope.launch {
+                                                          var lastFrameNanos = withFrameNanos { it }
                                                           while (isActive &&
                                                               draggingBucketId == bucketId) {
+                                                            val frameNanos = withFrameNanos { it }
+                                                            val frameStep =
+                                                                ((frameNanos - lastFrameNanos) /
+                                                                        16_000_000f)
+                                                                    .coerceIn(0f, 2f)
+                                                            lastFrameNanos = frameNanos
                                                             val pointerXInItem =
                                                                 latestPointerXInItem
                                                             val layoutInfo =
@@ -1295,14 +1287,13 @@ fun GalleryScreen(
                                                             if (scrollDelta != 0f) {
                                                               val consumed =
                                                                   albumRowListState.scrollBy(
-                                                                      scrollDelta)
+                                                                      scrollDelta * frameStep)
                                                               if (consumed != 0f) {
                                                                 dragOffsetX += consumed
                                                                 moveDraggedAlbumIfNeeded(
                                                                     thresholdFraction = 1.1f)
                                                               }
                                                             }
-                                                            delay(16L)
                                                           }
                                                         }
                                                   },
@@ -1335,6 +1326,7 @@ fun GalleryScreen(
                                             },
                                 ) {
                                   GalleryAlbumThumbnailCard(
+                                      isSwitching = isAlbumTransitionRunning,
                                       albumName = albumWithThumbs.album.name,
                                       count = albumWithThumbs.album.count,
                                       thumbnailUris = albumWithThumbs.thumbnailUris,
@@ -1384,6 +1376,7 @@ fun GalleryScreen(
                                     contentAlignment = Alignment.TopCenter,
                                 ) {
                                   GalleryAlbumThumbnailCard(
+                                      isSwitching = isAlbumTransitionRunning,
                                       albumName = stringResource(R.string.all),
                                       count = allImageCount,
                                       thumbnailUris = allThumbnailUris,
@@ -1406,7 +1399,12 @@ fun GalleryScreen(
                                 val isDragging = draggingBucketId == bucketId
                                 Box(
                                     modifier =
-                                        (if (isDragging) Modifier else Modifier.animateItem())
+                                        (if (isDragging) Modifier
+                                            else
+                                                Modifier.animateItem(
+                                                    fadeInSpec = AppMotion.effects(),
+                                                    placementSpec = AppMotion.spatial(),
+                                                    fadeOutSpec = AppMotion.fastEffects()))
                                             .fillMaxWidth()
                                             .offset {
                                               IntOffset(
@@ -1504,6 +1502,7 @@ fun GalleryScreen(
                                     contentAlignment = Alignment.TopCenter,
                                 ) {
                                   GalleryAlbumThumbnailCard(
+                                      isSwitching = isAlbumTransitionRunning,
                                       albumName = albumWithThumbs.album.name,
                                       count = albumWithThumbs.album.count,
                                       thumbnailUris = albumWithThumbs.thumbnailUris,
@@ -1529,655 +1528,725 @@ fun GalleryScreen(
                 }
               }
 
-          if (isLoading) {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-              CircularProgressIndicator(
-                  modifier = Modifier.size(32.dp),
-                  strokeWidth = 3.dp,
-                  color = MaterialTheme.colorScheme.primary,
-              )
-            }
-          } else if (images.isEmpty()) {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    Icons.Rounded.PhotoLibrary,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                    modifier = Modifier.size(72.dp),
-                )
-                Spacer(modifier = Modifier.size(16.dp))
-                Text(
-                    stringResource(R.string.no_screenshots_yet),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                )
-              }
-            }
-          } else if (isEmbeddingSearchMode &&
-              isEmbeddingGemmaReady &&
-              searchQuery.isNotBlank() &&
-              (isEmbeddingSearching || !isEmbeddingSearchSettled)) {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(36.dp),
-                    strokeWidth = 3.dp,
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.primaryContainer,
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    stringResource(R.string.searching),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    searchQuery.trim(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-              }
-            }
-          } else if (filteredImages.isEmpty()) {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    Icons.Rounded.SearchOff,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                    modifier = Modifier.size(72.dp),
-                )
-                Spacer(modifier = Modifier.size(16.dp))
-                Text(
-                    stringResource(R.string.no_results_found),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    stringResource(R.string.no_results_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
-                )
-              }
-            }
-          } else {
-            val density = LocalDensity.current
-            val spacingPx = with(density) { GRID_SPACING_DP.dp.toPx() }
-            val rowHeightPx =
-                remember(gridViewportWidthPx, effectiveColumns, spacingPx) {
-                  if (gridViewportWidthPx <= 0) return@remember 0f
-                  val availableWidth =
-                      gridViewportWidthPx - (spacingPx * 2f) - (spacingPx * (effectiveColumns - 1))
-                  val cellSize = (availableWidth / effectiveColumns).coerceAtLeast(1f)
-                  cellSize + spacingPx
-                }
-
-            LaunchedEffect(
-                scrollState.value,
-                renderedRows,
-                rows.size,
-                rowHeightPx,
-                gridViewportHeightPx,
-            ) {
-              if (rows.isEmpty() || renderedRows >= rows.size) return@LaunchedEffect
-              if (rowHeightPx <= 0f || gridViewportHeightPx <= 0) return@LaunchedEffect
-
-              val viewportBottomPx = scrollState.value + gridViewportHeightPx
-              val renderedHeightPx = renderedRows * rowHeightPx
-              val triggerPx = renderedHeightPx - (LOAD_MORE_THRESHOLD_ROWS * rowHeightPx)
-              if (viewportBottomPx >= triggerPx) {
-                renderedRows = (renderedRows + RENDER_ROWS_CHUNK).coerceAtMost(rows.size)
-              }
-            }
-
-            val firstVisibleRow =
-                if (rowHeightPx > 0f) {
-                  (scrollState.value / rowHeightPx).toInt().coerceAtLeast(0)
-                } else {
-                  0
-                }
-            val visibleRows =
-                if (rowHeightPx > 0f && gridViewportHeightPx > 0) {
-                  ceil(gridViewportHeightPx / rowHeightPx).toInt() + 1
-                } else {
-                  0
-                }
-            val loadStartRow = (firstVisibleRow - PRELOAD_ROWS).coerceAtLeast(0)
-            val loadEndRowExclusive =
-                (firstVisibleRow + visibleRows + PRELOAD_ROWS).coerceAtMost(renderedRows)
-
-            val pendingAnalysisIndex =
-                pendingAnalysisFocusId?.let { targetId ->
-                  filteredImages.indexOfFirst { image ->
-                    val uri = image.uri.toString()
-                    (experimentalStatuses[uri]?.first ?: entryIdByMediaUri[uri]) == targetId
-                  }
-                } ?: -1
-            val pendingAnalysisLayout =
-                pendingAnalysisFocusId?.let { targetId -> analysisItemLayouts[targetId] }
-
-            LaunchedEffect(
-                pendingAnalysisFocusId,
-                pendingAnalysisIndex,
-                pendingAnalysisLayout,
-                isGalleryStyle,
-                effectiveColumns,
-                renderedRows,
-                rowHeightPx,
-                gridViewportHeightPx,
-                isLoading,
-                pendingRestoreScrollValue,
-            ) {
-              val targetId = pendingAnalysisFocusId ?: return@LaunchedEffect
-              if (isLoading || pendingRestoreScrollValue >= 0 || pendingAnalysisIndex < 0) {
-                return@LaunchedEffect
-              }
-
-              val requiredRows =
-                  if (isGalleryStyle) {
-                    (pendingAnalysisIndex / 2) + 1
-                  } else {
-                    (pendingAnalysisIndex / effectiveColumns) + 1
-                  }
-              if (renderedRows < requiredRows) {
-                renderedRows = requiredRows.coerceAtMost(rows.size)
-                return@LaunchedEffect
-              }
-
-              val targetScroll =
-                  if (isGalleryStyle) {
-                    val layout = pendingAnalysisLayout ?: return@LaunchedEffect
-                    layout.topPx - ((gridViewportHeightPx - layout.heightPx) / 2f)
-                  } else {
-                    if (rowHeightPx <= 0f) return@LaunchedEffect
-                    val row = pendingAnalysisIndex / effectiveColumns
-                    (row * rowHeightPx) - ((gridViewportHeightPx - rowHeightPx) / 2f)
-                  }
-
-              scrollState.animateScrollTo(
-                  targetScroll.roundToInt().coerceIn(0, scrollState.maxValue))
-              analysisFocusId = targetId
-              analysisFocusPulse += 1
-              pendingAnalysisFocusId = null
-            }
-
-            Box(
-                modifier =
-                    Modifier.weight(1f)
-                        .fillMaxWidth()
-                        .onSizeChanged {
-                          gridViewportWidthPx = it.width
-                          gridViewportHeightPx = it.height
-                        }
-                        .then(
-                            if (isGalleryStyle) {
-                              Modifier
-                            } else {
-                              Modifier.pointerInput(gridColumns) {
-                                var localPinching = false
-                                var initialPinchDistance = 0f
-                                var startColumns = gridColumns
-
-                                awaitPointerEventScope {
-                                  while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    val activePointers = event.changes.filter { it.pressed }
-
-                                    if (activePointers.isEmpty()) {
-                                      if (localPinching) {
-                                        localPinching = false
-                                        pendingConfirmColumns = pinchingPreviewColumns
-                                      }
-                                      continue
-                                    }
-
-                                    if (!localPinching && activePointers.size >= 2) {
-                                      localPinching = true
-                                      isPinching = true
-                                      pendingConfirmColumns = null
-                                      initialPinchDistance = galleryPinchDistance(activePointers)
-                                      startColumns = pinchingPreviewColumns
-                                    }
-
-                                    if (localPinching) {
-                                      event.changes.forEach { it.consume() }
-                                      if (activePointers.size >= 2) {
-                                        val currentDistance = galleryPinchDistance(activePointers)
-                                        val scale = currentDistance / initialPinchDistance
-                                        val newColumns =
-                                            (startColumns / scale)
-                                                .roundToInt()
-                                                .coerceIn(MIN_COLUMNS, MAX_COLUMNS)
-                                        pinchingPreviewColumns = newColumns
-                                      }
-                                      if (activePointers.size < 2) {
-                                        localPinching = false
-                                        pendingConfirmColumns = pinchingPreviewColumns
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }),
-            ) {
-              Column(
-                  modifier =
-                      Modifier.fillMaxSize()
-                          .verticalScroll(scrollState)
-                          .padding(GRID_SPACING_DP.dp),
-                  verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp),
-              ) {
-                if (isGalleryStyle) {
-                  val galleryColumnCount = if (isLandscape) 3 else 2
-                  val displayedImages = filteredImages.take(renderedRows * galleryColumnCount)
-                  val galleryItem: @Composable (MediaStoreImage) -> Unit = { image ->
-                    val uriString = image.uri.toString()
-                    val entryId =
-                        experimentalStatuses[uriString]?.first ?: entryIdByMediaUri[uriString]
-                    val entry =
-                        entryByMediaUri[uriString]
-                            ?: ScreenshotEntry(
-                                id = entryId ?: -1L, imageUri = uriString, imageHash = "")
-                    val isActivelyAnalyzing =
-                        activeAnalysisIds.contains(entry.id) ||
-                            entry.isAnalyzing ||
-                            entryProgressMap.containsKey(entry.id)
-                    var itemBounds by
-                        remember(image.uri) { mutableStateOf<ClickedImageBounds?>(null) }
-                    AnalysisFocusFrame(
-                        pulseKey = analysisFocusPulse.takeIf { analysisFocusId == entry.id },
-                        cornerRadius = 16.dp,
-                        modifier =
-                            Modifier.onGloballyPositioned { coords ->
-                              val pos = coords.positionInWindow()
-                              val size = coords.size
-                              itemBounds =
-                                  ClickedImageBounds(
-                                      pos.x, pos.y, size.width.toFloat(), size.height.toFloat())
-                              analysisItemLayouts[entry.id] =
-                                  AnalysisItemLayout(
-                                      topPx = coords.positionInParent().y,
-                                      heightPx = size.height.toFloat(),
-                                  )
-                            }) {
-                          ScreenshotGridItem(
-                              entry = entry,
-                              currentImageProgress =
-                                  entryProgressMap[entry.id]
-                                      ?: if (isActivelyAnalyzing) currentImageProgress else 0f,
-                              isActivelyAnalyzing = isActivelyAnalyzing,
-                              isQueueRunning = isAnalysisRunning,
-                              onClick =
-                                  hapticOnClick {
-                                    viewModel.setClickedImageBounds(itemBounds)
-                                    if (isPickMode) {
-                                      val activity = context.findComponentActivity()
-                                      if (activity != null) {
-                                        val resultIntent =
-                                            android.content.Intent().apply {
-                                              data = image.uri
-                                              flags =
-                                                  android.content.Intent
-                                                      .FLAG_GRANT_READ_URI_PERMISSION
-                                            }
-                                        activity.setResult(
-                                            android.app.Activity.RESULT_OK, resultIntent)
-                                        activity.finish()
-                                      }
-                                    } else if (entryId != null) {
-                                      onScreenshotClick(entryId)
-                                    } else {
-                                      isNavigating = true
-                                      viewModel.getOrCreateEntryForUri(image.uri) { newId ->
-                                        isNavigating = false
-                                        if (newId > 0L) {
-                                          onScreenshotClick(newId)
-                                        }
-                                      }
-                                    }
-                                  },
-                          )
-                        }
-                  }
-                  Row(
-                      modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                      horizontalArrangement = Arrangement.spacedBy(12.dp),
-                  ) {
-                    repeat(galleryColumnCount) { columnIndex ->
-                      Column(
-                          modifier = Modifier.weight(1f),
-                          verticalArrangement = Arrangement.spacedBy(12.dp),
-                      ) {
-                        displayedImages
-                            .filterIndexed { index, _ -> index % galleryColumnCount == columnIndex }
-                            .forEach { image -> galleryItem(image) }
-                      }
-                    }
-                  }
-                } else {
-                  rows.take(renderedRows).forEachIndexed { rowIndex, row ->
-                    val shouldLoadRow =
-                        !isPinching && rowIndex >= loadStartRow && rowIndex < loadEndRowExclusive
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp),
-                    ) {
-                      row.forEach { image ->
-                        val uriString = image.uri.toString()
-                        val entryId =
-                            experimentalStatuses[uriString]?.first ?: entryIdByMediaUri[uriString]
-                        var itemBounds by remember { mutableStateOf<ClickedImageBounds?>(null) }
-                        ThumbnailCell(
-                            image = image,
-                            shouldLoad = shouldLoadRow,
-                            showPlaceholder = isPinching,
-                            focusPulseKey =
-                                analysisFocusPulse.takeIf {
-                                  entryId != null && analysisFocusId == entryId
-                                },
-                            isClickable = true,
-                            onClick =
-                                hapticOnClick {
-                                  viewModel.setClickedImageBounds(itemBounds)
-                                  if (isPickMode) {
-                                    val activity = context.findComponentActivity()
-                                    if (activity != null) {
-                                      val resultIntent =
-                                          android.content.Intent().apply {
-                                            data = image.uri
-                                            flags =
-                                                android.content.Intent
-                                                    .FLAG_GRANT_READ_URI_PERMISSION
-                                          }
-                                      activity.setResult(
-                                          android.app.Activity.RESULT_OK, resultIntent)
-                                      activity.finish()
-                                    }
-                                  } else {
-                                    if (entryId != null) {
-                                      onScreenshotClick(entryId)
-                                    } else {
-                                      isNavigating = true
-                                      viewModel.getOrCreateEntryForUri(image.uri) { newId ->
-                                        isNavigating = false
-                                        if (newId > 0L) {
-                                          onScreenshotClick(newId)
-                                        }
-                                      }
-                                    }
-                                  }
-                                },
-                            modifier =
-                                Modifier.weight(1f).onGloballyPositioned { coords ->
-                                  val pos = coords.positionInWindow()
-                                  val size = coords.size
-                                  itemBounds =
-                                      ClickedImageBounds(
-                                          pos.x, pos.y, size.width.toFloat(), size.height.toFloat())
-                                },
-                        )
-                      }
-
-                      if (row.size < effectiveColumns) {
-                        repeat(effectiveColumns - row.size) {
-                          Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
-                        }
-                      }
-                    }
+          // Keep the layout selector mounted independently of loading and empty album states.
+          Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+              if (isLoading) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                  if (!isAlbumTransitionRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp),
+                        strokeWidth = 3.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                   }
                 }
-              }
-
-              // Only show scrollbar in grid mode, not in gallery/carousel style
-              if (!isGalleryStyle) {
-                // Total content height based on ALL rows (not just rendered),
-                // so the scrollbar reflects the full image count in the folder.
-                val totalGridContentHeightPx =
-                    if (rows.isNotEmpty() && rowHeightPx > 0f) {
-                      val paddingPx = with(density) { GRID_SPACING_DP.dp.toPx() }
-                      rows.size * rowHeightPx + paddingPx * 2
-                    } else 0f
-
-                PillScrollbar(
-                    scrollState = scrollState,
-                    totalContentHeightPx = totalGridContentHeightPx,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(end = 2.dp),
-                )
-              }
-
-              val density = LocalDensity.current
-              val coroutineScope = rememberCoroutineScope()
-              val selectedOffsetAnim = remember {
-                Animatable(if (isGalleryStyle) 0.dp else 56.dp, Dp.VectorConverter)
-              }
-
-              // Keep the Animatable in sync with programmatic isGalleryStyle changes (e.g. from
-              // taps)
-              LaunchedEffect(isGalleryStyle) {
-                selectedOffsetAnim.animateTo(
-                    targetValue = if (isGalleryStyle) 0.dp else 56.dp,
-                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 380f))
-              }
-
-              val pillOffsetY by
-                  animateDpAsState(
-                      targetValue = if (isPillVisible) 0.dp else 100.dp,
-                      animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
-                      label = "PillVisibilityOffset")
-
-              if (isLandscape) {
-                LandscapeLayoutToggle(
-                    isGalleryStyle = isGalleryStyle,
-                    onStyleChange = { galleryStyle ->
-                      if (galleryStyle != isGalleryStyle) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isGalleryStyle = galleryStyle
-                      }
-                    },
-                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
-                )
+              } else if (images.isEmpty()) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Rounded.PhotoLibrary,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                        modifier = Modifier.size(72.dp),
+                    )
+                    Spacer(modifier = Modifier.size(16.dp))
+                    Text(
+                        stringResource(R.string.no_screenshots_yet),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    )
+                  }
+                }
+              } else if (isEmbeddingSearchMode &&
+                  isEmbeddingGemmaReady &&
+                  searchQuery.isNotBlank() &&
+                  (isEmbeddingSearching || !isEmbeddingSearchSettled)) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(36.dp),
+                        strokeWidth = 3.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.primaryContainer,
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        stringResource(R.string.searching),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        searchQuery.trim(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                  }
+                }
+              } else if (filteredImages.isEmpty()) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Rounded.SearchOff,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                        modifier = Modifier.size(72.dp),
+                    )
+                    Spacer(modifier = Modifier.size(16.dp))
+                    Text(
+                        stringResource(R.string.no_results_found),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        stringResource(R.string.no_results_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                    )
+                  }
+                }
               } else {
-                // Float segmented toggle at the bottom middle of the Gallery screen.
-                Surface(
+                val density = LocalDensity.current
+                val spacingPx = with(density) { GRID_SPACING_DP.dp.toPx() }
+                val rowHeightPx =
+                    remember(gridViewportWidthPx, effectiveColumns, spacingPx) {
+                      if (gridViewportWidthPx <= 0) return@remember 0f
+                      val availableWidth =
+                          gridViewportWidthPx -
+                              (spacingPx * 2f) -
+                              (spacingPx * (effectiveColumns - 1))
+                      val cellSize = (availableWidth / effectiveColumns).coerceAtLeast(1f)
+                      cellSize + spacingPx
+                    }
+
+                LaunchedEffect(
+                    scrollState.value,
+                    renderedRows,
+                    rows.size,
+                    rowHeightPx,
+                    gridViewportHeightPx,
+                ) {
+                  if (rows.isEmpty() || renderedRows >= rows.size) return@LaunchedEffect
+                  if (rowHeightPx <= 0f || gridViewportHeightPx <= 0) return@LaunchedEffect
+
+                  val viewportBottomPx = scrollState.value + gridViewportHeightPx
+                  val renderedHeightPx = renderedRows * rowHeightPx
+                  val triggerPx = renderedHeightPx - (LOAD_MORE_THRESHOLD_ROWS * rowHeightPx)
+                  if (viewportBottomPx >= triggerPx) {
+                    renderedRows = (renderedRows + RENDER_ROWS_CHUNK).coerceAtMost(rows.size)
+                  }
+                }
+
+                val firstVisibleRow =
+                    if (rowHeightPx > 0f) {
+                      (scrollState.value / rowHeightPx).toInt().coerceAtLeast(0)
+                    } else {
+                      0
+                    }
+                val visibleRows =
+                    if (rowHeightPx > 0f && gridViewportHeightPx > 0) {
+                      ceil(gridViewportHeightPx / rowHeightPx).toInt() + 1
+                    } else {
+                      0
+                    }
+                val loadStartRow = (firstVisibleRow - PRELOAD_ROWS).coerceAtLeast(0)
+                val loadEndRowExclusive =
+                    (firstVisibleRow + visibleRows + PRELOAD_ROWS).coerceAtMost(renderedRows)
+
+                val pendingAnalysisIndex =
+                    pendingAnalysisFocusId?.let { targetId ->
+                      filteredImages.indexOfFirst { image ->
+                        val uri = image.uri.toString()
+                        (experimentalStatuses[uri]?.first ?: entryIdByMediaUri[uri]) == targetId
+                      }
+                    } ?: -1
+                val pendingAnalysisLayout =
+                    pendingAnalysisFocusId?.let { targetId -> analysisItemLayouts[targetId] }
+
+                LaunchedEffect(
+                    pendingAnalysisFocusId,
+                    pendingAnalysisIndex,
+                    pendingAnalysisLayout,
+                    displayedGalleryStyle,
+                    effectiveColumns,
+                    renderedRows,
+                    rowHeightPx,
+                    gridViewportHeightPx,
+                    isLoading,
+                    pendingRestoreScrollValue,
+                ) {
+                  val targetId = pendingAnalysisFocusId ?: return@LaunchedEffect
+                  if (isLoading || pendingRestoreScrollValue >= 0 || pendingAnalysisIndex < 0) {
+                    return@LaunchedEffect
+                  }
+
+                  val requiredRows =
+                      if (displayedGalleryStyle) {
+                        (pendingAnalysisIndex / 2) + 1
+                      } else {
+                        (pendingAnalysisIndex / effectiveColumns) + 1
+                      }
+                  if (renderedRows < requiredRows) {
+                    renderedRows = requiredRows.coerceAtMost(rows.size)
+                    return@LaunchedEffect
+                  }
+
+                  val targetScroll =
+                      if (displayedGalleryStyle) {
+                        val layout = pendingAnalysisLayout ?: return@LaunchedEffect
+                        layout.topPx - ((gridViewportHeightPx - layout.heightPx) / 2f)
+                      } else {
+                        if (rowHeightPx <= 0f) return@LaunchedEffect
+                        val row = pendingAnalysisIndex / effectiveColumns
+                        (row * rowHeightPx) - ((gridViewportHeightPx - rowHeightPx) / 2f)
+                      }
+
+                  scrollState.animateScrollTo(
+                      targetScroll.roundToInt().coerceIn(0, scrollState.maxValue),
+                      animationSpec = AppMotion.effects())
+                  analysisFocusId = targetId
+                  analysisFocusPulse += 1
+                  pendingAnalysisFocusId = null
+                }
+
+                Box(
                     modifier =
-                        Modifier.align(Alignment.BottomCenter)
-                            .padding(bottom = 24.dp)
-                            .offset(y = pillOffsetY)
-                            .width(120.dp)
-                            .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                shape = androidx.compose.foundation.shape.CircleShape)
-                            .pointerInput(Unit) {
-                              detectHorizontalDragGestures(
-                                  onDragStart = {
-                                    coroutineScope.launch { selectedOffsetAnim.stop() }
-                                  },
-                                  onDragEnd = {
-                                    val targetValue =
-                                        if (selectedOffsetAnim.value < 28.dp) 0.dp else 56.dp
-                                    val targetStyle = targetValue == 0.dp
-                                    if (targetStyle != isGalleryStyle) {
-                                      haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                      isGalleryStyle = targetStyle
-                                    }
-                                    coroutineScope.launch {
-                                      selectedOffsetAnim.animateTo(
-                                          targetValue = targetValue,
-                                          animationSpec =
-                                              spring(dampingRatio = 0.82f, stiffness = 380f))
-                                    }
-                                  },
-                                  onDragCancel = {
-                                    val targetValue =
-                                        if (selectedOffsetAnim.value < 28.dp) 0.dp else 56.dp
-                                    coroutineScope.launch {
-                                      selectedOffsetAnim.animateTo(
-                                          targetValue = targetValue,
-                                          animationSpec =
-                                              spring(dampingRatio = 0.82f, stiffness = 380f))
-                                    }
-                                  },
-                                  onHorizontalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    val dragAmountDp = with(density) { dragAmount.toDp() }
-                                    coroutineScope.launch {
-                                      selectedOffsetAnim.snapTo(
-                                          (selectedOffsetAnim.value + dragAmountDp).coerceIn(
-                                              0.dp, 56.dp))
-                                    }
-                                  })
-                            },
-                    shape = androidx.compose.foundation.shape.CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
-                    shadowElevation = 2.dp) {
-                      Box(modifier = Modifier.padding(4.dp).width(112.dp).height(40.dp)) {
-                        // 1. Base Layer: Icons with the default unselected color
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically) {
-                              Box(
-                                  modifier = Modifier.weight(1f).fillMaxHeight(),
-                                  contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.ViewQuilt,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp))
-                                  }
-
-                              Box(
-                                  modifier = Modifier.weight(1f).fillMaxHeight(),
-                                  contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.GridView,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp))
-                                  }
+                        Modifier.weight(1f)
+                            .fillMaxWidth()
+                            .clipToBounds()
+                            .onSizeChanged {
+                              gridViewportWidthPx = it.width
+                              gridViewportHeightPx = it.height
                             }
+                            .then(
+                                if (displayedGalleryStyle) {
+                                  Modifier
+                                } else {
+                                  Modifier.pointerInput(gridColumns) {
+                                    var localPinching = false
+                                    var initialPinchDistance = 0f
+                                    var startColumns = gridColumns
 
-                        // 2. Sliding Overlay Layer: Primary color background + White icons
-                        // Clipped to the dynamic bounds and shape of the sliding pill
-                        Box(
-                            modifier =
-                                Modifier.fillMaxSize()
-                                    .graphicsLayer {
-                                      clip = true
-                                      shape =
-                                          object : Shape {
-                                            override fun createOutline(
-                                                size: androidx.compose.ui.geometry.Size,
-                                                layoutDirection: LayoutDirection,
-                                                density: Density
-                                            ): Outline {
-                                              val widthPx = with(density) { 56.dp.toPx() }
-                                              val heightPx = size.height
-                                              val offsetPx =
-                                                  with(density) { selectedOffsetAnim.value.toPx() }
-                                              val rect =
-                                                  Rect(
-                                                      left = offsetPx,
-                                                      top = 0f,
-                                                      right = offsetPx + widthPx,
-                                                      bottom = heightPx)
-                                              val roundRect =
-                                                  RoundRect(
-                                                      rect = rect,
-                                                      cornerRadius =
-                                                          CornerRadius(
-                                                              heightPx / 2f, heightPx / 2f))
-                                              return Outline.Rounded(roundRect)
+                                    awaitPointerEventScope {
+                                      while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val activePointers = event.changes.filter { it.pressed }
+
+                                        if (activePointers.isEmpty()) {
+                                          if (localPinching) {
+                                            localPinching = false
+                                            pendingConfirmColumns = pinchingPreviewColumns
+                                          }
+                                          continue
+                                        }
+
+                                        if (!localPinching && activePointers.size >= 2) {
+                                          localPinching = true
+                                          isPinching = true
+                                          pendingConfirmColumns = null
+                                          initialPinchDistance =
+                                              galleryPinchDistance(activePointers)
+                                          startColumns = pinchingPreviewColumns
+                                        }
+
+                                        if (localPinching) {
+                                          event.changes.forEach { it.consume() }
+                                          if (activePointers.size >= 2) {
+                                            val currentDistance =
+                                                galleryPinchDistance(activePointers)
+                                            val scale = currentDistance / initialPinchDistance
+                                            val newColumns =
+                                                (startColumns / scale)
+                                                    .roundToInt()
+                                                    .coerceIn(MIN_COLUMNS, MAX_COLUMNS)
+                                            pinchingPreviewColumns = newColumns
+                                          }
+                                          if (activePointers.size < 2) {
+                                            localPinching = false
+                                            pendingConfirmColumns = pinchingPreviewColumns
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }),
+                ) {
+                  Box(
+                      modifier =
+                          Modifier.fillMaxSize().graphicsLayer {
+                            translationX =
+                                (layoutSlideOffset.value +
+                                    if (isLandscape) 0f else albumSlideOffset.value) * size.width
+                            translationY =
+                                if (isLandscape) albumSlideOffset.value * size.height else 0f
+                          },
+                  ) {
+                    Column(
+                        modifier =
+                            Modifier.fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(GRID_SPACING_DP.dp)
+                                .padding(bottom = floatingNavigationInset),
+                        verticalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp),
+                    ) {
+                      if (displayedGalleryStyle) {
+                        val galleryColumnCount = if (isLandscape) 3 else 2
+                        val displayedImages =
+                            filteredImages.take(
+                                minOf(renderedRows * galleryColumnCount, carouselCompositionLimit))
+                        val galleryItem: @Composable (MediaStoreImage) -> Unit = { image ->
+                          val uriString = image.uri.toString()
+                          val entryId =
+                              experimentalStatuses[uriString]?.first ?: entryIdByMediaUri[uriString]
+                          val entry =
+                              entryByMediaUri[uriString]
+                                  ?: ScreenshotEntry(
+                                      id = entryId ?: -1L, imageUri = uriString, imageHash = "")
+                          val isActivelyAnalyzing =
+                              activeAnalysisIds.contains(entry.id) ||
+                                  entry.isAnalyzing ||
+                                  entryProgressMap.containsKey(entry.id)
+                          var itemBounds by
+                              remember(image.uri) { mutableStateOf<ClickedImageBounds?>(null) }
+                          AnalysisFocusFrame(
+                              pulseKey = analysisFocusPulse.takeIf { analysisFocusId == entry.id },
+                              cornerRadius = 16.dp,
+                              modifier =
+                                  Modifier.onGloballyPositioned { coords ->
+                                    val pos = coords.positionInWindow()
+                                    val size = coords.size
+                                    itemBounds =
+                                        ClickedImageBounds(
+                                            pos.x,
+                                            pos.y,
+                                            size.width.toFloat(),
+                                            size.height.toFloat())
+                                    analysisItemLayouts[entry.id] =
+                                        AnalysisItemLayout(
+                                            topPx = coords.positionInParent().y,
+                                            heightPx = size.height.toFloat(),
+                                        )
+                                  }) {
+                                ScreenshotGridItem(
+                                    entry = entry,
+                                    currentImageProgress =
+                                        entryProgressMap[entry.id]
+                                            ?: if (isActivelyAnalyzing) currentImageProgress
+                                            else 0f,
+                                    isActivelyAnalyzing = isActivelyAnalyzing,
+                                    isQueueRunning = isAnalysisRunning,
+                                    onClick =
+                                        hapticOnClick {
+                                          if (isNavigating) return@hapticOnClick
+                                          viewModel.setClickedImageBounds(itemBounds)
+                                          if (isPickMode) {
+                                            val activity = context.findComponentActivity()
+                                            if (activity != null) {
+                                              val resultIntent =
+                                                  android.content.Intent().apply {
+                                                    data = image.uri
+                                                    flags =
+                                                        android.content.Intent
+                                                            .FLAG_GRANT_READ_URI_PERMISSION
+                                                  }
+                                              activity.setResult(
+                                                  android.app.Activity.RESULT_OK, resultIntent)
+                                              activity.finish()
+                                            }
+                                          } else if (entryId != null) {
+                                            onScreenshotClick(entryId)
+                                          } else {
+                                            isNavigating = true
+                                            viewModel.getOrCreateEntryForUri(image.uri) { newId ->
+                                              isNavigating = false
+                                              if (newId > 0L) {
+                                                onScreenshotClick(newId)
+                                              }
                                             }
                                           }
-                                    }
-                                    .background(MaterialTheme.colorScheme.primary)) {
-                              // Inside the sliding pill, we draw the white icons row
-                              // in the exact same position as the base layer (no offsets needed!)
-                              Row(
-                                  modifier = Modifier.fillMaxSize(),
-                                  verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                                        contentAlignment = Alignment.Center) {
-                                          Icon(
-                                              imageVector = Icons.Rounded.ViewQuilt,
-                                              contentDescription = "Gallery Layout",
-                                              tint = Color.White,
-                                              modifier = Modifier.size(20.dp))
-                                        }
-
-                                    Box(
-                                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                                        contentAlignment = Alignment.Center) {
-                                          Icon(
-                                              imageVector = Icons.Rounded.GridView,
-                                              contentDescription = "Grid Layout",
-                                              tint = Color.White,
-                                              modifier = Modifier.size(20.dp))
-                                        }
-                                  }
-                            }
-
-                        // 3. Top Layer: Transparent clickable regions to handle user input
+                                        },
+                                )
+                              }
+                        }
                         Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically) {
-                              Box(
-                                  modifier =
-                                      Modifier.weight(1f)
-                                          .fillMaxHeight()
-                                          .clip(androidx.compose.foundation.shape.CircleShape)
-                                          .clickable(
-                                              onClick = hapticOnClick { isGalleryStyle = true }),
-                                  contentAlignment = Alignment.Center) {
-                                    // Transparent click target for Gallery layout
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                          repeat(galleryColumnCount) { columnIndex ->
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                              displayedImages
+                                  .filterIndexed { index, _ ->
+                                    index % galleryColumnCount == columnIndex
                                   }
-
-                              Box(
-                                  modifier =
-                                      Modifier.weight(1f)
-                                          .fillMaxHeight()
-                                          .clip(androidx.compose.foundation.shape.CircleShape)
-                                          .clickable(
-                                              onClick = hapticOnClick { isGalleryStyle = false }),
-                                  contentAlignment = Alignment.Center) {
-                                    // Transparent click target for Grid layout
-                                  }
+                                  .forEach { image -> key(image.uri) { galleryItem(image) } }
                             }
+                          }
+                        }
+                      } else {
+                        rows.take(renderedRows).forEachIndexed { rowIndex, row ->
+                          val shouldLoadRow =
+                              !isPinching &&
+                                  rowIndex >= loadStartRow &&
+                                  rowIndex < loadEndRowExclusive
+
+                          if (rowHeightPx > 0f &&
+                              gridViewportHeightPx > 0 &&
+                              (rowIndex < loadStartRow || rowIndex >= loadEndRowExclusive)) {
+                            // Preserve scroll height without composing offscreen cells and
+                            // requests.
+                            Spacer(
+                                Modifier.fillMaxWidth()
+                                    .height(with(density) { (rowHeightPx - spacingPx).toDp() }))
+                            return@forEachIndexed
+                          }
+
+                          Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp),
+                          ) {
+                            row.forEach { image ->
+                              val uriString = image.uri.toString()
+                              val entryId =
+                                  experimentalStatuses[uriString]?.first
+                                      ?: entryIdByMediaUri[uriString]
+                              var itemBounds by remember {
+                                mutableStateOf<ClickedImageBounds?>(null)
+                              }
+                              ThumbnailCell(
+                                  image = image,
+                                  shouldLoad = shouldLoadRow,
+                                  showPlaceholder = isPinching,
+                                  focusPulseKey =
+                                      analysisFocusPulse.takeIf {
+                                        entryId != null && analysisFocusId == entryId
+                                      },
+                                  isClickable = true,
+                                  onClick =
+                                      hapticOnClick {
+                                        if (isNavigating) return@hapticOnClick
+                                        viewModel.setClickedImageBounds(itemBounds)
+                                        if (isPickMode) {
+                                          val activity = context.findComponentActivity()
+                                          if (activity != null) {
+                                            val resultIntent =
+                                                android.content.Intent().apply {
+                                                  data = image.uri
+                                                  flags =
+                                                      android.content.Intent
+                                                          .FLAG_GRANT_READ_URI_PERMISSION
+                                                }
+                                            activity.setResult(
+                                                android.app.Activity.RESULT_OK, resultIntent)
+                                            activity.finish()
+                                          }
+                                        } else {
+                                          if (entryId != null) {
+                                            onScreenshotClick(entryId)
+                                          } else {
+                                            isNavigating = true
+                                            viewModel.getOrCreateEntryForUri(image.uri) { newId ->
+                                              isNavigating = false
+                                              if (newId > 0L) {
+                                                onScreenshotClick(newId)
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                  modifier =
+                                      Modifier.weight(1f).onGloballyPositioned { coords ->
+                                        val pos = coords.positionInWindow()
+                                        val size = coords.size
+                                        itemBounds =
+                                            ClickedImageBounds(
+                                                pos.x,
+                                                pos.y,
+                                                size.width.toFloat(),
+                                                size.height.toFloat())
+                                      },
+                              )
+                            }
+
+                            if (row.size < effectiveColumns) {
+                              repeat(effectiveColumns - row.size) {
+                                Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
+                              }
+                            }
+                          }
+                        }
                       }
                     }
+
+                    // Only show scrollbar in grid mode, not in gallery/carousel style
+                    if (!displayedGalleryStyle) {
+                      // Total content height based on ALL rows (not just rendered),
+                      // so the scrollbar reflects the full image count in the folder.
+                      val totalGridContentHeightPx =
+                          if (rows.isNotEmpty() && rowHeightPx > 0f) {
+                            val paddingPx = with(density) { GRID_SPACING_DP.dp.toPx() }
+                            rows.size * rowHeightPx +
+                                paddingPx * 2 +
+                                with(density) { floatingNavigationInset.toPx() }
+                          } else 0f
+
+                      PillScrollbar(
+                          scrollState = scrollState,
+                          totalContentHeightPx = totalGridContentHeightPx,
+                          modifier =
+                              Modifier.align(Alignment.TopEnd)
+                                  .padding(
+                                      end = 2.dp + floatingNavigationEndInset,
+                                      bottom = floatingNavigationInset),
+                      )
+                    }
+                  }
+                }
               }
+            }
+
+            val density = LocalDensity.current
+            val coroutineScope = rememberCoroutineScope()
+            val pillOffsetY by
+                animateDpAsState(
+                    targetValue = if (isPillVisible) 0.dp else 100.dp,
+                    animationSpec =
+                        if (isPillVisible) AppMotion.timed(240) else AppMotion.linear(240),
+                    label = "PillVisibilityOffset")
+            val pillAlpha by
+                animateFloatAsState(
+                    targetValue = if (isPillVisible) 1f else 0f,
+                    animationSpec =
+                        if (isPillVisible) AppMotion.timed(240) else AppMotion.linear(160),
+                    label = "PillVisibilityAlpha")
+
+            if (isLandscape) {
+              androidx.compose.animation.AnimatedVisibility(
+                  visible = landscapeControlsVisible,
+                  modifier = Modifier.align(Alignment.CenterEnd)
+                      .padding(end = 12.dp + floatingNavigationEndInset),
+                  enter = androidx.compose.animation.slideInHorizontally(
+                      animationSpec = AppMotion.timed(240), initialOffsetX = { it }) +
+                      fadeIn(animationSpec = AppMotion.effects()),
+                  exit = androidx.compose.animation.slideOutHorizontally(
+                      animationSpec = AppMotion.linear(240), targetOffsetX = { it }) +
+                      fadeOut(animationSpec = AppMotion.fastEffects()),
+              ) {
+              LandscapeLayoutToggle(
+                  isGalleryStyle = isGalleryStyle,
+                  selectedOffsetAnim = selectedOffsetAnim,
+                  onStyleChange = { galleryStyle ->
+                    if (galleryStyle != isGalleryStyle) {
+                      haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                    selectGalleryStyle(galleryStyle)
+                  },
+              )
+              }
+            } else {
+              // Float segmented toggle at the bottom middle of the Gallery screen.
+              Surface(
+                  modifier =
+                      Modifier.align(Alignment.BottomCenter)
+                          .padding(bottom = 12.dp + floatingNavigationInset)
+                          .graphicsLayer {
+                            translationY = pillOffsetY.toPx()
+                            alpha = pillAlpha
+                          }
+                          .width(120.dp)
+                          .border(
+                              width = 1.dp,
+                              color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                              shape = androidx.compose.foundation.shape.CircleShape)
+                          .pointerInput(isPillVisible) {
+                            if (!isPillVisible) return@pointerInput
+                            detectHorizontalDragGestures(
+                                onDragStart = {
+                                  coroutineScope.launch { selectedOffsetAnim.stop() }
+                                },
+                                onDragEnd = {
+                                  val targetValue =
+                                      if (selectedOffsetAnim.value < 28.dp) 0.dp else 56.dp
+                                  val targetStyle = targetValue == 0.dp
+                                  if (targetStyle != isGalleryStyle) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                  }
+                                  selectGalleryStyle(targetStyle)
+                                },
+                                onDragCancel = { selectGalleryStyle(isGalleryStyle) },
+                                onHorizontalDrag = { change, dragAmount ->
+                                  change.consume()
+                                  val dragAmountDp = with(density) { dragAmount.toDp() }
+                                  coroutineScope.launch {
+                                    selectedOffsetAnim.snapTo(
+                                        (selectedOffsetAnim.value + dragAmountDp).coerceIn(
+                                            0.dp, 56.dp))
+                                  }
+                                })
+                          },
+                  shape = androidx.compose.foundation.shape.CircleShape,
+                  color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
+                  shadowElevation = 2.dp) {
+                    Box(modifier = Modifier.padding(4.dp).width(112.dp).height(40.dp)) {
+                      // 1. Base Layer: Icons with the default unselected color
+                      Row(
+                          modifier = Modifier.fillMaxSize(),
+                          verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                contentAlignment = Alignment.Center) {
+                                  Icon(
+                                      imageVector = Icons.Rounded.ViewQuilt,
+                                      contentDescription = null,
+                                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                      modifier = Modifier.size(20.dp))
+                                }
+
+                            Box(
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                contentAlignment = Alignment.Center) {
+                                  Icon(
+                                      imageVector = Icons.Rounded.GridView,
+                                      contentDescription = null,
+                                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                      modifier = Modifier.size(20.dp))
+                                }
+                          }
+
+                      // 2. Sliding Overlay Layer: Primary color background + White icons
+                      // Clipped to the dynamic bounds and shape of the sliding pill
+                      Box(
+                          modifier =
+                              Modifier.fillMaxSize()
+                                  .graphicsLayer {
+                                    val selectionOffset = selectedOffsetAnim.value
+                                    clip = true
+                                    shape =
+                                        object : Shape {
+                                          override fun createOutline(
+                                              size: androidx.compose.ui.geometry.Size,
+                                              layoutDirection: LayoutDirection,
+                                              density: Density
+                                          ): Outline {
+                                            val widthPx = with(density) { 56.dp.toPx() }
+                                            val heightPx = size.height
+                                            val offsetPx = with(density) { selectionOffset.toPx() }
+                                            val rect =
+                                                Rect(
+                                                    left = offsetPx.coerceIn(0f, size.width),
+                                                    top = 0f,
+                                                    right =
+                                                        (offsetPx + widthPx).coerceIn(
+                                                            0f, size.width),
+                                                    bottom = heightPx)
+                                            val roundRect =
+                                                RoundRect(
+                                                    rect = rect,
+                                                    cornerRadius =
+                                                        CornerRadius(heightPx / 2f, heightPx / 2f))
+                                            return Outline.Rounded(roundRect)
+                                          }
+                                        }
+                                  }
+                                  .background(MaterialTheme.colorScheme.primary)) {
+                            // Inside the sliding pill, we draw the white icons row
+                            // in the exact same position as the base layer (no offsets needed!)
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                  Box(
+                                      modifier = Modifier.weight(1f).fillMaxHeight(),
+                                      contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.ViewQuilt,
+                                            contentDescription = "Gallery Layout",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp))
+                                      }
+
+                                  Box(
+                                      modifier = Modifier.weight(1f).fillMaxHeight(),
+                                      contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.GridView,
+                                            contentDescription = "Grid Layout",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp))
+                                      }
+                                }
+                          }
+
+                      // 3. Top Layer: Transparent clickable regions to handle user input
+                      Row(
+                          modifier = Modifier.fillMaxSize(),
+                          verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier =
+                                    Modifier.weight(1f)
+                                        .fillMaxHeight()
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .clickable(
+                                            enabled = isPillVisible,
+                                            onClick = hapticOnClick { selectGalleryStyle(true) }),
+                                contentAlignment = Alignment.Center) {
+                                  // Transparent click target for Gallery layout
+                                }
+
+                            Box(
+                                modifier =
+                                    Modifier.weight(1f)
+                                        .fillMaxHeight()
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .clickable(
+                                            enabled = isPillVisible,
+                                            onClick = hapticOnClick { selectGalleryStyle(false) }),
+                                contentAlignment = Alignment.Center) {
+                                  // Transparent click target for Grid layout
+                                }
+                          }
+                    }
+                  }
             }
           }
         }
 
     AnimatedVisibility(
-        visible = isLandscape && isAlbumRowVisible && albumThumbnails.isNotEmpty(),
+        visible = isLandscape && albumThumbnails.isNotEmpty(),
         modifier =
             Modifier.align(Alignment.CenterStart).fillMaxHeight().width(landscapeAlbumPaneWidth),
-        enter = fadeIn(),
-        exit = fadeOut(),
+        enter = fadeIn(animationSpec = AppMotion.effects()),
+        exit = fadeOut(animationSpec = AppMotion.linear(160)),
     ) {
+      // Keep the grid at a stable width and change its columns only while faded out.
+      // Resizing a live grid each frame triggers repeated placement and thumbnail work.
+      var expandedAlbumLayout by remember { mutableStateOf(isAlbumDrawerExpanded) }
+      val landscapeAlbumAlpha = remember { Animatable(1f) }
+      LaunchedEffect(isAlbumDrawerExpanded) {
+        if (expandedAlbumLayout != isAlbumDrawerExpanded) {
+          landscapeAlbumAlpha.animateTo(0f, AppMotion.linear(80))
+          expandedAlbumLayout = isAlbumDrawerExpanded
+        }
+        landscapeAlbumAlpha.animateTo(1f, AppMotion.linear(160))
+      }
       val landscapeAlbumGestureModifier =
           Modifier.pointerInput(isAlbumDrawerExpanded) {
             val expandSwipeThreshold = 20.dp.toPx()
@@ -2218,19 +2287,26 @@ fun GalleryScreen(
             }
           }
       Surface(
-          modifier = Modifier.fillMaxSize().then(landscapeAlbumGestureModifier),
+          modifier = Modifier.fillMaxSize().clipToBounds().then(landscapeAlbumGestureModifier),
           color = Color.Transparent,
       ) {
         LazyVerticalGrid(
-            columns = GridCells.Fixed(if (isAlbumDrawerExpanded) 2 else 1),
-            modifier = Modifier.fillMaxSize(),
+            columns = GridCells.Fixed(if (expandedAlbumLayout) 2 else 1),
+            modifier = Modifier.fillMaxHeight()
+                .wrapContentWidth(Alignment.Start, unbounded = true)
+                .requiredWidth(if (expandedAlbumLayout) 220.dp else 124.dp)
+                .graphicsLayer { alpha = landscapeAlbumAlpha.value },
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
           item(key = "landscape_all") {
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
               GalleryAlbumThumbnailCard(
+                  isSwitching = isAlbumTransitionRunning,
                   albumName = stringResource(R.string.all),
                   count = allImageCount,
                   thumbnailUris = allThumbnailUris,
@@ -2245,8 +2321,12 @@ fun GalleryScreen(
               key = { item -> "landscape_${item.album.bucketId}" },
           ) { albumWithThumbs ->
             val bucketId = albumWithThumbs.album.bucketId
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
               GalleryAlbumThumbnailCard(
+                  isSwitching = isAlbumTransitionRunning,
                   albumName = albumWithThumbs.album.name,
                   count = albumWithThumbs.album.count,
                   thumbnailUris = albumWithThumbs.thumbnailUris,
@@ -2267,56 +2347,17 @@ fun GalleryScreen(
       }
     }
   }
-
-  if (isNavigating) {
-    Dialog(
-        onDismissRequest = {},
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
-          Box(
-              modifier =
-                  Modifier.size(120.dp)
-                      .background(
-                          color = MaterialTheme.colorScheme.surfaceContainer,
-                          shape = RoundedCornerShape(16.dp)),
-              contentAlignment = Alignment.Center) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(16.dp)) {
-                      CircularProgressIndicator(
-                          modifier = Modifier.size(36.dp),
-                          strokeWidth = 3.dp,
-                          color = MaterialTheme.colorScheme.primary)
-                      Spacer(modifier = Modifier.height(12.dp))
-                      Text(
-                          text = stringResource(R.string.status_loading),
-                          style = MaterialTheme.typography.bodyMedium,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-              }
-        }
-  }
 }
 
 @Composable
 private fun LandscapeLayoutToggle(
     isGalleryStyle: Boolean,
+    selectedOffsetAnim: Animatable<Dp, androidx.compose.animation.core.AnimationVector1D>,
     onStyleChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
   val density = LocalDensity.current
   val coroutineScope = rememberCoroutineScope()
-  val selectedOffsetAnim = remember {
-    Animatable(if (isGalleryStyle) 48.dp else 0.dp, Dp.VectorConverter)
-  }
-
-  LaunchedEffect(isGalleryStyle) {
-    selectedOffsetAnim.animateTo(
-        targetValue = if (isGalleryStyle) 48.dp else 0.dp,
-        animationSpec = spring(dampingRatio = 0.82f, stiffness = 380f),
-    )
-  }
-
   Surface(
       modifier =
           modifier
@@ -2327,34 +2368,17 @@ private fun LandscapeLayoutToggle(
                   color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                   shape = CircleShape,
               )
-              .pointerInput(Unit) {
+              .pointerInput(isGalleryStyle) {
                 detectVerticalDragGestures(
                     onDragStart = { coroutineScope.launch { selectedOffsetAnim.stop() } },
-                    onDragEnd = {
-                      val targetValue = if (selectedOffsetAnim.value < 24.dp) 0.dp else 48.dp
-                      onStyleChange(targetValue == 48.dp)
-                      coroutineScope.launch {
-                        selectedOffsetAnim.animateTo(
-                            targetValue = targetValue,
-                            animationSpec = spring(dampingRatio = 0.82f, stiffness = 380f),
-                        )
-                      }
-                    },
-                    onDragCancel = {
-                      val targetValue = if (selectedOffsetAnim.value < 24.dp) 0.dp else 48.dp
-                      coroutineScope.launch {
-                        selectedOffsetAnim.animateTo(
-                            targetValue = targetValue,
-                            animationSpec = spring(dampingRatio = 0.82f, stiffness = 380f),
-                        )
-                      }
-                    },
+                    onDragEnd = { onStyleChange(selectedOffsetAnim.value < 28.dp) },
+                    onDragCancel = { onStyleChange(isGalleryStyle) },
                     onVerticalDrag = { change, dragAmount ->
                       change.consume()
-                      val dragAmountDp = with(density) { dragAmount.toDp() }
+                      val dragAmountDp = with(density) { dragAmount.toDp() } * (56f / 48f)
                       coroutineScope.launch {
                         selectedOffsetAnim.snapTo(
-                            (selectedOffsetAnim.value + dragAmountDp).coerceIn(0.dp, 48.dp))
+                            (selectedOffsetAnim.value - dragAmountDp).coerceIn(0.dp, 56.dp))
                       }
                     },
                 )
@@ -2393,6 +2417,7 @@ private fun LandscapeLayoutToggle(
           modifier =
               Modifier.fillMaxSize()
                   .graphicsLayer {
+                    val selectionOffset = (56.dp - selectedOffsetAnim.value) * (48f / 56f)
                     clip = true
                     shape =
                         object : Shape {
@@ -2402,15 +2427,17 @@ private fun LandscapeLayoutToggle(
                               density: Density,
                           ): Outline {
                             val selectionHeightPx = with(density) { 48.dp.toPx() }
-                            val offsetPx = with(density) { selectedOffsetAnim.value.toPx() }
+                            val offsetPx = with(density) { selectionOffset.toPx() }
                             return Outline.Rounded(
                                 RoundRect(
                                     rect =
                                         Rect(
                                             left = 0f,
-                                            top = offsetPx,
+                                            top = offsetPx.coerceIn(0f, size.height),
                                             right = size.width,
-                                            bottom = offsetPx + selectionHeightPx,
+                                            bottom =
+                                                (offsetPx + selectionHeightPx).coerceIn(
+                                                    0f, size.height),
                                         ),
                                     cornerRadius = CornerRadius(size.width / 2f, size.width / 2f),
                                 ))
@@ -2495,12 +2522,12 @@ private fun SearchPill(
   val modeIconScale by
       animateFloatAsState(
           targetValue = if (isEmbeddingSearchMode) 1.12f else 1f,
-          animationSpec = tween(durationMillis = 220),
+          animationSpec = AppMotion.fastSpatial(),
           label = "SearchModeIconScale")
   val modeIconAlpha by
       animateFloatAsState(
           targetValue = if (onSearchModeToggle != null) 1f else 0.72f,
-          animationSpec = tween(durationMillis = 220),
+          animationSpec = AppMotion.fastEffects(),
           label = "SearchModeIconAlpha")
 
   Surface(
@@ -2626,7 +2653,7 @@ private fun AnalysisFocusFrame(
       pulseProgress.snapTo(0f)
       pulseProgress.animateTo(
           targetValue = 1f,
-          animationSpec = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
+          animationSpec = AppMotion.pulse(1800),
       )
     }
   }
@@ -2725,7 +2752,7 @@ private fun ThumbnailCell(
   val imageAlpha by
       animateFloatAsState(
           targetValue = if (isLoaded) 1f else 0f,
-          animationSpec = tween(durationMillis = 350),
+          animationSpec = AppMotion.effects(),
           label = "thumbnailFade",
       )
 
@@ -2763,6 +2790,106 @@ private fun ThumbnailCell(
   }
 }
 
+@Composable
+private fun AlbumSwitchOutline(
+    isWaving: Boolean,
+    isSelected: Boolean,
+    normalInset: Dp,
+    modifier: Modifier = Modifier,
+) {
+  val phase = remember { Animatable(0f) }
+  val waveAmount = remember { Animatable(0f) }
+  val color = MaterialTheme.colorScheme.primary
+  LaunchedEffect(isWaving) {
+    waveAmount.animateTo(if (isWaving) 1f else 0f, AppMotion.timed(if (isWaving) 100 else 240))
+  }
+  LaunchedEffect(isWaving) {
+    if (isWaving) {
+      while (isActive) {
+        phase.animateTo(1f, tween(700, easing = LinearEasing))
+        phase.snapTo(0f)
+      }
+    }
+  }
+  Spacer(
+      modifier.drawWithCache {
+        // Center the wave on the outer frame so its crests can extend beyond the thumbnail.
+        val inset = 0f
+        val amplitude = 1.5.dp.toPx()
+        val corner = 12.dp.toPx()
+        val outline =
+            android.graphics.Path().apply {
+              addRoundRect(
+                  inset,
+                  inset,
+                  size.width - inset,
+                  size.height - inset,
+                  corner,
+                  corner,
+                  android.graphics.Path.Direction.CW)
+            }
+        val measure = android.graphics.PathMeasure(outline, true)
+        val restingInset = normalInset.toPx()
+        val restingCorner = 11.dp.toPx()
+        val restingOutline =
+            android.graphics.Path().apply {
+              addRoundRect(
+                  restingInset,
+                  restingInset,
+                  size.width - restingInset,
+                  size.height - restingInset,
+                  restingCorner,
+                  restingCorner,
+                  android.graphics.Path.Direction.CW)
+            }
+        val restingMeasure = android.graphics.PathMeasure(restingOutline, true)
+        val points = Array(128) { FloatArray(6) }
+        val position = FloatArray(2)
+        val tangent = FloatArray(2)
+        points.forEachIndexed { index, point ->
+          measure.getPosTan(measure.length * index / points.size, position, tangent)
+          point[0] = position[0]
+          point[1] = position[1]
+          point[2] = -tangent[1]
+          point[3] = tangent[0]
+          restingMeasure.getPosTan(restingMeasure.length * index / points.size, position, tangent)
+          point[4] = position[0]
+          point[5] = position[1]
+        }
+        val wave = androidx.compose.ui.graphics.Path()
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+        onDrawBehind {
+          wave.reset()
+          val progress = phase.value
+          val amount = waveAmount.value
+          if (amount == 0f) {
+            if (isSelected) {
+              drawRoundRect(
+                  color,
+                  topLeft = androidx.compose.ui.geometry.Offset(restingInset, restingInset),
+                  size =
+                      androidx.compose.ui.geometry.Size(
+                          size.width - restingInset * 2f, size.height - restingInset * 2f),
+                  cornerRadius = CornerRadius(restingCorner, restingCorner),
+                  style = stroke)
+            }
+            return@onDrawBehind
+          }
+          points.forEachIndexed { index, point ->
+            val displacement =
+                sin((index.toFloat() / points.size * 16f - progress) * 2f * Math.PI.toFloat()) *
+                    amplitude *
+                    amount
+            val x = point[4] + (point[0] - point[4]) * amount + point[2] * displacement
+            val y = point[5] + (point[1] - point[5]) * amount + point[3] * displacement
+            if (index == 0) wave.moveTo(x, y) else wave.lineTo(x, y)
+          }
+          wave.close()
+          drawPath(wave, color, alpha = if (isSelected) 1f else amount, style = stroke)
+        }
+      })
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GalleryAlbumThumbnailCard(
@@ -2770,6 +2897,7 @@ private fun GalleryAlbumThumbnailCard(
     count: Int,
     thumbnailUris: List<Uri>,
     isSelected: Boolean,
+    isSwitching: Boolean = false,
     isPinned: Boolean = false,
     isAddedForAnalysis: Boolean = false,
     isDragging: Boolean = false,
@@ -2777,11 +2905,31 @@ private fun GalleryAlbumThumbnailCard(
     onDoubleClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
+  val interactionSource = remember { MutableInteractionSource() }
+  val isPressed by interactionSource.collectIsPressedAsState()
+  var pressFeedback by remember { mutableStateOf(false) }
+  LaunchedEffect(isPressed) {
+    if (isPressed) {
+      pressFeedback = true
+    } else if (pressFeedback) {
+      // Cover the tap/double-tap recognition delay without changing the pin gesture.
+      delay(400)
+      pressFeedback = false
+    }
+  }
+  LaunchedEffect(isSwitching, isSelected) {
+    if (isSwitching && isSelected) {
+      // Once switching starts, its state owns the outline until the album is ready.
+      pressFeedback = false
+    }
+  }
+  val showSwitchOutline = !isDragging && (pressFeedback || (isSwitching && isSelected))
   val analysisGlowColor = Color(0xFF4CAF50)
   val borderColor =
       when {
         isDragging -> MaterialTheme.colorScheme.tertiary
-        isSelected -> MaterialTheme.colorScheme.primary
+        showSwitchOutline -> Color.Transparent
+        isSelected -> Color.Transparent // Drawn by the same outline that morphs out of the wave.
         else -> Color.Transparent
       }
   val backgroundColor =
@@ -2821,7 +2969,10 @@ private fun GalleryAlbumThumbnailCard(
                   .clip(RoundedCornerShape(12.dp))
                   .background(backgroundColor)
                   .border(2.dp, borderColor, RoundedCornerShape(12.dp))
-                  .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick),
+                  .combinedClickable(
+                      interactionSource = interactionSource,
+                      onClick = onClick,
+                      onDoubleClick = onDoubleClick),
           contentAlignment = Alignment.Center,
       ) {
         if (thumbnailUris.isEmpty()) {
@@ -2875,6 +3026,13 @@ private fun GalleryAlbumThumbnailCard(
           }
         }
       }
+
+      AlbumSwitchOutline(
+          isWaving = showSwitchOutline,
+          isSelected = isSelected && !isDragging,
+          normalInset = if (isAddedForAnalysis) 3.dp else 1.dp,
+          modifier = Modifier.matchParentSize(),
+      )
 
       if (isPinned) {
         Surface(

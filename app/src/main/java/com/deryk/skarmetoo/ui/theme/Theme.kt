@@ -1,7 +1,8 @@
 package com.deryk.skarmetoo.ui.theme
 
 import android.os.Build
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -57,6 +58,7 @@ private val LightColorScheme =
     )
 
 @Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 fun SkarmetooTheme(
     darkTheme: Boolean = false,
     // Dynamic color is available on Android 12+
@@ -87,8 +89,9 @@ fun SkarmetooTheme(
         colorScheme
       }
 
-  MaterialTheme(
+  MaterialExpressiveTheme(
       colorScheme = finalScheme,
+      motionScheme = AppMotion.scheme,
       typography = Typography,
       content = content,
   )

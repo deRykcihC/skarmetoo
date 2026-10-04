@@ -90,7 +90,7 @@ class DesktopTransferService : Service() {
     return NotificationCompat.Builder(this, CHANNEL_ID)
         .setContentTitle(getString(R.string.desktop_transfer_title))
         .setContentText(text)
-        .setSmallIcon(R.drawable.app_logo)
+        .setSmallIcon(R.drawable.ic_model_desktop)
         .setContentIntent(pendingIntent)
         .setOngoing(true)
         .setSilent(true)

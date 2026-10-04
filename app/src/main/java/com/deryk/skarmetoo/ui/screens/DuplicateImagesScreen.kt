@@ -5,6 +5,9 @@ import android.provider.MediaStore
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,12 +24,10 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ImageSearch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -52,6 +53,7 @@ import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import com.deryk.skarmetoo.data.ScreenshotVectorDatabase
 import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.components.SecondaryPageLayout
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -103,21 +105,9 @@ fun DuplicateImagesScreen(
 
   LaunchedEffect(Unit) { viewModel.refreshEntries() }
 
-  Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-      IconButton(onClick = hapticOnClick(onBack)) {
-        Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.back))
-      }
-      Text(
-          text = stringResource(R.string.duplicate_images_title),
-          style = MaterialTheme.typography.titleLarge,
-          fontWeight = FontWeight.SemiBold,
-      )
-    }
+  val navigationBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
+  SecondaryPageLayout(title = stringResource(R.string.duplicate_images_title), onBack = onBack) {
     if (duplicateGroups.isEmpty()) {
       Box(
           modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
@@ -154,7 +144,7 @@ fun DuplicateImagesScreen(
           modifier = Modifier.fillMaxSize(),
           contentPadding =
               androidx.compose.foundation.layout.PaddingValues(
-                  start = 16.dp, top = 8.dp, end = 16.dp, bottom = 24.dp),
+                  start = 16.dp, top = 8.dp, end = 16.dp, bottom = 88.dp + navigationBottomPadding),
           verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
         item {

@@ -7,6 +7,15 @@ plugins {
   alias(libs.plugins.spotless)
 }
 
+val releaseTestBuild = providers.gradleProperty("releaseTestBuild").orNull == "true"
+
+// Keep local builds working before a Firebase project is connected. Once the Firebase console's
+// google-services.json is placed in app/, the standard resource generation is enabled.
+// The separate performance-test package has no Firebase registration.
+if (file("google-services.json").exists() && !releaseTestBuild) {
+  apply(plugin = "com.google.gms.google-services")
+}
+
 val buildingBundle =
     gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
 
@@ -18,8 +27,8 @@ android {
     applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 38
-    versionName = "1.18"
+    versionCode = 43
+    versionName = "1.21"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -47,6 +56,9 @@ android {
     debug { applicationIdSuffix = ".alt" }
 
     release {
+      if (releaseTestBuild) {
+        applicationIdSuffix = ".test"
+      }
       isMinifyEnabled = true
       isShrinkResources = true
       signingConfig = signingConfigs.getByName("release")
@@ -101,8 +113,13 @@ dependencies {
   implementation(libs.llamatik.library)
   implementation(libs.mlkit.genai)
   implementation(libs.protobuf.javalite)
+  implementation(platform(libs.firebase.bom))
+  implementation(libs.firebase.firestore)
+  implementation(libs.firebase.messaging)
   implementation("com.google.android.play:feature-delivery:2.1.0")
   testImplementation(libs.junit)
+  // JVM tests use Android's JSON API to validate LAN protocol messages.
+  testImplementation("org.json:json:20250107")
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(platform(libs.androidx.compose.bom))

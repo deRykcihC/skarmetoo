@@ -2,7 +2,6 @@ package com.deryk.skarmetoo.legacy
 
 import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -55,6 +54,7 @@ import coil.size.Size
 import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ui.components.PillScrollbar
 import com.deryk.skarmetoo.ui.components.hapticOnClick
+import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.viewmodel.AlbumWithThumbnails
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import kotlin.math.abs
@@ -810,7 +810,7 @@ private fun ExperimentalGalleryItem(
   val alpha by
       animateFloatAsState(
           targetValue = if (isLoaded) 1f else 0f,
-          animationSpec = tween(durationMillis = 400),
+          animationSpec = AppMotion.effects(),
           label = "fade",
       )
 

@@ -2,7 +2,6 @@ package com.deryk.skarmetoo.ui.components
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,13 +26,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.deryk.skarmetoo.ui.theme.AppMotion
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -65,17 +65,17 @@ fun PillScrollbar(
   var hideJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
   var trackHeightPx by remember { mutableIntStateOf(0) }
 
-  val alpha by
+  val alpha =
       animateFloatAsState(
           targetValue = if (isVisible || isDragging) 1f else 0f,
-          animationSpec = tween(durationMillis = 300),
+          animationSpec = AppMotion.effects(),
           label = "scrollbarAlpha",
       )
 
   val thumbWidth by
       animateDpAsState(
           targetValue = if (isDragging) 14.dp else 4.dp,
-          animationSpec = tween(durationMillis = 150),
+          animationSpec = AppMotion.fastSpatial(),
           label = "scrollbarWidth",
       )
 
@@ -187,8 +187,8 @@ fun PillScrollbar(
               .then(touchModifier),
       contentAlignment = Alignment.TopEnd,
   ) {
-    // Render the thumb only when we have a valid track size and some visibility
-    if (trackHeightPx > 0 && alpha > 0.01f) {
+    // Keep opacity reads in the drawing layer so fading does not recompose the scrollbar.
+    if (trackHeightPx > 0) {
       val density = LocalDensity.current
       val thumbHeightPx = trackHeightPx * thumbHeightFraction
       val thumbOffsetPx = (trackHeightPx - thumbHeightPx) * normalizedPosition
@@ -200,7 +200,7 @@ fun PillScrollbar(
       Box(
           modifier =
               Modifier.offset(y = thumbOffsetDp)
-                  .alpha(alpha)
+                  .graphicsLayer { this.alpha = alpha.value }
                   .width(thumbWidth)
                   .height(thumbHeightDp)
                   .clip(RoundedCornerShape(cornerRadius))
