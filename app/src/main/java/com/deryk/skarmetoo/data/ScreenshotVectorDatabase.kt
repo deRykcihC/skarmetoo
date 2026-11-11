@@ -19,6 +19,8 @@ data class ScreenshotEmbedding(
 class ScreenshotVectorDatabase(context: Context) :
     SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
 
+  private val appContext = context.applicationContext
+
   companion object {
     private const val TAG = "ScreenshotVectorDB"
     private const val DB_NAME = "screenshot_embeddings.db"
@@ -92,19 +94,22 @@ class ScreenshotVectorDatabase(context: Context) :
   /** Persists an image path and its visual embedding. */
   suspend fun saveEmbedding(hash: String, uri: String, embedding: FloatArray) =
       withContext(Dispatchers.IO) {
-        try {
-          if (uri.isBlank()) return@withContext
-          val db = writableDatabase
-          val values =
-              ContentValues().apply {
-                put(COL_URI, uri)
-                put(COL_HASH, hash)
-                put(COL_VECTOR, floatArrayToBytes(embedding))
-              }
-          db.insertWithOnConflict(TABLE_EMBEDDINGS, null, values, SQLiteDatabase.CONFLICT_REPLACE)
-          Log.d(TAG, "Successfully saved embedding vector for uri: $uri")
-        } catch (e: Exception) {
-          Log.e(TAG, "Failed to save embedding vector for uri: $uri", e)
+        synchronized(ScreenshotLibrary.lock) {
+          try {
+            if (uri.isBlank()) return@withContext
+            if (!ScreenshotLibrary.contains(appContext, uri)) return@withContext
+            val db = writableDatabase
+            val values =
+                ContentValues().apply {
+                  put(COL_URI, uri)
+                  put(COL_HASH, hash)
+                  put(COL_VECTOR, floatArrayToBytes(embedding))
+                }
+            db.insertWithOnConflict(TABLE_EMBEDDINGS, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            Log.d(TAG, "Successfully saved embedding vector for uri: $uri")
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to save embedding vector for uri: $uri", e)
+          }
         }
       }
 

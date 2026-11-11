@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import com.deryk.skarmetoo.data.ScreenshotEntry
+import com.deryk.skarmetoo.network.HuggingFaceAuthenticationRequiredException
 import com.google.ai.edge.localagents.rag.models.EmbedData
 import com.google.ai.edge.localagents.rag.models.EmbeddingRequest
 import com.google.ai.edge.localagents.rag.models.GemmaEmbeddingModel
@@ -134,10 +135,10 @@ class EmbeddingGemma(private val context: Context) {
           }
 
           if (status != HttpURLConnection.HTTP_OK) {
-            if (status == HttpURLConnection.HTTP_UNAUTHORIZED ||
-                status == HttpURLConnection.HTTP_FORBIDDEN) {
-              throw IllegalStateException(
-                  "Unauthorized: sign in to Hugging Face and accept the EmbeddingGemma license.")
+            if ((status == HttpURLConnection.HTTP_UNAUTHORIZED ||
+                status == HttpURLConnection.HTTP_FORBIDDEN) &&
+                URL(currentUrl).host.equals("huggingface.co", ignoreCase = true)) {
+              throw HuggingFaceAuthenticationRequiredException()
             }
             throw IllegalStateException(
                 "Server returned HTTP $status ${connection.responseMessage}")

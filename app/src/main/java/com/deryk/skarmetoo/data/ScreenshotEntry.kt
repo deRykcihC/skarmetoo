@@ -28,7 +28,8 @@ data class ScreenshotEntry(
   fun isDesktopAnalysisCandidate(): Boolean {
     if (imageUri.isBlank() || imageHash.isBlank() || isAnalyzing) return false
 
-    val isUnprocessed = analyzedAt == 0L && summary.isBlank()
+    // Explicit reanalysis keeps the old description visible while resetting its timestamp.
+    val isUnprocessed = analyzedAt == 0L
     val isGeminiNanoRejected =
         modelUsed.equals("Gemini Nano", ignoreCase = true) &&
             getTagList().any { it.equals("restricted", ignoreCase = true) }

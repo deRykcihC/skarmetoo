@@ -1,6 +1,8 @@
 package com.deryk.skarmetoo.ai
 
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.util.Log
 import com.llamatik.library.platform.GenStream
@@ -8,14 +10,20 @@ import com.llamatik.library.platform.LlamaBridge
 import com.llamatik.library.platform.MultimodalBridge
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 private const val TAG = "GgufLlmManager"
 
@@ -23,17 +31,43 @@ class GgufLlmManager(private val context: Context) {
   private val _activeModelInfo = MutableStateFlow<GgufModelInfo?>(null)
   val activeModelInfo: StateFlow<GgufModelInfo?> = _activeModelInfo.asStateFlow()
 
-  private var loadedModel: GgufModelInfo? = null
+  internal var loadedModel: GgufModelInfo? = null
     set(value) {
       field = value
       _activeModelInfo.value = value
     }
 
   private val scope = CoroutineScope(Dispatchers.IO)
-  private val inferMutex = Mutex()
+  internal val inferMutex = Mutex()
   private val downloadMutex = Mutex()
+  internal var idleUnload: Job? = null
+  // Selection survives unloading; only a request allocates a native model/context.
+  private val _residentModel = MutableStateFlow<GgufResidentModel?>(null)
+  val residentModel: StateFlow<GgufResidentModel?> = _residentModel.asStateFlow()
+  internal val residency =
+      GgufModelResidency(
+          loadText = { model ->
+            Log.d(TAG, "Loading text on demand: ${model.displayName}")
+            LlamaBridge.initGenerateModel(File(context.filesDir, model.fileName).absolutePath)
+          },
+          loadVision = { model ->
+            Log.d(TAG, "Loading vision on demand: ${model.displayName}")
+            MultimodalBridge.initModel(
+                File(context.filesDir, model.fileName).absolutePath,
+                File(context.filesDir, model.mmprojFile).absolutePath)
+          },
+          releaseText = {
+            Log.d(TAG, "Unloading text context")
+            LlamaBridge.shutdown()
+          },
+          releaseVision = {
+            Log.d(TAG, "Unloading vision context and projector")
+            MultimodalBridge.release()
+          },
+          onChanged = { _residentModel.value = it },
+      )
 
-  private val _uiState = MutableStateFlow<LlmState>(LlmState.Initial)
+  internal val _uiState = MutableStateFlow<LlmState>(LlmState.Initial)
   val uiState: StateFlow<LlmState> = _uiState.asStateFlow()
 
   private val _analysisProgress = MutableStateFlow(0f)
@@ -47,8 +81,44 @@ class GgufLlmManager(private val context: Context) {
 
   private val _downloadingModelName = MutableStateFlow<String?>(null)
   val downloadingModelName: StateFlow<String?> = _downloadingModelName.asStateFlow()
-  private val _isInferenceRunning = MutableStateFlow(false)
+  internal val _isInferenceRunning = MutableStateFlow(false)
   val isInferenceRunning: StateFlow<Boolean> = _isInferenceRunning.asStateFlow()
+
+  init {
+    context.applicationContext.registerComponentCallbacks(
+        object : ComponentCallbacks2 {
+          override fun onConfigurationChanged(newConfig: Configuration) = Unit
+
+          override fun onLowMemory() {
+            scope.launch { releaseInBackground() }
+          }
+
+          override fun onTrimMemory(level: Int) {
+            if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+              scope.launch { releaseInBackground() }
+            }
+          }
+        })
+  }
+
+  /** Called under inferMutex. A subsequent request cancels this idle release before loading. */
+  internal fun scheduleIdleUnload() {
+    idleUnload?.cancel()
+    idleUnload =
+        scope.launch {
+          delay(15_000)
+          releaseInBackground()
+        }
+  }
+
+  private suspend fun releaseInBackground() {
+    try {
+      unloadWhenIdle()
+    } catch (e: Exception) {
+      Log.e(TAG, "Could not unload the idle GGUF context", e)
+      _uiState.value = LlmState.Error("Could not release model memory. Please reload the model.")
+    }
+  }
 
   sealed class LlmState {
     data object Initial : LlmState()
@@ -63,113 +133,55 @@ class GgufLlmManager(private val context: Context) {
   }
 
   fun loadModel(modelInfo: GgufModelInfo) {
-    if (modelInfo.isVision) {
-      val modelPath = File(context.filesDir, modelInfo.fileName).absolutePath
-      val mmprojPath = File(context.filesDir, modelInfo.mmprojFile).absolutePath
-      if (!File(modelPath).exists() || !File(mmprojPath).exists()) {
-        _uiState.value = LlmState.Error("Model or mmproj file missing. Re-download.")
-        return
-      }
-      _uiState.value = LlmState.Loading
-      scope.launch {
-        inferMutex.withLock {
-          try {
-            val loaded = MultimodalBridge.initModel(modelPath, mmprojPath)
-            if (loaded) {
-              loadedModel = modelInfo
-              _uiState.value = LlmState.Ready
-              Log.d(TAG, "VLM loaded: $modelPath + $mmprojPath")
-            } else {
-              _uiState.value = LlmState.Error("MultimodalBridge failed to init VLM")
-            }
-          } catch (e: Exception) {
-            Log.e(TAG, "Failed to load VLM", e)
-            _uiState.value = LlmState.Error("VLM load failed: ${e.message}")
-          }
-        }
-      }
-    } else {
-      initializeModel(
-          modelPath = File(context.filesDir, modelInfo.fileName).absolutePath,
-          nThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
-      )
-      loadedModel = modelInfo
-    }
-  }
-
-  fun initializeModel(
-      modelPath: String,
-      nThreads: Int = 4,
-      maxTokens: Int = 512,
-      temperature: Float = 0.7f,
-  ) {
-    if (!File(modelPath).exists()) {
-      _uiState.value = LlmState.Error("GGUF model file not found at $modelPath")
+    if (!isModelDownloaded(modelInfo)) {
+      _uiState.value = LlmState.Error("Model or projector missing. Re-download.")
       return
     }
-
     _uiState.value = LlmState.Loading
     scope.launch {
       inferMutex.withLock {
         try {
-          val loaded = LlamaBridge.initGenerateModel(modelPath)
-          if (!loaded) {
-            _uiState.value = LlmState.Error("LlamaBridge failed to load model")
-            return@withLock
-          }
-
-          LlamaBridge.updateGenerateParams(
-              temperature = temperature,
-              maxTokens = maxTokens,
-              topP = 0.95f,
-              topK = 40,
-              repeatPenalty = 1.1f,
-              contextLength = 4096,
-              numThreads = nThreads,
-              useMmap = true,
-              flashAttention = false,
-              batchSize = 512,
-          )
+          idleUnload?.cancel()
+          residency.release()
+          loadedModel = modelInfo
           _uiState.value = LlmState.Ready
-          Log.d(TAG, "GGUF model loaded via Llamatik: $modelPath")
+          Log.d(TAG, "Selected for on-demand loading: ${modelInfo.displayName}")
         } catch (e: Exception) {
-          Log.e(TAG, "Failed to initialize GGUF model", e)
-          _uiState.value = LlmState.Error("GGUF load failed: ${e.message}")
+          _uiState.value = LlmState.Error("Could not release the previous model: ${e.message}")
         }
       }
     }
   }
 
-  fun generateResponse(prompt: String, onToken: (String) -> Unit = {}): String {
-    if (_uiState.value !is LlmState.Ready) {
-      _uiState.value = LlmState.Error("GGUF model not initialized")
-      return ""
-    }
+  /** Free native allocations without clearing the selected model or downloaded files. */
+  suspend fun unloadWhenIdle(expectedModel: GgufModelInfo? = null) =
+      withContext(Dispatchers.IO) {
+        inferMutex.withLock {
+          if (expectedModel == null || loadedModel == expectedModel) residency.release()
+        }
+      }
 
-    _uiState.value = LlmState.Generating
-    val result = StringBuilder()
-    try {
-      LlamaBridge.generateStream(
-          prompt,
-          object : GenStream {
-            override fun onDelta(text: String) {
-              result.append(text)
-              onToken(text)
-            }
+  /** Must be called inside inferMutex; release the previous bridge before initialization. */
+  internal fun prepareTextContext(model: GgufModelInfo, maxOutputTokens: Int) {
+    val lfm = model.supportsLfmTextPlanning
+    // The upstream text stream prefills in one batch, so batch capacity covers the context.
+    LlamaBridge.updateGenerateParams(
+        temperature = if (lfm) 0.20f else 0.7f,
+        maxTokens = maxOutputTokens.coerceIn(1, 640),
+        topP = if (lfm) 0.90f else 0.95f,
+        topK = if (lfm) 50 else 40,
+        repeatPenalty = if (lfm) 1.00f else 1.10f,
+        contextLength = TEXT_CONTEXT_TOKENS,
+        numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
+        useMmap = true,
+        flashAttention = false,
+        batchSize = TEXT_CONTEXT_TOKENS,
+    )
+    residency.ensure(model, GgufBridge.TEXT)
+  }
 
-            override fun onComplete() {
-              _uiState.value = LlmState.Ready
-            }
-
-            override fun onError(message: String) {
-              _uiState.value = LlmState.Error("Generation failed: $message")
-            }
-          })
-    } catch (e: Exception) {
-      Log.e(TAG, "GGUF generation failed", e)
-      _uiState.value = LlmState.Error("GGUF generation failed: ${e.message}")
-    }
-    return result.toString()
+  internal fun prepareVisionContext(model: GgufModelInfo) {
+    residency.ensure(model, GgufBridge.VISION)
   }
 
   fun analyzeScreenshot(
@@ -205,11 +217,14 @@ class GgufLlmManager(private val context: Context) {
     scope.launch {
       inferMutex.withLock {
         _isInferenceRunning.value = true
+        idleUnload?.cancel()
         try {
           _analysisProgress.value = 0f
           onProgress(0.1f)
 
-          val modelId = loadedModel?.displayName ?: "GGUF"
+          val model = loadedModel ?: error("Select a GGUF model first.")
+          prepareTextContext(model, 512)
+          val modelId = model.displayName
           val prompt = buildPrompt(detailLevel, customPrompt, targetLanguage)
 
           val responseResult = runTextAnalysis(prompt) { p -> onProgress(0.1f + p * 0.8f) }
@@ -233,6 +248,7 @@ class GgufLlmManager(private val context: Context) {
           onError(e.message ?: "GGUF analysis failed")
         } finally {
           _isInferenceRunning.value = false
+          scheduleIdleUnload()
         }
       }
     }
@@ -251,7 +267,11 @@ class GgufLlmManager(private val context: Context) {
     scope.launch {
       inferMutex.withLock {
         _isInferenceRunning.value = true
+        idleUnload?.cancel()
         try {
+          val model = loadedModel ?: error("Load a vision model before image analysis.")
+          check(model.isVision) { "The model changed. Run image analysis again." }
+          prepareVisionContext(model)
           _analysisProgress.value = 0f
           onProgress(0.1f)
 
@@ -295,6 +315,7 @@ class GgufLlmManager(private val context: Context) {
           onError(e.message ?: "VLM analysis failed")
         } finally {
           _isInferenceRunning.value = false
+          scheduleIdleUnload()
         }
       }
     }
@@ -310,11 +331,8 @@ class GgufLlmManager(private val context: Context) {
     var errorMsg = ""
     var tokenCount = 0
 
-    kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
-      cont.invokeOnCancellation {
-        hasError = true
-        errorMsg = "VLM analysis cancelled"
-      }
+    suspendCoroutine<Unit> { cont ->
+      val completed = AtomicBoolean(false)
       try {
         MultimodalBridge.analyzeImageBytesStream(
             imageBytes,
@@ -327,19 +345,19 @@ class GgufLlmManager(private val context: Context) {
               }
 
               override fun onComplete() {
-                if (cont.isActive) cont.resume(Unit, onCancellation = null)
+                if (completed.compareAndSet(false, true)) cont.resume(Unit)
               }
 
-              override fun onError(msg: String) {
+              override fun onError(message: String) {
                 hasError = true
-                errorMsg = msg
-                if (cont.isActive) cont.resume(Unit, onCancellation = null)
+                errorMsg = message
+                if (completed.compareAndSet(false, true)) cont.resume(Unit)
               }
             })
       } catch (e: Exception) {
         hasError = true
         errorMsg = e.message ?: "VLM crashed"
-        if (cont.isActive) cont.resume(Unit, onCancellation = null)
+        if (completed.compareAndSet(false, true)) cont.resume(Unit)
       }
     }
 
@@ -364,11 +382,8 @@ class GgufLlmManager(private val context: Context) {
     var errorMsg = ""
     var tokenCount = 0
 
-    kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
-      cont.invokeOnCancellation {
-        hasError = true
-        errorMsg = "Text analysis cancelled"
-      }
+    suspendCoroutine<Unit> { cont ->
+      val completed = AtomicBoolean(false)
       try {
         LlamaBridge.generateStream(
             prompt,
@@ -380,19 +395,19 @@ class GgufLlmManager(private val context: Context) {
               }
 
               override fun onComplete() {
-                if (cont.isActive) cont.resume(Unit, onCancellation = null)
+                if (completed.compareAndSet(false, true)) cont.resume(Unit)
               }
 
-              override fun onError(msg: String) {
+              override fun onError(message: String) {
                 hasError = true
-                errorMsg = msg
-                if (cont.isActive) cont.resume(Unit, onCancellation = null)
+                errorMsg = message
+                if (completed.compareAndSet(false, true)) cont.resume(Unit)
               }
             })
       } catch (e: Exception) {
         hasError = true
         errorMsg = e.message ?: "Text gen crashed"
-        if (cont.isActive) cont.resume(Unit, onCancellation = null)
+        if (completed.compareAndSet(false, true)) cont.resume(Unit)
       }
     }
 
@@ -468,30 +483,19 @@ class GgufLlmManager(private val context: Context) {
               TAG,
               "GGUF model downloaded: ${destFile.absolutePath} (${destFile.length() / 1024 / 1024} MB)")
 
-          val modelPath = destFile.absolutePath
-          if (modelInfo.isVision) {
-            val mmprojPath = File(context.filesDir, modelInfo.mmprojFile).absolutePath
-            val loaded = MultimodalBridge.initModel(modelPath, mmprojPath)
-            if (loaded) {
-              loadedModel = modelInfo
-              _uiState.value = LlmState.Ready
-              Log.d(TAG, "VLM loaded via MultimodalBridge")
-            } else {
-              _uiState.value = LlmState.Error("MultimodalBridge failed to init VLM")
-            }
+          // Activation callbacks select and load through the shared inference lock.
+          if (onComplete != null) {
+            onComplete(true)
           } else {
-            initializeModel(
-                modelPath = modelPath,
-                nThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
-            )
-            loadedModel = modelInfo
+            loadModel(modelInfo)
           }
-
-          onComplete?.invoke(true)
         } catch (e: Exception) {
           Log.e(TAG, "GGUF model download failed", e)
           val tmp = File(context.filesDir, "${modelInfo.fileName}.tmp")
           if (tmp.exists()) tmp.delete()
+          val mmprojTmp = File(context.filesDir, "${modelInfo.mmprojFile}.tmp")
+          if (mmprojTmp.exists()) mmprojTmp.delete()
+          _uiState.value = LlmState.Error("Model download failed: ${e.message}")
           onComplete?.invoke(false)
         } finally {
           _isDownloading.value = false
@@ -576,7 +580,10 @@ class GgufLlmManager(private val context: Context) {
 
   fun isModelDownloaded(modelInfo: GgufModelInfo): Boolean {
     val f = File(context.filesDir, modelInfo.fileName)
-    return f.exists() && f.length() > 1L * 1024 * 1024
+    val modelExists = f.exists() && f.length() > 1L * 1024 * 1024
+    if (!modelInfo.isVision) return modelExists
+    val mmproj = File(context.filesDir, modelInfo.mmprojFile)
+    return modelExists && mmproj.exists() && mmproj.length() > 1L * 1024 * 1024
   }
 
   fun getDownloadedModels(): List<GgufModelInfo> {
@@ -587,27 +594,28 @@ class GgufLlmManager(private val context: Context) {
     return all.filter { isModelDownloaded(it) }
   }
 
-  fun deleteModel(modelInfo: GgufModelInfo): Boolean {
-    val f = File(context.filesDir, modelInfo.fileName)
-    var deleted = !f.exists() || f.delete()
-    if (modelInfo.isVision && modelInfo.mmprojFile.isNotBlank()) {
-      val mmprojF = File(context.filesDir, modelInfo.mmprojFile)
-      deleted = (!mmprojF.exists() || mmprojF.delete()) && deleted
-    }
-    if (loadedModel?.fileName == modelInfo.fileName) {
-      try {
-        LlamaBridge.shutdown()
-      } catch (_: Exception) {}
-      try {
-        MultimodalBridge.release()
-      } catch (_: Exception) {}
-      loadedModel = null
-      _uiState.value = LlmState.Initial
-    }
-    return deleted
-  }
+  suspend fun deleteModel(modelInfo: GgufModelInfo): Boolean =
+      withContext(Dispatchers.IO) {
+        inferMutex.withLock {
+          // The selected planner can currently have a different vision model resident.
+          if (loadedModel?.fileName == modelInfo.fileName ||
+              _residentModel.value?.model?.fileName == modelInfo.fileName)
+              residency.release()
+          val f = File(context.filesDir, modelInfo.fileName)
+          var deleted = !f.exists() || f.delete()
+          if (modelInfo.isVision && modelInfo.mmprojFile.isNotBlank()) {
+            val mmprojF = File(context.filesDir, modelInfo.mmprojFile)
+            deleted = (!mmprojF.exists() || mmprojF.delete()) && deleted
+          }
+          if (loadedModel?.fileName == modelInfo.fileName) {
+            loadedModel = null
+            _uiState.value = LlmState.Initial
+          }
+          deleted
+        }
+      }
 
-  private fun resizeBitmap(originalBitmap: Bitmap, maxSize: Int): Bitmap {
+  internal fun resizeBitmap(originalBitmap: Bitmap, maxSize: Int): Bitmap {
     val width = originalBitmap.width
     val height = originalBitmap.height
     if (width <= maxSize && height <= maxSize) return originalBitmap
@@ -629,22 +637,20 @@ class GgufLlmManager(private val context: Context) {
     scope.launch { closeAndWait() }
   }
 
-  suspend fun closeAndWait() {
-    inferMutex.withLock {
-      try {
-        LlamaBridge.shutdown()
-      } catch (_: Exception) {}
-      try {
-        MultimodalBridge.release()
-      } catch (_: Exception) {}
-      loadedModel = null
-      _isInferenceRunning.value = false
-      _analysisProgress.value = 0f
-      _uiState.value = LlmState.Initial
-    }
-  }
+  suspend fun closeAndWait() =
+      withContext(Dispatchers.IO) {
+        inferMutex.withLock {
+          idleUnload?.cancel()
+          residency.release()
+          loadedModel = null
+          _isInferenceRunning.value = false
+          _analysisProgress.value = 0f
+          _uiState.value = LlmState.Initial
+        }
+      }
 
   companion object {
+    const val TEXT_CONTEXT_TOKENS = 4096
     @Volatile private var instance: GgufLlmManager? = null
 
     fun getInstance(context: Context): GgufLlmManager {

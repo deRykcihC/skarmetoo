@@ -10,6 +10,8 @@ import android.os.CancellationSignal
 import android.util.Log
 import android.util.LruCache
 import android.util.Size
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -32,7 +34,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -54,10 +55,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -76,6 +77,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -111,6 +113,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Color
@@ -125,6 +128,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
@@ -140,6 +144,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -150,11 +158,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.deryk.skarmetoo.R
-import com.deryk.skarmetoo.ai.EmbeddingGemma
+import com.deryk.skarmetoo.ai.SearchEmbeddingModel
 import com.deryk.skarmetoo.data.ScreenshotEntry
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
 import com.deryk.skarmetoo.legacy.ScreenshotGridItem
@@ -165,6 +172,7 @@ import com.deryk.skarmetoo.ui.components.SortOrderIcon
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.components.rememberSquigglePillShape
 import com.deryk.skarmetoo.ui.findComponentActivity
+import com.deryk.skarmetoo.ui.guide.startingGuideTarget
 import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.viewmodel.AlbumWithThumbnails
 import com.deryk.skarmetoo.viewmodel.ClickedImageBounds
@@ -301,29 +309,49 @@ fun GalleryScreen(
   LaunchedEffect(entries, images.size) {
     allSearchEntries = withContext(Dispatchers.IO) { viewModel.getAllValidEntriesSnapshot() }
   }
-  val embeddingGemma = remember(context) { EmbeddingGemma(context.applicationContext) }
+  val selectedSearchModel by viewModel.selectedSearchModel.collectAsState()
+  val embeddingGemma =
+      remember(context, selectedSearchModel) {
+        SearchEmbeddingModel(context.applicationContext, selectedSearchModel)
+      }
   val textEmbeddingDb =
-      remember(context) { ScreenshotTextEmbeddingDatabase(context.applicationContext) }
-  var isEmbeddingGemmaReady by remember { mutableStateOf(false) }
-  var isEmbeddingSearching by remember { mutableStateOf(false) }
-  var isEmbeddingSearchSettled by remember { mutableStateOf(false) }
+      remember(context, selectedSearchModel) {
+        ScreenshotTextEmbeddingDatabase(context.applicationContext, selectedSearchModel)
+      }
+  var isEmbeddingGemmaReady by remember(selectedSearchModel) { mutableStateOf(false) }
   var isEmbeddingSearchMode by rememberSaveable { mutableStateOf(true) }
-  var semanticSearchScores by remember { mutableStateOf<Map<String, Float>>(emptyMap()) }
+  val searchSession =
+      remember(selectedSearchModel, searchQuery.trim(), isEmbeddingSearchMode) {
+        SemanticSearchSession()
+      }
+  val searchIndexRevision by viewModel.embeddingGemmaIndexRevision.collectAsState()
+  val searchRemovalRevision by
+      com.deryk.skarmetoo.data.ScreenshotLibrary.removalRevision.collectAsState()
+  val visibleSearchUris = remember(images) { images.mapTo(linkedSetOf()) { it.uri.toString() } }
   var isEmbeddingGlowVisible by remember { mutableStateOf(false) }
   var embeddingSearchCompletion by remember { mutableFloatStateOf(0f) }
+  var searchSortOrder by rememberSaveable { mutableStateOf(GallerySortOrder.MOST_RELEVANCE) }
+  val isRelevanceSortingAvailable =
+      searchQuery.isNotBlank() && isEmbeddingSearchMode && isEmbeddingGemmaReady
+  val activeSortOrder =
+      if (isRelevanceSortingAvailable) searchSortOrder
+      else if (isSortDescending) GallerySortOrder.NEWEST else GallerySortOrder.OLDEST
+  LaunchedEffect(isRelevanceSortingAvailable) {
+    if (isRelevanceSortingAvailable) searchSortOrder = GallerySortOrder.MOST_RELEVANCE
+  }
   val isEmbeddingSearchActive =
       isEmbeddingSearchMode &&
           (isEmbeddingGlowVisible ||
               (searchQuery.isNotBlank() &&
                   isEmbeddingGemmaReady &&
-                  semanticSearchScores.isNotEmpty()))
+                  searchSession.scores.isNotEmpty()))
 
-  LaunchedEffect(searchQuery, semanticSearchScores, isEmbeddingGemmaReady, isEmbeddingSearchMode) {
+  LaunchedEffect(searchQuery, searchSession.scores, isEmbeddingGemmaReady, isEmbeddingSearchMode) {
     val shouldShowGlow =
         isEmbeddingSearchMode &&
             searchQuery.isNotBlank() &&
             isEmbeddingGemmaReady &&
-            semanticSearchScores.isNotEmpty()
+            searchSession.scores.isNotEmpty()
     if (shouldShowGlow) {
       isEmbeddingGlowVisible = true
     } else if (isEmbeddingGlowVisible) {
@@ -332,7 +360,7 @@ fun GalleryScreen(
           isEmbeddingSearchMode &&
               searchQuery.isNotBlank() &&
               isEmbeddingGemmaReady &&
-              semanticSearchScores.isNotEmpty()
+              searchSession.scores.isNotEmpty()
       if (!stillShouldShowGlow) {
         isEmbeddingGlowVisible = false
         embeddingSearchCompletion = 0f
@@ -351,57 +379,44 @@ fun GalleryScreen(
     isEmbeddingGemmaReady = withContext(Dispatchers.IO) { embeddingGemma.initialize() }
   }
 
-  LaunchedEffect(
-      searchQuery,
-      allSearchEntries,
-      selectedAlbumId,
-      images,
-      isEmbeddingGemmaReady,
-      isEmbeddingSearchMode) {
-        val query = searchQuery.trim()
-        if (query.isBlank() || !isEmbeddingGemmaReady || !isEmbeddingSearchMode) {
-          semanticSearchScores = emptyMap()
-          isEmbeddingSearching = false
-          isEmbeddingSearchSettled = false
-          embeddingSearchCompletion = 0f
-          return@LaunchedEffect
-        }
+  LaunchedEffect(searchSession, embeddingGemma, isEmbeddingGemmaReady) {
+    if (searchQuery.isBlank() || !isEmbeddingGemmaReady || !isEmbeddingSearchMode)
+        return@LaunchedEffect
+    isEmbeddingGlowVisible = true
+    embeddingSearchCompletion = 0.30f
+    try {
+      searchSession.prepare { embeddingGemma.embed(searchQuery.trim()) }
+    } catch (cancel: kotlinx.coroutines.CancellationException) {
+      throw cancel
+    } catch (failure: Exception) {
+      Log.e("GalleryScreen", "Semantic query failed", failure)
+    }
+  }
 
+  LaunchedEffect(
+      searchSession,
+      searchSession.isPrepared,
+      searchIndexRevision,
+      searchRemovalRevision,
+      visibleSearchUris,
+      selectedAlbumId) {
+        if (!searchSession.isPrepared) return@LaunchedEffect
         try {
-          isEmbeddingSearching = true
-          isEmbeddingSearchSettled = false
-          isEmbeddingGlowVisible = true
-          embeddingSearchCompletion = 0.30f
-          semanticSearchScores = emptyMap()
-          delay(300)
-          embeddingSearchCompletion = 0.35f
-          val queryVector = embeddingGemma.embed(query)
-          if (queryVector == null) {
-            semanticSearchScores = emptyMap()
-            return@LaunchedEffect
+          searchSession.refresh { vector ->
+            textEmbeddingDb
+                .findSimilar(
+                    vector,
+                    similarityThreshold = EMBEDDING_GEMMA_SEARCH_THRESHOLD,
+                    limit = EMBEDDING_GEMMA_SEARCH_LIMIT)
+                .filter { (record, _) -> record.imageUri in visibleSearchUris }
+                .associate { (record, score) -> record.imageUri to score }
           }
-          embeddingSearchCompletion = 0.80f
-          Log.d("GalleryScreen", "EmbeddingGemma query vector dimensions=${queryVector.size}")
-          delay(180)
-          embeddingSearchCompletion = 0.90f
-          val visibleAlbumUris = images.map { it.uri.toString() }.toSet()
-          val scores =
-              textEmbeddingDb
-                  .findSimilar(
-                      queryVector,
-                      similarityThreshold = EMBEDDING_GEMMA_SEARCH_THRESHOLD,
-                      limit = EMBEDDING_GEMMA_SEARCH_LIMIT,
-                  )
-                  .filter { (record, _) -> record.imageUri in visibleAlbumUris }
-                  .associate { (record, score) -> record.imageUri to score }
           embeddingSearchCompletion = 1f
-          semanticSearchScores = scores
-          isEmbeddingSearchSettled = true
-          Log.d(
-              "GalleryScreen",
-              "EmbeddingGemma album search active for query='$query', matches=${scores.size}, album=$selectedAlbumId")
-        } finally {
-          isEmbeddingSearching = false
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+          throw cancel
+        } catch (failure: Exception) {
+          Log.e("GalleryScreen", "Semantic index refresh failed", failure)
+          searchSession.isSettled = true
         }
       }
   var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
@@ -411,6 +426,33 @@ fun GalleryScreen(
   val analysisItemLayouts = remember { mutableStateMapOf<Long, AnalysisItemLayout>() }
   var isAlbumRowVisible by rememberSaveable { mutableStateOf(true) }
   var isAlbumDrawerExpanded by rememberSaveable { mutableStateOf(false) }
+  var batchAlbumIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+  val preparingAlbumReanalysis by viewModel.isPreparingAlbumReanalysis.collectAsState()
+  val availableAlbumIds =
+      remember(albumThumbnails) { albumThumbnails.mapTo(linkedSetOf()) { it.album.bucketId } }
+  val allAlbumsBatchSelected =
+      availableAlbumIds.isNotEmpty() && batchAlbumIds.containsAll(availableAlbumIds)
+  BackHandler(batchAlbumIds.isNotEmpty()) { batchAlbumIds = emptyList() }
+  LaunchedEffect(availableAlbumIds) {
+    if (availableAlbumIds.isNotEmpty())
+        batchAlbumIds = batchAlbumIds.filter { it in availableAlbumIds }
+  }
+  fun toggleAlbumSelection(bucketId: String?) {
+    if (isPickMode) return
+    batchAlbumIds =
+        if (bucketId == null) {
+          if (batchAlbumIds.containsAll(availableAlbumIds)) emptyList()
+          else availableAlbumIds.toList()
+        } else if (bucketId in batchAlbumIds) batchAlbumIds - bucketId else batchAlbumIds + bucketId
+    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+  }
+  fun openOrSelectAlbum(bucketId: String?, closeDrawer: Boolean = false) {
+    if (batchAlbumIds.isNotEmpty()) toggleAlbumSelection(bucketId)
+    else {
+      viewModel.setSelectedExperimentalAlbumId(if (bucketId == selectedAlbumId) null else bucketId)
+      if (closeDrawer) isAlbumDrawerExpanded = false
+    }
+  }
   val isGalleryStylePersisted by viewModel.galleryIsGalleryStyle.collectAsState()
   var isGalleryStyle by remember { mutableStateOf(isGalleryStylePersisted) }
   var displayedGalleryStyle by remember { mutableStateOf(isGalleryStylePersisted) }
@@ -572,22 +614,22 @@ fun GalleryScreen(
           selectedTag,
           isEmbeddingGemmaReady,
           isEmbeddingSearchMode,
-          isEmbeddingSearching,
-          isEmbeddingSearchSettled,
-          semanticSearchScores,
-          isSortDescending,
+          searchSession.isSearching,
+          searchSession.isSettled,
+          searchSession.scores,
+          activeSortOrder,
           images.size) {
             derivedStateOf {
               val query = searchQuery.trim()
               val shouldUseEmbeddingSearch =
                   query.isNotBlank() && isEmbeddingGemmaReady && isEmbeddingSearchMode
-              val hasSemanticResults = query.isNotBlank() && semanticSearchScores.isNotEmpty()
+              val hasSemanticResults = query.isNotBlank() && searchSession.scores.isNotEmpty()
               val filtered =
                   images.filter { image ->
                     val uriString = image.uri.toString()
                     val entry = entryByMediaUri[uriString]
                     val tags = entry?.getTagList().orEmpty()
-                    val semanticScore = semanticSearchScores[uriString]
+                    val semanticScore = searchSession.scores[uriString]
 
                     val matchesTag =
                         selectedTag == null ||
@@ -602,7 +644,7 @@ fun GalleryScreen(
                         if (query.isBlank()) {
                           true
                         } else if (shouldUseEmbeddingSearch) {
-                          isEmbeddingSearchSettled && semanticScore != null
+                          searchSession.isSettled && semanticScore != null
                         } else {
                           isAnalyzed && matchesKeyword
                         }
@@ -610,15 +652,17 @@ fun GalleryScreen(
                     matchesTag && matchesSearch
                   }
 
-              if (hasSemanticResults) {
+              if (hasSemanticResults && activeSortOrder.relevance) {
+                val byScore =
+                    compareBy<MediaStoreImage> { image ->
+                      searchSession.scores[image.uri.toString()] ?: Float.NEGATIVE_INFINITY
+                    }
                 filtered.sortedWith(
-                    compareByDescending<MediaStoreImage> { image ->
-                          semanticSearchScores[image.uri.toString()] ?: Float.NEGATIVE_INFINITY
-                        }
+                    (if (activeSortOrder.descending) byScore.reversed() else byScore)
                         .thenByDescending { image ->
                           if (image.dateAdded > 0) image.dateAdded else image.id
                         })
-              } else if (isSortDescending) {
+              } else if (activeSortOrder.descending) {
                 filtered.sortedByDescending { image ->
                   if (image.dateAdded > 0) image.dateAdded else image.id
                 }
@@ -793,9 +837,9 @@ fun GalleryScreen(
       if (!isInCurrentResults) {
         searchQuery = ""
         selectedTag = null
-        semanticSearchScores = emptyMap()
-        isEmbeddingSearching = false
-        isEmbeddingSearchSettled = false
+        searchSession.scores = emptyMap()
+        searchSession.isSearching = false
+        searchSession.isSettled = false
         if (!isInCurrentAlbum) {
           viewModel.setSelectedExperimentalAlbumId(null)
         }
@@ -816,8 +860,7 @@ fun GalleryScreen(
   val landscapeAlbumPaneWidth by
       animateDpAsState(
           targetValue = if (isAlbumDrawerExpanded) 220.dp else 124.dp,
-          animationSpec =
-              if (isAlbumDrawerExpanded) AppMotion.spatial() else AppMotion.linear(240),
+          animationSpec = if (isAlbumDrawerExpanded) AppMotion.spatial() else AppMotion.linear(240),
           label = "landscapeAlbumPaneWidth",
       )
 
@@ -841,12 +884,12 @@ fun GalleryScreen(
                 .padding(
                     start = if (isLandscape) landscapeAlbumPaneWidth else 0.dp,
                 )) {
-          if (!isLandscape) {
+          if (!isLandscape || batchAlbumIds.isNotEmpty()) {
             Row(
                 modifier =
                     Modifier.fillMaxWidth()
                         .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp)
-                        .heightIn(min = 42.dp),
+                        .heightIn(min = 48.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
               Image(
@@ -856,10 +899,56 @@ fun GalleryScreen(
               )
               Spacer(modifier = Modifier.width(10.dp))
               Text(
-                  "Skarmetoo",
-                  style = MaterialTheme.typography.headlineSmall,
+                  if (batchAlbumIds.isEmpty()) "Skarmetoo"
+                  else stringResource(R.string.album_selection_count, batchAlbumIds.size),
+                  style =
+                      if (batchAlbumIds.isEmpty()) MaterialTheme.typography.headlineSmall
+                      else MaterialTheme.typography.titleMedium,
                   fontWeight = FontWeight.Bold,
+                  modifier = Modifier.weight(1f),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
               )
+              if (batchAlbumIds.isNotEmpty()) {
+                IconButton(onClick = hapticOnClick { batchAlbumIds = emptyList() }) {
+                  Icon(Icons.Rounded.Close, stringResource(R.string.album_deselect_all))
+                }
+                FilledTonalButton(
+                    enabled = !preparingAlbumReanalysis,
+                    onClick =
+                        hapticOnClick {
+                          viewModel.reanalyzeAlbums(batchAlbumIds.toSet()) { result ->
+                            val message =
+                                result.fold(
+                                    onSuccess = { count ->
+                                      if (count == 0)
+                                          context.getString(R.string.album_reanalysis_empty)
+                                      else
+                                          context.getString(R.string.album_reanalysis_queued, count)
+                                    },
+                                    onFailure = {
+                                      it.localizedMessage
+                                          ?: context.getString(R.string.album_reanalysis_failed)
+                                    },
+                                )
+                            android.widget.Toast.makeText(
+                                    context, message, android.widget.Toast.LENGTH_LONG)
+                                .show()
+                          }
+                        },
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                  if (preparingAlbumReanalysis) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                  }
+                  Text(
+                      stringResource(R.string.album_reanalyze),
+                      fontWeight = FontWeight.Bold,
+                      maxLines = 1,
+                  )
+                }
+              }
             }
           }
 
@@ -913,7 +1002,7 @@ fun GalleryScreen(
             item {
               val targetGlowAlpha =
                   when {
-                    isEmbeddingSearching -> embeddingSearchCompletion.coerceIn(0.30f, 1f)
+                    searchSession.isSearching -> embeddingSearchCompletion.coerceIn(0.30f, 1f)
                     isEmbeddingSearchActive -> 1f
                     else -> 0f
                   }
@@ -948,9 +1037,9 @@ fun GalleryScreen(
                     isEmbeddingSearchMode = isEmbeddingSearchMode,
                     onSearchModeToggle = {
                       isEmbeddingSearchMode = !isEmbeddingSearchMode
-                      semanticSearchScores = emptyMap()
-                      isEmbeddingSearching = false
-                      isEmbeddingSearchSettled = false
+                      searchSession.scores = emptyMap()
+                      searchSession.isSearching = false
+                      searchSession.isSettled = false
                       isEmbeddingGlowVisible = false
                       embeddingSearchCompletion = 0f
                     },
@@ -960,22 +1049,35 @@ fun GalleryScreen(
             item {
               FilterChip(
                   selected = true,
-                  onClick = hapticOnClick { viewModel.toggleSortOrder() },
+                  onClick =
+                      hapticOnClick {
+                        if (isRelevanceSortingAvailable) {
+                          val next = activeSortOrder.next(true)
+                          searchSortOrder = next
+                          if (!next.relevance && next.descending != isSortDescending)
+                              viewModel.toggleSortOrder()
+                        } else viewModel.toggleSortOrder()
+                      },
                   label = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                       SortOrderIcon(
-                          isSortDescending = isSortDescending,
+                          isSortDescending = activeSortOrder.descending,
                           modifier = Modifier.size(16.dp),
                       )
                       Spacer(modifier = Modifier.width(4.dp))
-                      Text(
-                          if (isSortDescending) {
-                            stringResource(R.string.newest_first)
-                          } else {
-                            stringResource(R.string.oldest_first)
-                          },
-                          fontWeight = FontWeight.Bold,
-                      )
+                      AnimatedContent(targetState = activeSortOrder, label = "SearchSortLabel") {
+                          order ->
+                        Text(
+                            stringResource(
+                                when (order) {
+                                  GallerySortOrder.MOST_RELEVANCE -> R.string.most_relevance
+                                  GallerySortOrder.LEAST_RELEVANCE -> R.string.least_relevance
+                                  GallerySortOrder.NEWEST -> R.string.newest_first
+                                  GallerySortOrder.OLDEST -> R.string.oldest_first
+                                }),
+                            fontWeight = FontWeight.Bold,
+                        )
+                      }
                     }
                   },
                   shape = RoundedCornerShape(20.dp),
@@ -1144,11 +1246,14 @@ fun GalleryScreen(
                                     count = allImageCount,
                                     thumbnailUris = allThumbnailUris,
                                     isSelected = selectedAlbumId == null,
-                                    size = albumSquareSize,
-                                    onClick =
-                                        hapticOnClick {
-                                          viewModel.setSelectedExperimentalAlbumId(null)
+                                    isBatchSelected = allAlbumsBatchSelected,
+                                    onSelectAlbum =
+                                        if (isPickMode) null
+                                        else {
+                                          { toggleAlbumSelection(null) }
                                         },
+                                    size = albumSquareSize,
+                                    onClick = hapticOnClick { openOrSelectAlbum(null) },
                                 )
                               }
 
@@ -1221,8 +1326,13 @@ fun GalleryScreen(
                                                 }
                                               }
 
-                                              detectDragGesturesAfterLongPress(
+                                              var selectionToggled = false
+                                              var dragTravel = 0f
+                                              detectAlbumHoldAndDrag(
                                                   onDragStart = {
+                                                    toggleAlbumSelection(bucketId)
+                                                    selectionToggled = !isPickMode
+                                                    dragTravel = 0f
                                                     edgeScrollJob?.cancel()
                                                     draggingBucketId = bucketId
                                                     dragOffsetX = 0f
@@ -1298,6 +1408,12 @@ fun GalleryScreen(
                                                         }
                                                   },
                                                   onDrag = { change, dragAmount ->
+                                                    dragTravel += dragAmount.getDistance()
+                                                    if (selectionToggled &&
+                                                        dragTravel > viewConfiguration.touchSlop) {
+                                                      toggleAlbumSelection(bucketId)
+                                                      selectionToggled = false
+                                                    }
                                                     change.consume()
                                                     latestPointerXInItem = change.position.x
                                                     dragOffsetX += dragAmount.x
@@ -1316,6 +1432,8 @@ fun GalleryScreen(
                                                     dragOffsetY = 0f
                                                   },
                                                   onDragCancel = {
+                                                    if (selectionToggled)
+                                                        toggleAlbumSelection(bucketId)
                                                     edgeScrollJob?.cancel()
                                                     edgeScrollJob = null
                                                     draggingBucketId = null
@@ -1332,22 +1450,23 @@ fun GalleryScreen(
                                       thumbnailUris = albumWithThumbs.thumbnailUris,
                                       isSelected =
                                           selectedAlbumId == albumWithThumbs.album.bucketId,
+                                      isBatchSelected = bucketId in batchAlbumIds,
+                                      onSelectAlbum =
+                                          if (isPickMode) null
+                                          else {
+                                            { toggleAlbumSelection(bucketId) }
+                                          },
+                                      longPressHandledByParent = true,
                                       isPinned = isPinned,
                                       isAddedForAnalysis = isAddedForAnalysis,
                                       isDragging = isDragging,
                                       size = albumSquareSize,
-                                      onDoubleClick = { togglePinAndPositionAlbum(bucketId) },
-                                      onClick =
-                                          hapticOnClick {
-                                            viewModel.setSelectedExperimentalAlbumId(
-                                                if (selectedAlbumId ==
-                                                    albumWithThumbs.album.bucketId) {
-                                                  null
-                                                } else {
-                                                  albumWithThumbs.album.bucketId
-                                                },
-                                            )
-                                          },
+                                      onDoubleClick = {
+                                        if (batchAlbumIds.isEmpty())
+                                            togglePinAndPositionAlbum(bucketId)
+                                        else toggleAlbumSelection(bucketId)
+                                      },
+                                      onClick = hapticOnClick { openOrSelectAlbum(bucketId) },
                                   )
                                 }
                               }
@@ -1381,11 +1500,16 @@ fun GalleryScreen(
                                       count = allImageCount,
                                       thumbnailUris = allThumbnailUris,
                                       isSelected = selectedAlbumId == null,
+                                      isBatchSelected = allAlbumsBatchSelected,
+                                      onSelectAlbum =
+                                          if (isPickMode) null
+                                          else {
+                                            { toggleAlbumSelection(null) }
+                                          },
                                       size = albumSquareSize,
                                       onClick =
                                           hapticOnClick {
-                                            viewModel.setSelectedExperimentalAlbumId(null)
-                                            isAlbumDrawerExpanded = false
+                                            openOrSelectAlbum(null, closeDrawer = true)
                                           },
                                   )
                                 }
@@ -1423,13 +1547,24 @@ fun GalleryScreen(
                                                   (albumSquareSize + albumSpacing).toPx()
                                               val itemHeightPx =
                                                   (albumCardHeight + albumSpacing).toPx()
-                                              detectDragGesturesAfterLongPress(
+                                              var selectionToggled = false
+                                              var dragTravel = 0f
+                                              detectAlbumHoldAndDrag(
                                                   onDragStart = {
+                                                    toggleAlbumSelection(bucketId)
+                                                    selectionToggled = !isPickMode
+                                                    dragTravel = 0f
                                                     draggingBucketId = bucketId
                                                     dragOffsetX = 0f
                                                     dragOffsetY = 0f
                                                   },
                                                   onDrag = { change, dragAmount ->
+                                                    dragTravel += dragAmount.getDistance()
+                                                    if (selectionToggled &&
+                                                        dragTravel > viewConfiguration.touchSlop) {
+                                                      toggleAlbumSelection(bucketId)
+                                                      selectionToggled = false
+                                                    }
                                                     change.consume()
                                                     dragOffsetX += dragAmount.x
                                                     dragOffsetY += dragAmount.y
@@ -1439,7 +1574,7 @@ fun GalleryScreen(
                                                           it.album.bucketId == draggingBucketId
                                                         }
                                                     if (currentIdx < 0) {
-                                                      return@detectDragGesturesAfterLongPress
+                                                      return@detectAlbumHoldAndDrag
                                                     }
 
                                                     val currentGridPosition = currentIdx + 1
@@ -1493,6 +1628,8 @@ fun GalleryScreen(
                                                     dragOffsetY = 0f
                                                   },
                                                   onDragCancel = {
+                                                    if (selectionToggled)
+                                                        toggleAlbumSelection(bucketId)
                                                     draggingBucketId = null
                                                     dragOffsetX = 0f
                                                     dragOffsetY = 0f
@@ -1507,16 +1644,24 @@ fun GalleryScreen(
                                       count = albumWithThumbs.album.count,
                                       thumbnailUris = albumWithThumbs.thumbnailUris,
                                       isSelected = selectedAlbumId == bucketId,
+                                      isBatchSelected = bucketId in batchAlbumIds,
+                                      onSelectAlbum =
+                                          if (isPickMode) null
+                                          else {
+                                            { toggleAlbumSelection(bucketId) }
+                                          },
+                                      longPressHandledByParent = true,
                                       isPinned = bucketId in pinnedAlbumIds,
                                       isAddedForAnalysis = bucketId in selectedAlbums,
                                       size = albumSquareSize,
-                                      onDoubleClick = { togglePinAndPositionAlbum(bucketId) },
+                                      onDoubleClick = {
+                                        if (batchAlbumIds.isEmpty())
+                                            togglePinAndPositionAlbum(bucketId)
+                                        else toggleAlbumSelection(bucketId)
+                                      },
                                       onClick =
                                           hapticOnClick {
-                                            viewModel.setSelectedExperimentalAlbumId(
-                                                if (selectedAlbumId == bucketId) null else bucketId,
-                                            )
-                                            isAlbumDrawerExpanded = false
+                                            openOrSelectAlbum(bucketId, closeDrawer = true)
                                           },
                                   )
                                 }
@@ -1567,7 +1712,7 @@ fun GalleryScreen(
               } else if (isEmbeddingSearchMode &&
                   isEmbeddingGemmaReady &&
                   searchQuery.isNotBlank() &&
-                  (isEmbeddingSearching || !isEmbeddingSearchSettled)) {
+                  (searchSession.isSearching || !searchSession.isSettled)) {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center,
@@ -1903,96 +2048,78 @@ fun GalleryScreen(
                           }
                         }
                       } else {
-                        rows.take(renderedRows).forEachIndexed { rowIndex, row ->
-                          val shouldLoadRow =
-                              !isPinching &&
-                                  rowIndex >= loadStartRow &&
-                                  rowIndex < loadEndRowExclusive
-
-                          if (rowHeightPx > 0f &&
-                              gridViewportHeightPx > 0 &&
-                              (rowIndex < loadStartRow || rowIndex >= loadEndRowExclusive)) {
-                            // Preserve scroll height without composing offscreen cells and
-                            // requests.
-                            Spacer(
-                                Modifier.fillMaxWidth()
-                                    .height(with(density) { (rowHeightPx - spacingPx).toDp() }))
-                            return@forEachIndexed
-                          }
-
-                          Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.spacedBy(GRID_SPACING_DP.dp),
-                          ) {
-                            row.forEach { image ->
-                              val uriString = image.uri.toString()
-                              val entryId =
-                                  experimentalStatuses[uriString]?.first
-                                      ?: entryIdByMediaUri[uriString]
-                              var itemBounds by remember {
-                                mutableStateOf<ClickedImageBounds?>(null)
-                              }
-                              ThumbnailCell(
-                                  image = image,
-                                  shouldLoad = shouldLoadRow,
-                                  showPlaceholder = isPinching,
-                                  focusPulseKey =
-                                      analysisFocusPulse.takeIf {
-                                        entryId != null && analysisFocusId == entryId
-                                      },
-                                  isClickable = true,
-                                  onClick =
-                                      hapticOnClick {
-                                        if (isNavigating) return@hapticOnClick
-                                        viewModel.setClickedImageBounds(itemBounds)
-                                        if (isPickMode) {
-                                          val activity = context.findComponentActivity()
-                                          if (activity != null) {
-                                            val resultIntent =
-                                                android.content.Intent().apply {
-                                                  data = image.uri
-                                                  flags =
-                                                      android.content.Intent
-                                                          .FLAG_GRANT_READ_URI_PERMISSION
-                                                }
-                                            activity.setResult(
-                                                android.app.Activity.RESULT_OK, resultIntent)
-                                            activity.finish()
-                                          }
-                                        } else {
-                                          if (entryId != null) {
-                                            onScreenshotClick(entryId)
-                                          } else {
-                                            isNavigating = true
-                                            viewModel.getOrCreateEntryForUri(image.uri) { newId ->
-                                              isNavigating = false
-                                              if (newId > 0L) {
-                                                onScreenshotClick(newId)
-                                              }
+                        GalleryThumbnailRows(
+                            rows = rows,
+                            renderedRows = renderedRows,
+                            columns = effectiveColumns,
+                            loadStart = loadStartRow,
+                            loadEnd = loadEndRowExclusive,
+                            virtualize = rowHeightPx > 0f && gridViewportHeightPx > 0,
+                            pinching = isPinching,
+                            placeholderHeight =
+                                with(density) {
+                                  (rowHeightPx - spacingPx).coerceAtLeast(0f).toDp()
+                                },
+                            spacing = GRID_SPACING_DP.dp,
+                            itemKey = { it.uri.toString() },
+                        ) { image, shouldLoadRow ->
+                          val uriString = image.uri.toString()
+                          val entryId =
+                              experimentalStatuses[uriString]?.first ?: entryIdByMediaUri[uriString]
+                          var itemBounds by remember { mutableStateOf<ClickedImageBounds?>(null) }
+                          ThumbnailCell(
+                              image = image,
+                              shouldLoad = shouldLoadRow,
+                              showPlaceholder = isPinching,
+                              focusPulseKey =
+                                  analysisFocusPulse.takeIf {
+                                    entryId != null && analysisFocusId == entryId
+                                  },
+                              isClickable = true,
+                              onClick =
+                                  hapticOnClick {
+                                    if (isNavigating) return@hapticOnClick
+                                    viewModel.setClickedImageBounds(itemBounds)
+                                    if (isPickMode) {
+                                      val activity = context.findComponentActivity()
+                                      if (activity != null) {
+                                        val resultIntent =
+                                            android.content.Intent().apply {
+                                              data = image.uri
+                                              flags =
+                                                  android.content.Intent
+                                                      .FLAG_GRANT_READ_URI_PERMISSION
                                             }
+                                        activity.setResult(
+                                            android.app.Activity.RESULT_OK, resultIntent)
+                                        activity.finish()
+                                      }
+                                    } else {
+                                      if (entryId != null) {
+                                        onScreenshotClick(entryId)
+                                      } else {
+                                        isNavigating = true
+                                        viewModel.getOrCreateEntryForUri(image.uri) { newId ->
+                                          isNavigating = false
+                                          if (newId > 0L) {
+                                            onScreenshotClick(newId)
                                           }
                                         }
-                                      },
-                                  modifier =
-                                      Modifier.weight(1f).onGloballyPositioned { coords ->
-                                        val pos = coords.positionInWindow()
-                                        val size = coords.size
-                                        itemBounds =
-                                            ClickedImageBounds(
-                                                pos.x,
-                                                pos.y,
-                                                size.width.toFloat(),
-                                                size.height.toFloat())
-                                      },
-                              )
-                            }
-
-                            if (row.size < effectiveColumns) {
-                              repeat(effectiveColumns - row.size) {
-                                Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
-                              }
-                            }
-                          }
+                                      }
+                                    }
+                                  },
+                              modifier =
+                                  Modifier.weight(1f).onGloballyPositioned { coords ->
+                                    val pos = coords.positionInWindow()
+                                    val size = coords.size
+                                    itemBounds =
+                                        ClickedImageBounds(
+                                            pos.x,
+                                            pos.y,
+                                            size.width.toFloat(),
+                                            size.height.toFloat())
+                                  },
+                          )
                         }
                       }
                     }
@@ -2042,25 +2169,28 @@ fun GalleryScreen(
             if (isLandscape) {
               androidx.compose.animation.AnimatedVisibility(
                   visible = landscapeControlsVisible,
-                  modifier = Modifier.align(Alignment.CenterEnd)
-                      .padding(end = 12.dp + floatingNavigationEndInset),
-                  enter = androidx.compose.animation.slideInHorizontally(
-                      animationSpec = AppMotion.timed(240), initialOffsetX = { it }) +
-                      fadeIn(animationSpec = AppMotion.effects()),
-                  exit = androidx.compose.animation.slideOutHorizontally(
-                      animationSpec = AppMotion.linear(240), targetOffsetX = { it }) +
-                      fadeOut(animationSpec = AppMotion.fastEffects()),
+                  modifier =
+                      Modifier.align(Alignment.CenterEnd)
+                          .padding(end = 12.dp + floatingNavigationEndInset),
+                  enter =
+                      androidx.compose.animation.slideInHorizontally(
+                          animationSpec = AppMotion.timed(240), initialOffsetX = { it }) +
+                          fadeIn(animationSpec = AppMotion.effects()),
+                  exit =
+                      androidx.compose.animation.slideOutHorizontally(
+                          animationSpec = AppMotion.linear(240), targetOffsetX = { it }) +
+                          fadeOut(animationSpec = AppMotion.fastEffects()),
               ) {
-              LandscapeLayoutToggle(
-                  isGalleryStyle = isGalleryStyle,
-                  selectedOffsetAnim = selectedOffsetAnim,
-                  onStyleChange = { galleryStyle ->
-                    if (galleryStyle != isGalleryStyle) {
-                      haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    }
-                    selectGalleryStyle(galleryStyle)
-                  },
-              )
+                LandscapeLayoutToggle(
+                    isGalleryStyle = isGalleryStyle,
+                    selectedOffsetAnim = selectedOffsetAnim,
+                    onStyleChange = { galleryStyle ->
+                      if (galleryStyle != isGalleryStyle) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                      }
+                      selectGalleryStyle(galleryStyle)
+                    },
+                )
               }
             } else {
               // Float segmented toggle at the bottom middle of the Gallery screen.
@@ -2292,10 +2422,11 @@ fun GalleryScreen(
       ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(if (expandedAlbumLayout) 2 else 1),
-            modifier = Modifier.fillMaxHeight()
-                .wrapContentWidth(Alignment.Start, unbounded = true)
-                .requiredWidth(if (expandedAlbumLayout) 220.dp else 124.dp)
-                .graphicsLayer { alpha = landscapeAlbumAlpha.value },
+            modifier =
+                Modifier.fillMaxHeight()
+                    .wrapContentWidth(Alignment.Start, unbounded = true)
+                    .requiredWidth(if (expandedAlbumLayout) 220.dp else 124.dp)
+                    .graphicsLayer { alpha = landscapeAlbumAlpha.value },
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2311,8 +2442,14 @@ fun GalleryScreen(
                   count = allImageCount,
                   thumbnailUris = allThumbnailUris,
                   isSelected = selectedAlbumId == null,
+                  isBatchSelected = allAlbumsBatchSelected,
+                  onSelectAlbum =
+                      if (isPickMode) null
+                      else {
+                        { toggleAlbumSelection(null) }
+                      },
                   size = 80.dp,
-                  onClick = hapticOnClick { viewModel.setSelectedExperimentalAlbumId(null) },
+                  onClick = hapticOnClick { openOrSelectAlbum(null) },
               )
             }
           }
@@ -2331,15 +2468,21 @@ fun GalleryScreen(
                   count = albumWithThumbs.album.count,
                   thumbnailUris = albumWithThumbs.thumbnailUris,
                   isSelected = selectedAlbumId == bucketId,
+                  isBatchSelected = bucketId in batchAlbumIds,
+                  onSelectAlbum =
+                      if (isPickMode) null
+                      else {
+                        { toggleAlbumSelection(bucketId) }
+                      },
+                  longPressHandledByParent = false,
                   isPinned = bucketId in pinnedAlbumIds,
                   isAddedForAnalysis = bucketId in selectedAlbums,
                   size = 80.dp,
-                  onDoubleClick = { togglePinAndPositionAlbum(bucketId) },
-                  onClick =
-                      hapticOnClick {
-                        viewModel.setSelectedExperimentalAlbumId(
-                            if (selectedAlbumId == bucketId) null else bucketId)
-                      },
+                  onDoubleClick = {
+                    if (batchAlbumIds.isEmpty()) togglePinAndPositionAlbum(bucketId)
+                    else toggleAlbumSelection(bucketId)
+                  },
+                  onClick = hapticOnClick { openOrSelectAlbum(bucketId) },
               )
             }
           }
@@ -2531,6 +2674,7 @@ private fun SearchPill(
           label = "SearchModeIconAlpha")
 
   Surface(
+      modifier = Modifier.startingGuideTarget("search"),
       shape = RoundedCornerShape(20.dp),
       color =
           if (isFocused) MaterialTheme.colorScheme.secondaryContainer
@@ -2890,6 +3034,56 @@ private fun AlbumSwitchOutline(
       })
 }
 
+/** Own movement before the child's long-click consumes it, preserving hold-and-drag reordering. */
+private suspend fun PointerInputScope.detectAlbumHoldAndDrag(
+    onDragStart: (Offset) -> Unit,
+    onDrag: (PointerInputChange, Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+  awaitEachGesture {
+    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+    var held = down
+    // Observe the initial pass so the child's long-click cannot cancel the reorder recognizer.
+    val endedBeforeHold =
+        withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+          while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull { it.id == down.id }
+            if (change == null ||
+                !change.pressed ||
+                (change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+              return@withTimeoutOrNull true
+            }
+            held = change
+          }
+          @Suppress("UNREACHABLE_CODE") false
+        }
+    if (endedBeforeHold == true) return@awaitEachGesture
+    var ended = false
+    try {
+      onDragStart(held.position)
+      while (true) {
+        val event = awaitPointerEvent(PointerEventPass.Initial)
+        val change = event.changes.firstOrNull { it.id == held.id } ?: break
+        if (!change.pressed) {
+          change.consume()
+          ended = true
+          onDragEnd()
+          break
+        }
+        val delta = change.positionChange()
+        if (delta != Offset.Zero) {
+          onDrag(change, delta)
+          change.consume()
+        }
+      }
+    } finally {
+      if (!ended) onDragCancel()
+    }
+  }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GalleryAlbumThumbnailCard(
@@ -2898,6 +3092,9 @@ private fun GalleryAlbumThumbnailCard(
     thumbnailUris: List<Uri>,
     isSelected: Boolean,
     isSwitching: Boolean = false,
+    isBatchSelected: Boolean = false,
+    onSelectAlbum: (() -> Unit)? = null,
+    longPressHandledByParent: Boolean = false,
     isPinned: Boolean = false,
     isAddedForAnalysis: Boolean = false,
     isDragging: Boolean = false,
@@ -2923,7 +3120,8 @@ private fun GalleryAlbumThumbnailCard(
       pressFeedback = false
     }
   }
-  val showSwitchOutline = !isDragging && (pressFeedback || (isSwitching && isSelected))
+  val showSwitchOutline =
+      !isDragging && !isBatchSelected && (pressFeedback || (isSwitching && isSelected))
   val analysisGlowColor = Color(0xFF4CAF50)
   val borderColor =
       when {
@@ -2934,14 +3132,24 @@ private fun GalleryAlbumThumbnailCard(
       }
   val backgroundColor =
       when {
+        isBatchSelected -> MaterialTheme.colorScheme.primaryContainer
         isDragging -> MaterialTheme.colorScheme.tertiaryContainer
         isSelected -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surfaceContainerHighest
       }
 
+  val selectLabel = stringResource(R.string.album_select)
+  val selectionDescription = stringResource(R.string.album_selected_for_reanalysis)
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = Modifier.width(size),
+      modifier =
+          Modifier.width(size)
+              .background(
+                  if (isBatchSelected) MaterialTheme.colorScheme.primaryContainer
+                  else Color.Transparent,
+                  RoundedCornerShape(14.dp),
+              )
+              .padding(bottom = 2.dp),
   ) {
     val glowOuterShape = RoundedCornerShape(14.dp)
     val glowInnerShape = RoundedCornerShape(13.dp)
@@ -2969,7 +3177,19 @@ private fun GalleryAlbumThumbnailCard(
                   .clip(RoundedCornerShape(12.dp))
                   .background(backgroundColor)
                   .border(2.dp, borderColor, RoundedCornerShape(12.dp))
+                  .semantics {
+                    selected = isBatchSelected
+                    if (isBatchSelected) stateDescription = selectionDescription
+                    if (longPressHandledByParent && onSelectAlbum != null)
+                        onLongClick(selectLabel) {
+                          onSelectAlbum()
+                          true
+                        }
+                  }
                   .combinedClickable(
+                      // Suppress the click-on-release even when the parent owns hold-and-drag.
+                      onLongClick = if (longPressHandledByParent) ({}) else onSelectAlbum,
+                      onLongClickLabel = selectLabel,
                       interactionSource = interactionSource,
                       onClick = onClick,
                       onDoubleClick = onDoubleClick),
@@ -2980,7 +3200,8 @@ private fun GalleryAlbumThumbnailCard(
               Icons.Rounded.PhotoLibrary,
               contentDescription = null,
               tint =
-                  if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                  if (isBatchSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                  else if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
                   else MaterialTheme.colorScheme.outline,
               modifier = Modifier.size(32.dp),
           )
@@ -3029,7 +3250,7 @@ private fun GalleryAlbumThumbnailCard(
 
       AlbumSwitchOutline(
           isWaving = showSwitchOutline,
-          isSelected = isSelected && !isDragging,
+          isSelected = isSelected && !isDragging && !isBatchSelected,
           normalInset = if (isAddedForAnalysis) 3.dp else 1.dp,
           modifier = Modifier.matchParentSize(),
       )
@@ -3059,9 +3280,10 @@ private fun GalleryAlbumThumbnailCard(
     Text(
         text = albumName,
         style = MaterialTheme.typography.labelSmall,
-        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+        fontWeight = if (isSelected || isBatchSelected) FontWeight.Bold else FontWeight.Normal,
         color =
-            if (isSelected) MaterialTheme.colorScheme.primary
+            if (isBatchSelected) MaterialTheme.colorScheme.onPrimaryContainer
+            else if (isSelected) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -3069,7 +3291,9 @@ private fun GalleryAlbumThumbnailCard(
     Text(
         text = "$count",
         style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.outline,
+        color =
+            if (isBatchSelected) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.outline,
     )
   }
 }

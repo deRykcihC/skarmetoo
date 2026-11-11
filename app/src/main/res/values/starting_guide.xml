@@ -1,0 +1,23 @@
+<resources>
+    <string name="guide_start">Try guided setup</string>
+    <string name="guide_replay">Guided setup</string>
+    <string name="guide_step">%1$d/%2$d</string>
+    <string name="guide_skip">Skip</string>
+    <string name="guide_back">Back</string>
+    <string name="guide_next">Next</string>
+    <string name="guide_finish">Finish</string>
+    <string name="guide_folders_title">Choose your image folders</string>
+    <string name="guide_folders_body">Tap the highlighted folder button to choose which albums the app can use. You can change this later. Use Next when you are ready, or just look around.</string>
+    <string name="guide_model_title">Choose an analysis model</string>
+    <string name="guide_model_body">This model reads your images and saves their descriptions. Tap the highlighted card to select or download it. Downloads only start when you tap the model, and may take a while.</string>
+    <string name="guide_progress_title">Check analysis progress</string>
+    <string name="guide_progress_body">These counts show how many images have saved descriptions. Analysis starts automatically when a model and images are available. You can keep using the app while it works.</string>
+    <string name="guide_search_title">Find your saved images</string>
+    <string name="guide_search_body">Search using words from saved descriptions, tags, or notes. The sparkle icon switches to semantic search when its search model is ready. Open an image from the results to see its description.</string>
+    <string name="guide_book_title">Explore the guidebook</string>
+    <string name="guide_book_body">Want to learn more? Tap the highlighted guidebook button at the top right of Settings for the full guide. You can come back to it anytime.</string>
+    <string name="guide_embedding_title">Search by meaning with EmbeddingGemma</string>
+    <string name="guide_embedding_body">EmbeddingGemma helps you find images using the meaning of their saved descriptions, tags, and notes. Download it and build the search index, then use the sparkle search mode in the gallery. This is optional; keyword search is also available.</string>
+    <string name="guide_efficientnet_title">Find similar images with EfficientNet</string>
+    <string name="guide_efficientnet_body">EfficientNet-Lite powers Look Similar. It compares visual features to find pictures that look alike, even without saved descriptions. Download this small model and build its visual index to use image similarity search.</string>
+</resources>

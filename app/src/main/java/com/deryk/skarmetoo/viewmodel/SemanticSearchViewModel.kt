@@ -98,6 +98,11 @@ class SemanticSearchViewModel(application: Application) : AndroidViewModel(appli
     }
   }
 
+  fun onLibraryChanged() {
+    clearTargetScreenshot()
+    refreshIndexedCount()
+  }
+
   /** Checks if the default LiteRT model is already on device, and initializes it. */
   fun checkModelPresenceAndInitialize() {
     viewModelScope.launch(Dispatchers.IO) {
@@ -258,6 +263,7 @@ class SemanticSearchViewModel(application: Application) : AndroidViewModel(appli
 
   /** Selects a screenshot as the target and queries all visually similar screenshots offline. */
   fun selectTargetScreenshot(target: ScreenshotEntry, allEntries: List<ScreenshotEntry>) {
+    val libraryRevision = com.deryk.skarmetoo.data.ScreenshotLibrary.removalRevision.value
     _targetScreenshot.value = target
     _similarScreenshots.value = emptyList()
 
@@ -291,6 +297,9 @@ class SemanticSearchViewModel(application: Application) : AndroidViewModel(appli
 
       // 2. Perform offline similarity sweep
       val matches = vectorDb.findSimilarScreenshots(targetEmbedding, similarityThreshold = 0.45f)
+      if (libraryRevision != com.deryk.skarmetoo.data.ScreenshotLibrary.removalRevision.value) {
+        return@launch
+      }
 
       // 3. Map matches back to original ScreenshotEntry files
       val mappedMatches =

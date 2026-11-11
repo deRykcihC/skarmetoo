@@ -7,6 +7,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
+  private val appContext = context.applicationContext
+
   companion object {
     private const val DB_NAME = "screenshots.db"
     private const val DB_VERSION = 3
@@ -55,21 +57,22 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     }
   }
 
-  fun insertEntry(entry: ScreenshotEntry): Long {
-    val db = writableDatabase
-    val values =
-        ContentValues().apply {
-          put(COL_IMAGE_URI, entry.imageUri)
-          put(COL_IMAGE_HASH, entry.imageHash)
-          put(COL_SUMMARY, entry.summary)
-          put(COL_TAGS, entry.tags)
-          put(COL_ANALYZED_AT, entry.analyzedAt)
-          put(COL_IS_ANALYZING, if (entry.isAnalyzing) 1 else 0)
-          put(COL_NOTE, entry.note)
-          put(COL_MODEL_USED, entry.modelUsed)
-        }
-    return db.insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
-  }
+  fun insertEntry(entry: ScreenshotEntry): Long =
+      synchronized(ScreenshotLibrary.lock) {
+        val db = writableDatabase
+        val values =
+            ContentValues().apply {
+              put(COL_IMAGE_URI, entry.imageUri)
+              put(COL_IMAGE_HASH, entry.imageHash)
+              put(COL_SUMMARY, entry.summary)
+              put(COL_TAGS, entry.tags)
+              put(COL_ANALYZED_AT, entry.analyzedAt)
+              put(COL_IS_ANALYZING, if (entry.isAnalyzing) 1 else 0)
+              put(COL_NOTE, entry.note)
+              put(COL_MODEL_USED, entry.modelUsed)
+            }
+        db.insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+      }
 
   fun updateAnalysis(
       id: Long,
@@ -104,6 +107,27 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     db.update(TABLE, values, null, null)
   }
 
+  /** Queue only these existing images, preserving their context and notes until success. */
+  fun markForReanalysis(ids: Set<Long>): Int =
+      synchronized(ScreenshotLibrary.lock) {
+        if (ids.isEmpty()) return@synchronized 0
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+          val values =
+              ContentValues().apply {
+                put(COL_ANALYZED_AT, 0L)
+                put(COL_IS_ANALYZING, 0)
+              }
+          var changed = 0
+          for (id in ids) changed += db.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
+          db.setTransactionSuccessful()
+          changed
+        } finally {
+          db.endTransaction()
+        }
+      }
+
   fun updateSummary(
       id: Long,
       summary: String,
@@ -132,12 +156,56 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
   }
 
   fun deleteEntry(id: Long) {
-    writableDatabase.delete(TABLE, "$COL_ID = ?", arrayOf(id.toString()))
+    deleteMatching("$COL_ID = ?", arrayOf(id.toString()))
   }
 
   fun deleteAllEntries() {
-    writableDatabase.delete(TABLE, null, null)
+    deleteMatching(null, null)
   }
+
+  private fun deleteMatching(selection: String?, args: Array<String>?): Int =
+      synchronized(ScreenshotLibrary.lock) {
+        val deleted = writableDatabase.delete(TABLE, selection, args)
+        ScreenshotLibrary.prune(appContext, getAllEntries(), imageRemoved = deleted > 0)
+        if (deleted > 0) ScreenshotLibrary.markRemoved()
+        deleted
+      }
+
+  fun pruneOrphanedIndexes() =
+      synchronized(ScreenshotLibrary.lock) { ScreenshotLibrary.prune(appContext, getAllEntries()) }
+
+  fun rebindImageUri(id: Long, newUri: String) =
+      synchronized(ScreenshotLibrary.lock) {
+        val entry = getEntryById(id) ?: return@synchronized
+        if (entry.imageUri == newUri) return@synchronized
+        val values = ContentValues().apply { put(COL_IMAGE_URI, newUri) }
+        writableDatabase.update(TABLE, values, "$COL_ID = ?", arrayOf(id.toString()))
+        ScreenshotLibrary.rebindUri(appContext, entry.imageUri, newUri)
+      }
+
+  fun removeSourceFolders(removedFolders: Set<String>, remainingFolders: Set<String>): Int =
+      synchronized(ScreenshotLibrary.lock) {
+        val removedUris = mutableListOf<String>()
+        for (entry in getAllEntries()) {
+          if (removedFolders.none { ScreenshotSourceScope.isWithinTree(entry.imageUri, it) })
+              continue
+          val retainedFolder =
+              remainingFolders.firstOrNull {
+                ScreenshotSourceScope.isWithinTree(entry.imageUri, it)
+              }
+          if (retainedFolder == null) {
+            removedUris.add(entry.imageUri)
+          } else {
+            val uri =
+                android.provider.DocumentsContract.buildDocumentUriUsingTree(
+                    android.net.Uri.parse(retainedFolder),
+                    android.provider.DocumentsContract.getDocumentId(
+                        android.net.Uri.parse(entry.imageUri)))
+            rebindImageUri(entry.id, uri.toString())
+          }
+        }
+        deleteEntriesByImageUris(removedUris)
+      }
 
   fun getEntryByImageUri(imageUri: String): ScreenshotEntry? {
     val cursor =
@@ -153,19 +221,27 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
     return cursor.use { if (it.moveToFirst()) cursorToEntry(it) else null }
   }
 
-  fun deleteEntriesByImageUris(imageUris: Collection<String>): Int {
-    if (imageUris.isEmpty()) return 0
-    val db = writableDatabase
-    var deleted = 0
-    for (uri in imageUris) {
-      val count = db.delete(TABLE, "$COL_IMAGE_URI = ?", arrayOf(uri))
-      deleted += count
-    }
-    return deleted
-  }
+  fun deleteEntriesByImageUris(imageUris: Collection<String>): Int =
+      synchronized(ScreenshotLibrary.lock) {
+        if (imageUris.isEmpty()) return@synchronized 0
+        val db = writableDatabase
+        var deleted = 0
+        db.beginTransaction()
+        try {
+          for (uri in imageUris) {
+            deleted += db.delete(TABLE, "$COL_IMAGE_URI = ?", arrayOf(uri))
+          }
+          db.setTransactionSuccessful()
+        } finally {
+          db.endTransaction()
+        }
+        ScreenshotLibrary.prune(appContext, getAllEntries(), imageRemoved = deleted > 0)
+        if (deleted > 0) ScreenshotLibrary.markRemoved()
+        deleted
+      }
 
   fun deleteEntriesWithEmptyHash(): Int {
-    return writableDatabase.delete(TABLE, "TRIM($COL_IMAGE_HASH) = ''", null)
+    return deleteMatching("TRIM($COL_IMAGE_HASH) = ''", null)
   }
 
   fun getEntryByHash(hash: String): ScreenshotEntry? {
@@ -298,6 +374,8 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
       analyzedAt: Long,
       note: String,
       modelUsed: String,
+      allowedEntryIds: Set<Long>? = null,
+      preserveNotes: Boolean = false,
   ) {
     val values =
         ContentValues().apply {
@@ -305,10 +383,15 @@ class ScreenshotDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, 
           put(COL_TAGS, tags)
           put(COL_ANALYZED_AT, analyzedAt)
           put(COL_IS_ANALYZING, 0)
-          put(COL_NOTE, note)
+          if (!preserveNotes) put(COL_NOTE, note)
           put(COL_MODEL_USED, modelUsed)
         }
-    writableDatabase.update(TABLE, values, "$COL_IMAGE_HASH = ?", arrayOf(hash))
+    if (allowedEntryIds == null) {
+      writableDatabase.update(TABLE, values, "$COL_IMAGE_HASH = ?", arrayOf(hash))
+    } else {
+      for (id in allowedEntryIds) writableDatabase.update(
+          TABLE, values, "$COL_IMAGE_HASH = ? AND $COL_ID = ?", arrayOf(hash, id.toString()))
+    }
   }
 
   /** Link an image URI to an existing hash entry (for imported entries). */

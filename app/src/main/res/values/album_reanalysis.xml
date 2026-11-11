@@ -1,0 +1,13 @@
+<resources>
+    <string name="album_reanalysis_embedding_required">Download the EmbeddingGemma search model in Settings first to reanalyze context and text embeddings together.</string>
+    <string name="album_selection_count">%1$d selected</string>
+    <string name="album_reanalyze">Reanalyze</string>
+    <string name="album_deselect_all">Deselect all albums</string>
+    <string name="album_select">Select album</string>
+    <string name="album_selected_for_reanalysis">Selected for reanalysis</string>
+    <string name="album_reanalysis_queued">Queued %1$d images for reanalysis</string>
+    <string name="album_reanalysis_empty">No saved context in the selected albums.</string>
+    <string name="album_reanalysis_load_model">Load an analysis model in Settings first.</string>
+    <string name="album_reanalysis_model_changed">The model changed. Tap Reanalyze again when it is ready.</string>
+    <string name="album_reanalysis_failed">Could not queue the selected albums.</string>
+</resources>

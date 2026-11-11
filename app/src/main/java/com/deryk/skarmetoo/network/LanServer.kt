@@ -40,7 +40,7 @@ class LanServer(
     private val context: Context,
     private val database: ScreenshotDatabase,
     private val settingsProvider: () -> DesktopJobSettings,
-    private val onResultApplied: () -> Unit,
+    private val onResultApplied: (Set<Long>) -> Unit,
     private val onProgressChanged: (LanProgress) -> Unit,
     private val onStateChanged: (State) -> Unit,
 ) {
@@ -56,6 +56,9 @@ class LanServer(
   @Volatile private var sessionToken: String? = null
   @Volatile private var jobId: String? = null
   @Volatile private var jobEntries: List<String> = emptyList()
+  @Volatile private var jobEntryIds: Set<Long>? = null
+  @Volatile private var jobEntryIdsByHash: Map<String, Set<Long>> = emptyMap()
+  @Volatile private var preserveJobNotes = false
   private val processedHashes = mutableSetOf<String>()
   @Volatile private var progress = LanProgress()
   @Volatile private var jobSettings = DesktopJobSettings()
@@ -101,20 +104,30 @@ class LanServer(
 
   fun isRunning(): Boolean = running.get()
 
-  fun startJob() {
+  fun startJob(entryIds: Set<Long>? = null) {
     if (!running.get()) return
     synchronized(progressLock) { if (progress.isRunning && jobId != null) cancelJob() }
     resetJobIfIdle()
-    val entries = database.getAllEntries().filter { it.isDesktopAnalysisCandidate() }
+    val entries =
+        database.getAllEntries().filter {
+          it.isDesktopAnalysisCandidate() && (entryIds == null || it.id in entryIds)
+        }
     val settings = settingsProvider().copy(customPrompt = settingsProvider().customPrompt.take(500))
     synchronized(progressLock) {
       if (progress.isRunning) return
       jobId = UUID.randomUUID().toString()
       jobSettings = settings
-      jobEntries = entries.map { it.imageHash }
+      jobEntries = entries.map { it.imageHash }.distinct()
+      jobEntryIds = entries.mapTo(hashSetOf()) { it.id }
+      jobEntryIdsByHash =
+          entries
+              .groupBy { it.imageHash }
+              .mapValues { (_, images) -> images.mapTo(hashSetOf()) { it.id } }
+      preserveJobNotes = entryIds != null
       processedHashes.clear()
       progress =
-          LanProgress(connected = true, total = entries.size, isRunning = true, settings = settings)
+          LanProgress(
+              connected = true, total = jobEntries.size, isRunning = true, settings = settings)
     }
     emitProgress(progress)
   }
@@ -129,6 +142,9 @@ class LanServer(
       if (!progress.isRunning) {
         jobId = null
         jobEntries = emptyList()
+        jobEntryIds = null
+        jobEntryIdsByHash = emptyMap()
+        preserveJobNotes = false
         processedHashes.clear()
       }
     }
@@ -226,6 +242,8 @@ class LanServer(
             .getAllEntries()
             .filter { it.isDesktopAnalysisCandidate() }
             .filter { jobId == null || it.imageHash in jobEntries }
+            .filter { jobEntryIds == null || it.id in jobEntryIds.orEmpty() }
+            .distinctBy { it.imageHash }
     respondJson(
         output,
         200,
@@ -249,7 +267,12 @@ class LanServer(
       respondJson(output, 400, errorJson("invalid_hash", "Image hash is empty"))
       return
     }
-    val entry = database.getEntryByHash(hash)
+    val entry =
+        if (jobEntryIds == null) database.getEntryByHash(hash)
+        else
+            database.getAllEntries().firstOrNull {
+              it.imageHash == hash && it.id in jobEntryIds.orEmpty()
+            }
     if (entry == null || entry.imageUri.isBlank()) {
       incrementFailed("image_not_found")
       respondJson(
@@ -313,44 +336,53 @@ class LanServer(
       return
     }
     runCatching {
-          val root = JSONObject(String(body, Charsets.UTF_8))
-          val requestJobId = root.optString("jobId")
-          if (jobId != null && requestJobId != jobId) error("job_mismatch")
-          val entries = root.getJSONArray("entries")
-          var accepted = 0
-          for (index in 0 until entries.length()) {
-            val item = entries.getJSONObject(index)
-            val hash = item.getString("imageHash")
-            if (database.getEntryByHash(hash) == null || (jobId != null && hash !in jobEntries)) {
-              incrementFailed("unknown_hash")
-              continue
+          synchronized(progressLock) {
+            if (!progress.isRunning && jobId != null) error("job_cancelled")
+            val root = JSONObject(String(body, Charsets.UTF_8))
+            val requestJobId = root.optString("jobId")
+            if (jobId != null && requestJobId != jobId) error("job_mismatch")
+            val entries = root.getJSONArray("entries")
+            var accepted = 0
+            val updatedIds = hashSetOf<Long>()
+            for (index in 0 until entries.length()) {
+              val item = entries.getJSONObject(index)
+              val hash = item.getString("imageHash")
+              if (database.getEntryByHash(hash) == null || (jobId != null && hash !in jobEntries)) {
+                incrementFailed("unknown_hash")
+                continue
+              }
+              val shouldApply = synchronized(progressLock) { processedHashes.add(hash) }
+              if (shouldApply) {
+                database.applyLanResult(
+                    hash,
+                    item.optString("summary"),
+                    item.optString("tags"),
+                    item.optLong("analyzedAt", System.currentTimeMillis()),
+                    item.optString("note"),
+                    item.optString("modelUsed"),
+                    allowedEntryIds = jobEntryIds?.let { jobEntryIdsByHash[hash].orEmpty() },
+                    preserveNotes = preserveJobNotes)
+                accepted++
+                updatedIds +=
+                    jobEntryIds?.let { jobEntryIdsByHash[hash].orEmpty() }
+                        ?: database.getAllEntries().filter { it.imageHash == hash }.map { it.id }
+              }
             }
-            val shouldApply = synchronized(progressLock) { processedHashes.add(hash) }
-            if (shouldApply) {
-              database.applyLanResult(
-                  hash,
-                  item.optString("summary"),
-                  item.optString("tags"),
-                  item.optLong("analyzedAt", System.currentTimeMillis()),
-                  item.optString("note"),
-                  item.optString("modelUsed"))
-              accepted++
+            if (accepted > 0) {
+              synchronized(progressLock) {
+                progress =
+                    progress.copy(
+                        processed = (progress.processed + accepted).coerceAtMost(progress.total))
+              }
+              onResultApplied(updatedIds)
             }
-          }
-          if (accepted > 0) {
-            synchronized(progressLock) {
-              progress =
-                  progress.copy(
-                      processed = (progress.processed + accepted).coerceAtMost(progress.total))
+            if (progress.total > 0 && progress.processed >= progress.total) {
+              synchronized(progressLock) { progress = progress.copy(isRunning = false) }
             }
-            onResultApplied()
+            emitProgress(progress)
+            respondJson(
+                output, 200, JSONObject().put("accepted", accepted).put("progress", progressJson()))
           }
-          if (progress.total > 0 && progress.processed >= progress.total) {
-            synchronized(progressLock) { progress = progress.copy(isRunning = false) }
-          }
-          emitProgress(progress)
-          respondJson(
-              output, 200, JSONObject().put("accepted", accepted).put("progress", progressJson()))
         }
         .onFailure {
           respondJson(

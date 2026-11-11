@@ -33,7 +33,7 @@
     <string name="leaderboard_show_less">收起</string>
     <string name="leaderboard_see_more">查看更多</string>
     <string name="leaderboard_rules">规则</string>
-    <string name="leaderboard_rules_description">排行榜每天按本地时间 %1$s 刷新。仅记录 Gemma 4 和 LFM 2.5 VL 的条目。</string>
+    <string name="leaderboard_rules_description">排行榜每天按本地时间 %1$s 刷新。仅记录 Gemma 4 和 LFM2.5 VL 450M 的条目。</string>
     <string name="leaderboard_unknown_device">未知设备</string>
     <string name="leaderboard_value_unavailable">—</string>
     <string name="leaderboard_image_size_value">%1$s × %2$s 像素</string>
@@ -53,4 +53,9 @@
     <string name="onboarding_analytics_plus_title">分析+</string>
     <string name="onboarding_analytics_plus_desc">开启分析+，在图片分析期间追踪处理速度以及 CPU 和 RAM 使用率。</string>
     <string name="output_language">输出语言</string>
+    <string name="embeddinggemma2_search_desc">自然语言与更智能的搜索。现支持文字与视觉，带来更快、更准确的结果。</string>
+    <string name="embeddinggemma2_model_repo" translatable="false">litert-community/embeddinggemma-2-text-vision-440m-litert-lm</string>
+    <string name="embeddinggemma_retirement_notice">将在下次更新中移除。请使用 EmbeddingGemma 2 重建索引。</string>
+    <string name="most_relevance">最相关优先</string>
+    <string name="least_relevance">最不相关优先</string>
 </resources>

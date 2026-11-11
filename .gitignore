@@ -23,3 +23,10 @@ deploymentTargetSelector.xml
 .kotlin/
 delivery/*/build/
 
+# Local validation output, migration backups, and machine-specific app configuration.
+/artifacts/
+/.codex-remote-attachments/
+/.commandcode/
+/desktop_app/build/
+/app/google-services*.json
+

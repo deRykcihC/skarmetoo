@@ -59,7 +59,7 @@
     <string name="leaderboard_show_less">顯示較少</string>
     <string name="leaderboard_see_more">查看更多</string>
     <string name="leaderboard_rules">規則</string>
-    <string name="leaderboard_rules_description">排行榜每天會在您當地時間 %1$s 重新整理。只會記錄 Gemma 4 和 LFM 2.5 VL 的項目。</string>
+    <string name="leaderboard_rules_description">排行榜每天會在您當地時間 %1$s 重新整理。只會記錄 Gemma 4 和 LFM2.5 VL 450M 的項目。</string>
     <string name="leaderboard_unknown_device">未知裝置</string>
     <string name="leaderboard_value_unavailable">—</string>
     <string name="leaderboard_image_size_value">%1$s × %2$s px</string>
@@ -262,7 +262,7 @@
     <string name="onboarding_page10_title">進階設定</string>
     <string name="onboarding_page10_desc">微調圖像解析度、並行分析數量，並啟用播放/暫停開關。這些選項屬於實驗性功能，請自行承擔風險，因為它們可能在效能較弱的硬體上造成不穩定。</string>
     <string name="more_models">更多模型</string>
-    <string name="model_lfm_title">LFM 2.5 VL</string>
+    <string name="model_lfm_title">LFM2.5 VL 450M</string>
     <string name="model_lfm_desc">專為速度與低發熱優化的超高效視覺模型。</string>
     <string name="beta">測試版</string>
     <string name="look_similar_title">看起來相似</string>
@@ -373,5 +373,10 @@
     <string name="projector_required">需要 mmproj</string>
     <string name="imported_model_tag">已匯入</string>
     <string name="imported_gguf_model_desc">自訂 GGUF 視覺模型</string>
+    <string name="embeddinggemma2_search_desc">自然語言與更智慧的搜尋。現支援文字與視覺，帶來更快、更準確的結果。</string>
+    <string name="embeddinggemma2_model_repo" translatable="false">litert-community/embeddinggemma-2-text-vision-440m-litert-lm</string>
+    <string name="embeddinggemma_retirement_notice">將於下次更新移除。請使用 EmbeddingGemma 2 重建索引。</string>
+    <string name="most_relevance">最相關優先</string>
+    <string name="least_relevance">最不相關優先</string>
 </resources>
 

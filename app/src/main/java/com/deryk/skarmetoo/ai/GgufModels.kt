@@ -14,7 +14,8 @@ data class GgufModelInfo(
     val chatTemplate: String = "",
 )
 
-val LFM_CHAT_TEMPLATE = "<|user|>\n{0}<|assistant|>\n"
+// LFM2.5 uses ChatML; native tokenization supplies its beginning-of-text token.
+val LFM_CHAT_TEMPLATE = "<|im_start|>user\n{0}<|im_end|>\n<|im_start|>assistant\n"
 
 fun GgufModelInfo.withChatTemplate(template: String) = copy(chatTemplate = template)
 
@@ -26,7 +27,7 @@ fun applyChatTemplate(template: String, prompt: String): String {
 val LFM2_5_VARIANTS =
     listOf(
         GgufModelInfo(
-            displayName = "LFM 2.5 VL",
+            displayName = "LFM2.5 VL 450M",
             fileName = "LFM2.5-VL-450M-Q8_0.gguf",
             hfRepo = "LiquidAI/LFM2.5-VL-450M-GGUF",
             hfFile = "LFM2.5-VL-450M-Q8_0.gguf",
@@ -41,4 +42,22 @@ val LFM2_5_VARIANTS =
 
 val LFM2_5_MODEL = LFM2_5_VARIANTS[0] // Q8_0 default
 
-val PRESET_GGUF_MODELS = emptyList<GgufModelInfo>()
+val LFM2_5_3B_MODEL =
+    GgufModelInfo(
+        displayName = "LFM2.5 VL 3B",
+        fileName = "LFM2.5-VL-3B-Q8_0.gguf",
+        hfRepo = "LiquidAI/LFM2.5-VL-3B-GGUF",
+        hfFile = "LFM2.5-VL-3B-Q8_0.gguf",
+        sizeMb = 2870,
+        description = "Vision and language model for image understanding and structured extraction",
+        isVision = true,
+        mmprojFile = "mmproj-LFM2.5-VL-3B-Q8_0.gguf",
+        mmprojSizeMb = 583,
+        quantLabel = "Q8_0",
+        chatTemplate = LFM_CHAT_TEMPLATE,
+    )
+
+val GgufModelInfo.supportsLfmTextPlanning: Boolean
+  get() = isVision && fileName in setOf(LFM2_5_MODEL.fileName, LFM2_5_3B_MODEL.fileName)
+
+val PRESET_GGUF_MODELS = listOf(LFM2_5_3B_MODEL)

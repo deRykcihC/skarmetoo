@@ -8,17 +8,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,8 +47,8 @@ import com.deryk.skarmetoo.R
 import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.GgufModelInfo
 import com.deryk.skarmetoo.ai.ImportedGgufModelStore
-import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.components.SecondaryPageLayout
+import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.viewmodel.ModelType
 import com.deryk.skarmetoo.viewmodel.ScreenshotViewModel
 import java.io.File
@@ -65,6 +66,7 @@ fun MoreModelsScreen(
   val scope = rememberCoroutineScope()
   val selectedModel by viewModel.selectedModel.collectAsState()
   val activeGgufModel by ggufManager.activeModelInfo.collectAsState()
+  val isGgufDownloading by ggufManager.isDownloading.collectAsState()
   val isGemma3nDownloaded by viewModel.isGemma3nDownloaded.collectAsState()
   val isGemma4Downloaded by viewModel.isGemma4Downloaded.collectAsState()
   var importedModelFile by remember { mutableStateOf(ImportedGgufModelStore.getModelFile(context)) }
@@ -80,6 +82,8 @@ fun MoreModelsScreen(
     importedMmprojFile = ImportedGgufModelStore.getMmprojFile(context)
     downloadedGgufModels = ggufManager.getDownloadedModels()
   }
+
+  LaunchedEffect(isGgufDownloading) { refreshAvailableModels() }
 
   fun showDeleteResult(success: Boolean) {
     Toast.makeText(
@@ -269,7 +273,8 @@ fun MoreModelsScreen(
     }
   }
 
-  val navigationBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+  val navigationBottomPadding =
+      WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
   SecondaryPageLayout(title = stringResource(R.string.more_models), onBack = onBack) {
     if (isLandscape) {
@@ -278,12 +283,20 @@ fun MoreModelsScreen(
           horizontalArrangement = Arrangement.spacedBy(20.dp),
       ) {
         Column(
-            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 80.dp + navigationBottomPadding),
+            modifier =
+                Modifier.weight(1f)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 80.dp + navigationBottomPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = importPaneContent,
         )
         Column(
-            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 80.dp + navigationBottomPadding),
+            modifier =
+                Modifier.weight(1f)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 80.dp + navigationBottomPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = availableModelsPaneContent,
         )
@@ -293,7 +306,11 @@ fun MoreModelsScreen(
           modifier =
               Modifier.fillMaxSize()
                   .verticalScroll(rememberScrollState())
-                  .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 88.dp + navigationBottomPadding),
+                  .padding(
+                      start = 16.dp,
+                      top = 8.dp,
+                      end = 16.dp,
+                      bottom = 88.dp + navigationBottomPadding),
           verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
         importPaneContent()
@@ -407,7 +424,7 @@ private fun AvailableModelCard(
     selected: Boolean = false,
     enabled: Boolean = true,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
   OutlinedCard(
       onClick = onClick,
@@ -443,17 +460,25 @@ private fun AvailableModelCard(
         )
       }
       Spacer(modifier = Modifier.width(12.dp))
-      IconButton(
-          onClick = hapticOnClick(onDelete),
-          modifier = Modifier.size(36.dp),
-      ) {
-        Icon(
-            imageVector = Icons.Rounded.DeleteOutline,
-            contentDescription = stringResource(R.string.delete_model),
-            tint = MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(20.dp),
-        )
-      }
+      if (onDelete != null)
+          IconButton(
+              onClick = hapticOnClick(onDelete),
+              modifier = Modifier.size(36.dp),
+          ) {
+            Icon(
+                imageVector = Icons.Rounded.DeleteOutline,
+                contentDescription = stringResource(R.string.delete_model),
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp),
+            )
+          }
+      else if (enabled)
+          Icon(
+              imageVector = Icons.Rounded.Download,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.size(20.dp),
+          )
     }
   }
 }

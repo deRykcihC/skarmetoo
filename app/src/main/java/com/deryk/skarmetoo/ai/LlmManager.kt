@@ -37,11 +37,11 @@ import kotlinx.coroutines.sync.withLock
 private const val TAG = "LlmManager"
 
 class LlmManager(private val context: Context) {
-  private var engine: Engine? = null
+  internal var engine: Engine? = null
   private var conversation: Conversation? = null
   private var currentModelName: String = "Gemma 3n"
   private val scope = CoroutineScope(Dispatchers.IO)
-  private val engineMutex = kotlinx.coroutines.sync.Mutex()
+  internal val engineMutex = kotlinx.coroutines.sync.Mutex()
 
   // Engine pool for concurrent analysis - each engine is independent
   private data class PooledEngine(
@@ -98,7 +98,7 @@ class LlmManager(private val context: Context) {
     }
   }
 
-  private suspend fun acquireInferenceSlot(): Boolean {
+  internal suspend fun acquireInferenceSlot(): Boolean {
     while (engine != null && engineConfigForPool != null) {
       val active = activeInferenceCount.get()
       val maxInstances = maxConcurrentInstances.get()
@@ -111,7 +111,7 @@ class LlmManager(private val context: Context) {
     return false
   }
 
-  private fun releaseInferenceSlot() {
+  internal fun releaseInferenceSlot() {
     val active = activeInferenceCount.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
     Log.d(TAG, "Released inference slot: active=$active/${maxConcurrentInstances.get()}")
   }
@@ -593,7 +593,7 @@ TAGS: [extracted tag1, tag2, tag3]"""
         .joinToString(", ")
   }
 
-  private fun resizeBitmap(
+  internal fun resizeBitmap(
       originalBitmap: Bitmap,
       maxSize: Int,
   ): Bitmap {

@@ -1,0 +1,23 @@
+<resources>
+    <string name="guide_start">試用引導設定</string>
+    <string name="guide_replay">引導設定</string>
+    <string name="guide_step">%1$d/%2$d</string>
+    <string name="guide_skip">略過</string>
+    <string name="guide_back">上一步</string>
+    <string name="guide_next">下一步</string>
+    <string name="guide_finish">完成</string>
+    <string name="guide_folders_title">選擇圖片資料夾</string>
+    <string name="guide_folders_body">點擊反白的資料夾按鈕，選擇允許應用程式使用的相簿。以後也可以變更。準備好後點擊下一步，也可以先了解介面。</string>
+    <string name="guide_model_title">選擇分析模型</string>
+    <string name="guide_model_body">模型會讀取圖片並儲存描述。點擊反白的卡片選擇或下載模型。只有點擊模型後才會開始下載，下載可能需要一些時間。</string>
+    <string name="guide_progress_title">查看分析進度</string>
+    <string name="guide_progress_body">這些數字顯示已有描述的圖片數量。模型和圖片準備好後會自動開始分析。處理期間可以繼續使用應用程式。</string>
+    <string name="guide_search_title">尋找已儲存的圖片</string>
+    <string name="guide_search_body">使用描述、標籤或筆記中的詞語搜尋。搜尋模型準備好後，點擊星光圖示可以切換到語意搜尋。開啟搜尋結果中的圖片即可查看描述。</string>
+    <string name="guide_book_title">探索使用指南</string>
+    <string name="guide_book_body">想了解更多？點擊設定右上角反白的指南按鈕，查看完整的使用指南。以後隨時都可以回來查看。</string>
+    <string name="guide_embedding_title">使用 EmbeddingGemma 按含義搜尋</string>
+    <string name="guide_embedding_body">EmbeddingGemma 根據已儲存的描述、標籤和筆記的含義幫你尋找圖片。下載模型並建立搜尋索引後，即可在圖庫中使用星光搜尋模式。這是選用功能，也可以繼續使用關鍵字搜尋。</string>
+    <string name="guide_efficientnet_title">使用 EfficientNet 尋找相似圖片</string>
+    <string name="guide_efficientnet_body">EfficientNet-Lite 為尋找相似圖片功能提供支援。它會比較視覺特徵，找出外觀相似的圖片，即使尚未儲存描述也可以使用。下載這個小型模型並建立視覺索引後，即可使用圖片相似度搜尋。</string>
+</resources>

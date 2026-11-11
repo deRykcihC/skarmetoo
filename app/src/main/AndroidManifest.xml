@@ -21,6 +21,9 @@
         android:supportsRtl="true"
         android:largeHeap="true"
         android:theme="@style/Theme.Skarmetoo">
+        <!-- Required by LiteRT-LM for vendor GPU libraries on Android 12+. CPU stays optional. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="@string/leaderboard_notification_channel_id" />

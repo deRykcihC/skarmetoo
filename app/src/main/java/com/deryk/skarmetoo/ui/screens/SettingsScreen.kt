@@ -65,14 +65,19 @@ import com.deryk.skarmetoo.ai.EmbeddingGemmaSkippedStore
 import com.deryk.skarmetoo.ai.GgufLlmManager
 import com.deryk.skarmetoo.ai.GgufModelInfo
 import com.deryk.skarmetoo.ai.ImportedGgufModelStore
+import com.deryk.skarmetoo.ai.LFM2_5_3B_MODEL
 import com.deryk.skarmetoo.ai.LFM2_5_MODEL
 import com.deryk.skarmetoo.ai.LlmManager
+import com.deryk.skarmetoo.ai.SearchEmbeddingModel
+import com.deryk.skarmetoo.ai.SearchModel
 import com.deryk.skarmetoo.data.ScreenshotTextEmbeddingDatabase
 import com.deryk.skarmetoo.network.BenchmarkUploadStatus
 import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationBottomInset
 import com.deryk.skarmetoo.ui.components.LocalFloatingNavigationEndInset
 import com.deryk.skarmetoo.ui.components.hapticOnClick
 import com.deryk.skarmetoo.ui.components.rememberSquigglePillShape
+import com.deryk.skarmetoo.ui.guide.LocalStartingGuide
+import com.deryk.skarmetoo.ui.guide.startingGuideTarget
 import com.deryk.skarmetoo.ui.theme.AppMotion
 import com.deryk.skarmetoo.ui.theme.LocalIsDarkMode
 import com.deryk.skarmetoo.ui.theme.MiSansFamily
@@ -112,6 +117,7 @@ private const val LIVE_CHART_POINT_COUNT = 50
 fun SettingsScreen(
     viewModel: ScreenshotViewModel,
     semanticViewModel: SemanticSearchViewModel,
+    chatSection: (@Composable () -> Unit)? = null,
     onStartScreenSaver: () -> Unit,
     logoRes: Int = R.drawable.app_logo,
     onRevisitTutorial: () -> Unit = {},
@@ -125,6 +131,7 @@ fun SettingsScreen(
   val currentDetailLevel by viewModel.detailLevel.collectAsState()
   val customPrompt by viewModel.customPrompt.collectAsState()
   val context = LocalContext.current
+  val startingGuide = LocalStartingGuide.current
   val isDebugBuild =
       remember(context) { context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
   val appVersionName =
@@ -164,6 +171,11 @@ fun SettingsScreen(
         value = ggufManager.isModelDownloaded(LFM2_5_MODEL)
       }
   val downloadingModelType by viewModel.downloadingModelType.collectAsState()
+  val isLfm3bDownloaded by
+      produceState(
+          initialValue = ggufManager.isModelDownloaded(LFM2_5_3B_MODEL), isGgufDownloading) {
+            value = ggufManager.isModelDownloaded(LFM2_5_3B_MODEL)
+          }
 
   val gemma3nUrl =
       "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm"
@@ -188,10 +200,25 @@ fun SettingsScreen(
 
   var showHfLogin by remember { mutableStateOf(false) }
   var hfLoginModelType by remember { mutableStateOf(ModelType.GEMMA_3N) }
+  val selectedSearchModel by viewModel.selectedSearchModel.collectAsState()
   var showEmbeddingGemmaHfLogin by remember { mutableStateOf(false) }
-  var isEmbeddingGemmaDownloaded by remember {
-    mutableStateOf(EmbeddingGemma.hasRequiredFiles(context))
+  val downloadAuthenticationRequired by viewModel.downloadAuthenticationRequired.collectAsState()
+  LaunchedEffect(downloadAuthenticationRequired, isDownloadingModel) {
+    val model = downloadAuthenticationRequired
+    if (model != null && !isDownloadingModel) {
+      hfLoginModelType = model
+      showHfLogin = true
+      viewModel.clearDownloadAuthenticationRequired()
+    }
   }
+
+  fun startHfModelDownload(model: ModelType) {
+    val url = if (model == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
+    val cookies = android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
+    viewModel.downloadModel(url, "", cookies, false, model)
+  }
+  var isEmbeddingGemmaDownloaded by
+      remember(selectedSearchModel) { mutableStateOf(selectedSearchModel.available(context)) }
   var isEmbeddingGemmaDownloading by remember { mutableStateOf(false) }
   var embeddingGemmaDownloadFailed by remember { mutableStateOf(false) }
   var embeddingGemmaDownloadProgress by remember { mutableFloatStateOf(0f) }
@@ -201,7 +228,7 @@ fun SettingsScreen(
   var embeddingGemmaIndexedCount by remember { mutableIntStateOf(0) }
   var embeddingGemmaIndexingStatus by remember { mutableStateOf<String?>(null) }
   var embeddingGemmaTooLongEntryIds by remember {
-    mutableStateOf(EmbeddingGemmaSkippedStore.getEntryIds(context))
+    mutableStateOf(EmbeddingGemmaSkippedStore.getEntryIds(context, selectedSearchModel))
   }
   var embeddingGemmaTotalCount by remember { mutableIntStateOf(0) }
   var embeddingGemmaTextReadyCount by remember { mutableIntStateOf(0) }
@@ -223,26 +250,29 @@ fun SettingsScreen(
   val sourceSemanticIndexedCount by semanticViewModel.indexedCount.collectAsState()
   var lastSemanticAutoIndexSignature by remember { mutableStateOf<Int?>(null) }
 
-  LaunchedEffect(sourceAllScreenshots, embeddingGemmaIndexRevision) {
+  LaunchedEffect(sourceAllScreenshots, embeddingGemmaIndexRevision, selectedSearchModel) {
     EmbeddingGemma.migrateLegacyTokenizerName(context.applicationContext)
-    isEmbeddingGemmaDownloaded = EmbeddingGemma.hasRequiredFiles(context)
+    isEmbeddingGemmaDownloaded = selectedSearchModel.available(context)
     val allEntries = withContext(Dispatchers.IO) { viewModel.getAllValidEntriesSnapshot() }
     val validEntryIds = allEntries.mapTo(hashSetOf()) { it.id }
-    val persistedTooLongIds = EmbeddingGemmaSkippedStore.getEntryIds(context)
+    val persistedTooLongIds = EmbeddingGemmaSkippedStore.getEntryIds(context, selectedSearchModel)
     val existingTooLongIds = persistedTooLongIds.filterTo(linkedSetOf()) { it in validEntryIds }
     if (existingTooLongIds != persistedTooLongIds) {
-      EmbeddingGemmaSkippedStore.saveEntryIds(context, existingTooLongIds)
+      EmbeddingGemmaSkippedStore.saveEntryIds(context, existingTooLongIds, selectedSearchModel)
     }
     embeddingGemmaTooLongEntryIds = existingTooLongIds
     embeddingGemmaTotalCount = allEntries.size
     embeddingGemmaTextReadyCount =
-        allEntries.count { EmbeddingGemma.buildSearchText(it).isNotBlank() }
-    val db = ScreenshotTextEmbeddingDatabase(context.applicationContext)
-    embeddingGemmaIndexedCount = db.getStoredEmbeddingCount()
+        allEntries.count {
+          selectedSearchModel == SearchModel.GEMMA2 ||
+              EmbeddingGemma.buildSearchText(it).isNotBlank()
+        }
+    val db = ScreenshotTextEmbeddingDatabase(context.applicationContext, selectedSearchModel)
+    embeddingGemmaIndexedCount = db.getIndexedEntryCount(allEntries)
     db.close()
   }
 
-  fun startEmbeddingGemmaDownload(cookies: String?) {
+  fun startEmbeddingGemmaDownload(cookies: String?, promptForAuthentication: Boolean = true) {
     if (isEmbeddingGemmaDownloading) return
     isEmbeddingGemmaDownloading = true
     embeddingGemmaDownloadFailed = false
@@ -250,22 +280,27 @@ fun SettingsScreen(
     embeddingGemmaError = null
     settingsScope.launch {
       try {
-        EmbeddingGemma.downloadRequiredFiles(context.applicationContext, cookies) { progress ->
-          settingsScope.launch(Dispatchers.Main) { embeddingGemmaDownloadProgress = progress }
+        if (selectedSearchModel == SearchModel.GEMMA2) {
+          com.deryk.skarmetoo.ai.EmbeddingGemma2Backend(context.applicationContext).download(
+              cookies) { progress ->
+                settingsScope.launch(Dispatchers.Main) { embeddingGemmaDownloadProgress = progress }
+              }
+        } else {
+          EmbeddingGemma.downloadRequiredFiles(context.applicationContext, cookies) { progress ->
+            settingsScope.launch(Dispatchers.Main) { embeddingGemmaDownloadProgress = progress }
+          }
         }
         withContext(Dispatchers.Main) {
-          isEmbeddingGemmaDownloaded = EmbeddingGemma.hasRequiredFiles(context)
+          isEmbeddingGemmaDownloaded = selectedSearchModel.available(context)
         }
       } catch (e: Exception) {
         withContext(Dispatchers.Main) {
           val message =
               e.localizedMessage ?: context.getString(R.string.embeddinggemma_download_failed)
           embeddingGemmaError =
-              if (message.contains("Unauthorized", ignoreCase = true) ||
-                  message.contains("Forbidden", ignoreCase = true) ||
-                  message.contains("401", ignoreCase = true) ||
-                  message.contains("403", ignoreCase = true)) {
+              if (e is com.deryk.skarmetoo.network.HuggingFaceAuthenticationRequiredException) {
                 embeddingGemmaDownloadFailed = true
+                if (promptForAuthentication) showEmbeddingGemmaHfLogin = true
                 context.getString(R.string.embeddinggemma_sign_in_required)
               } else {
                 embeddingGemmaDownloadFailed = true
@@ -285,17 +320,21 @@ fun SettingsScreen(
     embeddingGemmaError = null
     embeddingGemmaIndexingStatus = null
     embeddingGemmaTooLongEntryIds = emptySet()
-    EmbeddingGemmaSkippedStore.saveEntryIds(context.applicationContext, emptySet())
+    EmbeddingGemmaSkippedStore.saveEntryIds(
+        context.applicationContext, emptySet(), selectedSearchModel)
 
     settingsScope.launch(Dispatchers.IO) {
-      val generator = EmbeddingGemma(context.applicationContext)
-      val db = ScreenshotTextEmbeddingDatabase(context.applicationContext)
+      val generator = SearchEmbeddingModel(context.applicationContext, selectedSearchModel)
+      val db = ScreenshotTextEmbeddingDatabase(context.applicationContext, selectedSearchModel)
       try {
         val allEntries = viewModel.getAllValidEntriesSnapshot()
         withContext(Dispatchers.Main) {
           embeddingGemmaTotalCount = allEntries.size
           embeddingGemmaTextReadyCount =
-              allEntries.count { EmbeddingGemma.buildSearchText(it).isNotBlank() }
+              allEntries.count {
+                selectedSearchModel == SearchModel.GEMMA2 ||
+                    EmbeddingGemma.buildSearchText(it).isNotBlank()
+              }
         }
 
         if (!generator.initialize()) {
@@ -309,13 +348,16 @@ fun SettingsScreen(
         }
 
         val storedHashes = db.getStoredContentHashes()
+        val storedVisualHashes = db.getStoredVisualHashes()
         val searchableCount =
             allEntries.count { entry ->
-              entry.imageUri.isNotBlank() && EmbeddingGemma.buildSearchText(entry).isNotBlank()
+              entry.imageUri.isNotBlank() &&
+                  (selectedSearchModel == SearchModel.GEMMA2 ||
+                      EmbeddingGemma.buildSearchText(entry).isNotBlank())
             }
         if (searchableCount == 0) {
           withContext(Dispatchers.Main) {
-            embeddingGemmaIndexedCount = db.getStoredEmbeddingCount()
+            embeddingGemmaIndexedCount = db.getIndexedEntryCount(allEntries)
             embeddingGemmaIndexingStatus =
                 context.getString(R.string.embeddinggemma_no_searchable_text)
           }
@@ -325,8 +367,10 @@ fun SettingsScreen(
             allEntries.filter { entry ->
               val text = EmbeddingGemma.buildSearchText(entry)
               entry.imageUri.isNotBlank() &&
-                  text.isNotBlank() &&
-                  storedHashes[entry.imageUri] != text.hashCode()
+                  (selectedSearchModel == SearchModel.GEMMA2 || text.isNotBlank()) &&
+                  (storedHashes[entry.imageUri] != text.hashCode() ||
+                      (selectedSearchModel == SearchModel.GEMMA2 &&
+                          storedVisualHashes[entry.imageUri] != entry.imageHash))
             }
 
         withContext(Dispatchers.Main) {
@@ -341,9 +385,10 @@ fun SettingsScreen(
         var firstFailure: String? = null
         pendingEntries.forEachIndexed { index, entry ->
           val text = EmbeddingGemma.buildSearchText(entry)
-          val embedding = generator.embedDocument(text)
+          val vectors = generator.embedEntry(entry)
+          val embedding = vectors?.context
           if (embedding != null) {
-            if (db.saveEmbedding(entry, text.hashCode(), embedding)) {
+            if (db.saveEmbedding(entry, text.hashCode(), embedding, vectors?.visual)) {
               savedCount++
               if (savedCount == 1) {
                 Log.d(
@@ -366,7 +411,8 @@ fun SettingsScreen(
             if (EmbeddingGemma.isTextTooLongError(error)) {
               tooLongCount++
               tooLongEntryIds += entry.id
-              EmbeddingGemmaSkippedStore.saveEntryIds(context.applicationContext, tooLongEntryIds)
+              EmbeddingGemmaSkippedStore.saveEntryIds(
+                  context.applicationContext, tooLongEntryIds, selectedSearchModel)
             } else if (firstFailure == null) {
               firstFailure =
                   error?.let { context.getString(R.string.embeddinggemma_embedding_failed, it) }
@@ -375,7 +421,7 @@ fun SettingsScreen(
           }
           withContext(Dispatchers.Main) {
             embeddingGemmaIndexingProgress = (index + 1) to pendingEntries.size
-            embeddingGemmaIndexedCount = db.getStoredEmbeddingCount()
+            embeddingGemmaIndexedCount = db.getIndexedEntryCount(allEntries)
             embeddingGemmaTooLongEntryIds = tooLongEntryIds.toSet()
             embeddingGemmaIndexingStatus =
                 when {
@@ -390,7 +436,7 @@ fun SettingsScreen(
         }
 
         withContext(Dispatchers.Main) {
-          embeddingGemmaIndexedCount = db.getStoredEmbeddingCount()
+          embeddingGemmaIndexedCount = db.getIndexedEntryCount(allEntries)
           embeddingGemmaTooLongEntryIds = tooLongEntryIds.toSet()
           embeddingGemmaIndexingStatus =
               when {
@@ -537,6 +583,14 @@ fun SettingsScreen(
     ) {
       val overviewSection: @Composable () -> Unit = {
         Column(modifier = if (isLandscape) Modifier.padding(top = 4.dp) else Modifier) {
+          if (isDebugBuild && startingGuide != null) {
+            OutlinedButton(
+                onClick = startingGuide::start,
+                modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+            ) {
+              Text(stringResource(R.string.guide_start))
+            }
+          }
           Row(
               modifier =
                   Modifier.fillMaxWidth()
@@ -623,35 +677,39 @@ fun SettingsScreen(
                       horizontalArrangement = Arrangement.spacedBy(4.dp),
                       verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
-                            onClick = hapticOnClick(onRevisitTutorial),
-                            modifier = Modifier.size(34.dp),
+                            onClick =
+                                hapticOnClick {
+                                  startingGuide?.stop()
+                                  onRevisitTutorial()
+                                },
+                            modifier = Modifier.size(34.dp).startingGuideTarget("guidebook"),
                             shape = CircleShape,
                         ) {
-                              Icon(
-                                  Icons.Rounded.MenuBook,
-                                  contentDescription = "Tutorial",
-                                  modifier = Modifier.size(20.dp))
-                            }
+                          Icon(
+                              Icons.Rounded.MenuBook,
+                              contentDescription = "Tutorial",
+                              modifier = Modifier.size(20.dp))
+                        }
                         IconButton(
                             onClick = hapticOnClick { viewModel.setDarkMode(!isDark) },
                             modifier = Modifier.size(34.dp),
                             shape = CircleShape,
                         ) {
-                              Icon(
-                                  if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                  contentDescription = "Toggle Dark Mode",
-                                  modifier = Modifier.size(20.dp))
-                            }
+                          Icon(
+                              if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                              contentDescription = "Toggle Dark Mode",
+                              modifier = Modifier.size(20.dp))
+                        }
                         IconButton(
                             onClick = hapticOnClick(onStartScreenSaver),
                             modifier = Modifier.size(34.dp),
                             shape = CircleShape,
                         ) {
-                              Icon(
-                                  Icons.Rounded.Monitor,
-                                  contentDescription = "Screen Saver",
-                                  modifier = Modifier.size(20.dp))
-                            }
+                          Icon(
+                              Icons.Rounded.Monitor,
+                              contentDescription = "Screen Saver",
+                              modifier = Modifier.size(20.dp))
+                        }
                         IconButton(
                             onClick =
                                 hapticOnClick {
@@ -665,11 +723,11 @@ fun SettingsScreen(
                             modifier = Modifier.size(34.dp),
                             shape = CircleShape,
                         ) {
-                              Icon(
-                                  Icons.Rounded.Language,
-                                  contentDescription = "Language",
-                                  modifier = Modifier.size(20.dp))
-                            }
+                          Icon(
+                              Icons.Rounded.Language,
+                              contentDescription = "Language",
+                              modifier = Modifier.size(20.dp))
+                        }
                       }
                 }
               }
@@ -731,21 +789,23 @@ fun SettingsScreen(
                             androidx.compose.animation.fadeIn(animationSpec = AppMotion.timed(240)),
                     exit =
                         androidx.compose.animation.shrinkHorizontally(
-                            animationSpec = AppMotion.linear(240), shrinkTowards = Alignment.Start) +
-                            androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(240)),
+                            animationSpec = AppMotion.linear(240),
+                            shrinkTowards = Alignment.Start) +
+                            androidx.compose.animation.fadeOut(
+                                animationSpec = AppMotion.linear(240)),
                 ) {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = analyticsSuffix.uppercase(),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = analyticsContentColor,
-                            letterSpacing = 1.sp,
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        BenchmarkUploadIndicator(status = benchmarkUploadStatus)
-                      }
-                    }
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = analyticsSuffix.uppercase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = analyticsContentColor,
+                        letterSpacing = 1.sp,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    BenchmarkUploadIndicator(status = benchmarkUploadStatus)
+                  }
+                }
               }
             }
             Spacer(modifier = Modifier.weight(1f))
@@ -870,7 +930,10 @@ fun SettingsScreen(
 
           // ===== Stats cards row =====
           Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+              modifier =
+                  Modifier.fillMaxWidth()
+                      .padding(horizontal = 16.dp)
+                      .startingGuideTarget("progress"),
               horizontalArrangement = Arrangement.spacedBy(12.dp),
           ) {
             Card(
@@ -1121,6 +1184,7 @@ fun SettingsScreen(
                                 },
                             modifier =
                                 Modifier.size(36.dp)
+                                    .startingGuideTarget("folders")
                                     .background(
                                         MaterialTheme.colorScheme.primaryContainer.copy(
                                             alpha = 0.7f),
@@ -1364,8 +1428,36 @@ fun SettingsScreen(
               val modelOutlineLoading =
                   modelOutlinePulse == selectedModel ||
                       (selectedModel != ModelType.DESKTOP &&
-                          !isModelReady && (isModelFound || isDownloadingModel))
+                          !isModelReady &&
+                          (isModelFound || isDownloadingModel))
               val isGemma3nSelectedForTop = selectedModel == ModelType.GEMMA_3N
+              val isLfm3bSelected =
+                  selectedModel == ModelType.GGUF &&
+                      activeGgufModel?.fileName == LFM2_5_3B_MODEL.fileName
+              val isDownloadingLfm3b =
+                  isGgufDownloading && ggufDownloadingModelName == LFM2_5_3B_MODEL.displayName
+              val lfm3bCard: @Composable () -> Unit = {
+                Lfm3bModelCard(
+                    selected = isLfm3bSelected,
+                    loading = isDownloadingLfm3b || (isLfm3bSelected && modelOutlineLoading),
+                    isDownloaded = isLfm3bDownloaded,
+                    isDownloading = isDownloadingLfm3b,
+                    downloadProgress = ggufDownloadProgress,
+                    onClick = {
+                      if (isLfm3bDownloaded) {
+                        startModelOutlinePulse(ModelType.GGUF)
+                        viewModel.setGgufModelAsActive(LFM2_5_3B_MODEL)
+                      } else if (!isGgufDownloading) {
+                        ggufManager.downloadModel(
+                            LFM2_5_3B_MODEL,
+                            onComplete = { success ->
+                              if (success) viewModel.setGgufModelAsActive(LFM2_5_3B_MODEL)
+                            })
+                      }
+                    },
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+              }
               val isDownloadingGemma3n =
                   isDownloadingModel && downloadingModelType == ModelType.GEMMA_3N
               val isAicoreSelectedForTop = selectedModel == ModelType.AICORE
@@ -1395,10 +1487,11 @@ fun SettingsScreen(
               val isDesktopSelected = selectedModel == ModelType.DESKTOP
               SquiggleOutlinedCard(
                   loading = modelOutlinePulse == ModelType.DESKTOP,
-                  onClick = hapticOnClick {
-                    startModelOutlinePulse(ModelType.DESKTOP)
-                    viewModel.setSelectedModel(ModelType.DESKTOP)
-                  },
+                  onClick =
+                      hapticOnClick {
+                        startModelOutlinePulse(ModelType.DESKTOP)
+                        viewModel.setSelectedModel(ModelType.DESKTOP)
+                      },
                   modifier = Modifier.fillMaxWidth(),
                   cornerRadius = 14.dp,
                   colors =
@@ -1452,6 +1545,7 @@ fun SettingsScreen(
               Spacer(modifier = Modifier.height(8.dp))
 
               if (isGemma3nSelectedForTop) {
+                lfm3bCard()
                 Gemma3nModelCard(
                     selected = true,
                     loading = modelOutlineLoading,
@@ -1466,8 +1560,7 @@ fun SettingsScreen(
                         val path = context.filesDir.absolutePath + "/" + ModelType.GEMMA_3N.fileName
                         viewModel.initializeModel(path, isGemma4 = false)
                       } else if (!isDownloadingModel) {
-                        hfLoginModelType = ModelType.GEMMA_3N
-                        showHfLogin = true
+                        startHfModelDownload(ModelType.GEMMA_3N)
                       }
                     },
                 )
@@ -1506,11 +1599,10 @@ fun SettingsScreen(
                               context.filesDir.absolutePath + "/" + ModelType.GEMMA_4.fileName
                           viewModel.initializeModel(path, isGemma4 = true)
                         } else if (!isDownloadingModel) {
-                          hfLoginModelType = ModelType.GEMMA_4
-                          showHfLogin = true
+                          startHfModelDownload(ModelType.GEMMA_4)
                         }
                       },
-                  modifier = Modifier.fillMaxWidth(),
+                  modifier = Modifier.fillMaxWidth().startingGuideTarget("model"),
                   cornerRadius = 14.dp,
                   colors =
                       CardDefaults.outlinedCardColors(
@@ -1619,7 +1711,8 @@ fun SettingsScreen(
               SquiggleOutlinedCard(
                   loading =
                       modelOutlinePulse == ModelType.GGUF ||
-                          (isLfmSelected && modelOutlineLoading) || isDownloadingLfm,
+                          (isLfmSelected && modelOutlineLoading) ||
+                          isDownloadingLfm,
                   onClick =
                       hapticOnClick {
                         startModelOutlinePulse(ModelType.GGUF)
@@ -1771,10 +1864,12 @@ fun SettingsScreen(
                     Column {
                       Spacer(modifier = Modifier.height(6.dp))
                       if (!isGemma3nSelectedForTop) {
+                        lfm3bCard()
                         val isGemma3nSelected =
                             selectedModel == ModelType.GEMMA_3N && isGemma3nDownloaded
                         SquiggleOutlinedCard(
-                            loading = modelOutlinePulse == ModelType.GEMMA_3N || isDownloadingGemma3n,
+                            loading =
+                                modelOutlinePulse == ModelType.GEMMA_3N || isDownloadingGemma3n,
                             onClick =
                                 hapticOnClick {
                                   startModelOutlinePulse(ModelType.GEMMA_3N)
@@ -1786,8 +1881,7 @@ fun SettingsScreen(
                                             ModelType.GEMMA_3N.fileName
                                     viewModel.initializeModel(path, isGemma4 = false)
                                   } else if (!isDownloadingModel) {
-                                    hfLoginModelType = ModelType.GEMMA_3N
-                                    showHfLogin = true
+                                    startHfModelDownload(ModelType.GEMMA_3N)
                                   }
                                 },
                             modifier = Modifier.fillMaxWidth(),
@@ -2095,8 +2189,7 @@ fun SettingsScreen(
                   exit =
                       androidx.compose.animation.shrinkVertically(
                           animationSpec = AppMotion.linear(240)) +
-                          androidx.compose.animation.fadeOut(
-                              animationSpec = AppMotion.linear(160)),
+                          androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(160)),
               ) {
                 Column {
                   Spacer(modifier = Modifier.height(8.dp))
@@ -2247,8 +2340,7 @@ fun SettingsScreen(
                   exit =
                       androidx.compose.animation.shrinkVertically(
                           animationSpec = AppMotion.linear(240)) +
-                          androidx.compose.animation.fadeOut(
-                              animationSpec = AppMotion.linear(160)),
+                          androidx.compose.animation.fadeOut(animationSpec = AppMotion.linear(160)),
               ) {
                 Column {
                   Spacer(modifier = Modifier.height(12.dp))
@@ -2763,7 +2855,7 @@ fun SettingsScreen(
                       android.webkit.CookieManager.getInstance().getCookie("https://huggingface.co")
                   isHfLoggedIn = !cookies.isNullOrEmpty()
                   if (!cookies.isNullOrEmpty() && !isEmbeddingGemmaDownloading) {
-                    startEmbeddingGemmaDownload(cookies)
+                    startEmbeddingGemmaDownload(cookies, promptForAuthentication = false)
                   }
                 },
                 properties =
@@ -2791,7 +2883,7 @@ fun SettingsScreen(
                                     .getCookie("https://huggingface.co")
                             isHfLoggedIn = !cookies.isNullOrEmpty()
                             if (!cookies.isNullOrEmpty() && !isEmbeddingGemmaDownloading) {
-                              startEmbeddingGemmaDownload(cookies)
+                              startEmbeddingGemmaDownload(cookies, promptForAuthentication = false)
                             }
                           }) {
                             Icon(Icons.Rounded.Close, contentDescription = "Close")
@@ -2811,7 +2903,10 @@ fun SettingsScreen(
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             webViewClient = android.webkit.WebViewClient()
-                            loadUrl(EmbeddingGemma.MODEL_REPO_URL)
+                            loadUrl(
+                                if (selectedSearchModel == SearchModel.GEMMA2)
+                                    "https://huggingface.co/litert-community/embeddinggemma-2-text-vision-440m-litert-lm"
+                                else EmbeddingGemma.MODEL_REPO_URL)
                           }
                         },
                         modifier = Modifier.fillMaxSize())
@@ -2839,7 +2934,8 @@ fun SettingsScreen(
                   isHfLoggedIn = !cookies.isNullOrEmpty()
                   if (!cookies.isNullOrEmpty() && !isDownloadingModel) {
                     val url = if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl else gemma4Url
-                    viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+                    viewModel.downloadModel(
+                        url, "", cookies, false, hfLoginModelType, promptForAuthentication = false)
                   }
                 },
                 properties =
@@ -2871,7 +2967,13 @@ fun SettingsScreen(
                                   val url =
                                       if (hfLoginModelType == ModelType.GEMMA_3N) gemma3nUrl
                                       else gemma4Url
-                                  viewModel.downloadModel(url, "", cookies, false, hfLoginModelType)
+                                  viewModel.downloadModel(
+                                      url,
+                                      "",
+                                      cookies,
+                                      false,
+                                      hfLoginModelType,
+                                      promptForAuthentication = false)
                                 }
                               },
                           modifier = Modifier) {
@@ -2995,117 +3097,145 @@ fun SettingsScreen(
 
               Spacer(modifier = Modifier.height(12.dp))
 
-              OutlinedCard(
-                  onClick =
-                      hapticOnClick {
-                        if (embeddingGemmaDownloadFailed ||
-                            (!isEmbeddingGemmaDownloaded && !isEmbeddingGemmaDownloading)) {
-                          // A Hugging Face session cookie only proves that the user is signed in;
-                          // it does not prove that the gated model license was accepted. Always
-                          // reopen the repo page so a failed/unauthorized download can be fixed.
-                          showEmbeddingGemmaHfLogin = true
-                        }
-                      },
-                  modifier = Modifier.fillMaxWidth(),
-                  shape = RoundedCornerShape(14.dp),
-                  colors =
-                      CardDefaults.outlinedCardColors(
-                          containerColor =
-                              if (isEmbeddingGemmaDownloaded)
-                                  MaterialTheme.colorScheme.secondaryContainer
-                              else Color.Transparent,
-                      ),
-                  border =
-                      if (isEmbeddingGemmaDownloaded)
-                          BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                      else CardDefaults.outlinedCardBorder(),
-              ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                  Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                      Text(
-                          EmbeddingGemma.MODEL_DISPLAY_NAME,
-                          style = MaterialTheme.typography.titleSmall,
-                          fontWeight =
-                              if (isEmbeddingGemmaDownloaded) FontWeight.Bold
-                              else FontWeight.Medium,
-                      )
-                      Spacer(modifier = Modifier.width(8.dp))
-                      Surface(
-                          color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                          shape = RoundedCornerShape(4.dp)) {
-                            Text(
-                                text = stringResource(R.string.search_badge),
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold)
+              listOf(SearchModel.GEMMA2, SearchModel.ORIGINAL).forEachIndexed { index, model ->
+                if (index > 0) Spacer(modifier = Modifier.height(8.dp))
+                val isSelected = selectedSearchModel == model
+                val isDownloaded =
+                    if (isSelected) isEmbeddingGemmaDownloaded else model.available(context)
+                val isDownloading = isSelected && isEmbeddingGemmaDownloading
+                OutlinedCard(
+                    onClick =
+                        hapticOnClick {
+                          if (!isSelected) {
+                            embeddingGemmaError = null
+                            embeddingGemmaIndexingStatus = null
+                            embeddingGemmaDownloadFailed = false
+                            embeddingGemmaIndexedCount = 0
+                            viewModel.setSearchModel(model)
+                          } else if (embeddingGemmaDownloadFailed ||
+                              (!isEmbeddingGemmaDownloaded && !isEmbeddingGemmaDownloading)) {
+                            val cookies =
+                                android.webkit.CookieManager.getInstance()
+                                    .getCookie("https://huggingface.co")
+                            startEmbeddingGemmaDownload(cookies)
                           }
-                    }
-                    Text(
-                        stringResource(R.string.embeddinggemma_model_repo),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    )
-                    Text(
-                        stringResource(R.string.embeddinggemma_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (embeddingGemmaError != null) {
-                      Spacer(modifier = Modifier.height(4.dp))
-                      Text(
-                          embeddingGemmaError.orEmpty(),
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.error,
-                      )
-                    }
-                  }
-                  Spacer(modifier = Modifier.width(12.dp))
-                  Surface(
-                      shape = RoundedCornerShape(8.dp),
-                      color =
-                          if (isEmbeddingGemmaDownloading)
-                              (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
-                          else if (isEmbeddingGemmaDownloaded)
-                              (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
-                          else MaterialTheme.colorScheme.surfaceContainerHighest,
-                      modifier = Modifier.size(32.dp)) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()) {
-                              if (isEmbeddingGemmaDownloading) {
-                                Text(
-                                    text = "${(embeddingGemmaDownloadProgress * 100).toInt()}%",
-                                    style =
-                                        MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
-                                )
-                              } else if (isEmbeddingGemmaDownloaded) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Check,
-                                    contentDescription = stringResource(R.string.status_downloaded),
-                                    tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
-                                    modifier = Modifier.size(20.dp))
-                              } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.Download,
-                                    contentDescription =
-                                        stringResource(R.string.download_embeddinggemma),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp))
-                              }
+                        },
+                    enabled = !isEmbeddingGemmaDownloading && !isEmbeddingGemmaIndexing,
+                    modifier =
+                        if (isSelected) Modifier.fillMaxWidth().startingGuideTarget("embedding")
+                        else Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors =
+                        CardDefaults.outlinedCardColors(
+                            containerColor =
+                                if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+                                else Color.Transparent,
+                        ),
+                    border =
+                        if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                        else CardDefaults.outlinedCardBorder(),
+                ) {
+                  Row(
+                      modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            model.label,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(4.dp)) {
+                              Text(
+                                  text = stringResource(R.string.search_badge),
+                                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.primary,
+                                  fontWeight = FontWeight.Bold)
                             }
                       }
+                      Text(
+                          if (model == SearchModel.GEMMA2)
+                              stringResource(R.string.embeddinggemma2_model_repo)
+                          else stringResource(R.string.embeddinggemma_model_repo),
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                      )
+                      Text(
+                          if (model == SearchModel.GEMMA2)
+                              stringResource(R.string.embeddinggemma2_search_desc)
+                          else stringResource(R.string.embeddinggemma_desc),
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                      if (model == SearchModel.ORIGINAL) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            stringResource(R.string.embeddinggemma_retirement_notice),
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                if (isDark) darkColorScheme().error
+                                else MaterialTheme.colorScheme.error,
+                        )
+                      }
+                      if (isSelected && embeddingGemmaError != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            embeddingGemmaError.orEmpty(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                      }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color =
+                            if (isDownloading)
+                                (if (isDark) Color(0xFF3E2A15) else Color(0xFFFFF3E0))
+                            else if (isDownloaded)
+                                (if (isDark) Color(0xFF1B3B1B) else Color(0xFFE8F5E9))
+                            else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier.size(32.dp)) {
+                          Box(
+                              contentAlignment = Alignment.Center,
+                              modifier = Modifier.fillMaxSize()) {
+                                if (isDownloading) {
+                                  Text(
+                                      text = "${(embeddingGemmaDownloadProgress * 100).toInt()}%",
+                                      style =
+                                          MaterialTheme.typography.labelSmall.copy(
+                                              fontSize = 11.sp),
+                                      fontWeight = FontWeight.Bold,
+                                      color = if (isDark) Color(0xFFFFAB40) else Color(0xFFE65100),
+                                  )
+                                } else if (isDownloaded) {
+                                  Icon(
+                                      imageVector = Icons.Rounded.Check,
+                                      contentDescription =
+                                          stringResource(R.string.status_downloaded),
+                                      tint = if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32),
+                                      modifier = Modifier.size(20.dp))
+                                } else {
+                                  Icon(
+                                      imageVector = Icons.Rounded.Download,
+                                      contentDescription =
+                                          stringResource(R.string.download_embeddinggemma),
+                                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                      modifier = Modifier.size(20.dp))
+                                }
+                              }
+                        }
+                  }
                 }
               }
 
               if (isEmbeddingGemmaDownloaded) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -3144,7 +3274,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            text = stringResource(R.string.search_index_technology_subtitle),
+                            text = selectedSearchModel.label,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                         )
@@ -3219,11 +3349,12 @@ fun SettingsScreen(
                                 hapticOnClick {
                                   settingsScope.launch(Dispatchers.IO) {
                                     val db =
-                                        ScreenshotTextEmbeddingDatabase(context.applicationContext)
+                                        ScreenshotTextEmbeddingDatabase(
+                                            context.applicationContext, selectedSearchModel)
                                     db.clearAll()
                                     db.close()
                                     EmbeddingGemmaSkippedStore.saveEntryIds(
-                                        context.applicationContext, emptySet())
+                                        context.applicationContext, emptySet(), selectedSearchModel)
                                     withContext(Dispatchers.Main) {
                                       embeddingGemmaIndexedCount = 0
                                       embeddingGemmaIndexingStatus = null
@@ -3267,7 +3398,7 @@ fun SettingsScreen(
               val shownIndexedCount =
                   sourceSemanticIndexedCount.coerceIn(0, sourceAllScreenshots.size)
               Surface(
-                  modifier = Modifier.fillMaxWidth(),
+                  modifier = Modifier.fillMaxWidth().startingGuideTarget("efficientnet"),
                   shape = RoundedCornerShape(12.dp),
                   color =
                       MaterialTheme.colorScheme.surfaceVariant.copy(
@@ -4327,9 +4458,10 @@ fun SettingsScreen(
       }
 
       val settingsSections: List<@Composable () -> Unit> =
-          listOf(
+          listOfNotNull(
               overviewSection,
               analysisModelSection,
+              chatSection,
               searchModelSection,
               advancedSettingsSection,
               externalDataSyncSection,
@@ -4337,6 +4469,7 @@ fun SettingsScreen(
           )
       val searchAndAdvancedSection: @Composable () -> Unit = {
         Column {
+          chatSection?.invoke()
           searchModelSection()
           advancedSettingsSection()
         }
@@ -5127,6 +5260,77 @@ private fun formatBenchmarkSeconds(durationMillis: Long?): String {
     "999s+"
   } else {
     String.format(Locale.getDefault(), "%.1fs", seconds)
+  }
+}
+
+@Composable
+private fun Lfm3bModelCard(
+    loading: Boolean,
+    selected: Boolean,
+    isDownloaded: Boolean,
+    isDownloading: Boolean,
+    downloadProgress: Float,
+    onClick: () -> Unit,
+) {
+  SquiggleOutlinedCard(
+      loading = loading,
+      onClick = hapticOnClick(onClick),
+      modifier = Modifier.fillMaxWidth(),
+      cornerRadius = 14.dp,
+      colors =
+          CardDefaults.outlinedCardColors(
+              containerColor =
+                  if (selected) MaterialTheme.colorScheme.secondaryContainer
+                  else Color.Transparent),
+      border =
+          if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+          else CardDefaults.outlinedCardBorder(),
+  ) {
+    Row(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+            LFM2_5_3B_MODEL.displayName,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+        )
+        Text(
+            "LiquidAI/LFM2.5-VL-3B",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+        )
+        Text(
+            stringResource(
+                if (isDownloaded) R.string.model_lfm3b_desc else R.string.model_lfm3b_download),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+      Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = MaterialTheme.colorScheme.surfaceContainerHighest,
+          modifier = Modifier.size(32.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+          if (isDownloading)
+              Text(
+                  "${(downloadProgress * 100).toInt()}%",
+                  style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                  fontWeight = FontWeight.Bold,
+              )
+          else
+              Icon(
+                  imageVector = if (isDownloaded) Icons.Rounded.Check else Icons.Rounded.Download,
+                  contentDescription = null,
+                  tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.size(20.dp),
+              )
+        }
+      }
+    }
   }
 }
 

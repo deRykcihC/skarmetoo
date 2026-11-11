@@ -1,0 +1,13 @@
+<resources>
+    <string name="album_reanalysis_embedding_required">請先在設定中下載 EmbeddingGemma 搜尋模型，以同時重新分析內容和文字嵌入。</string>
+    <string name="album_selection_count">已選取 %1$d 個</string>
+    <string name="album_reanalyze">重新分析</string>
+    <string name="album_deselect_all">取消選取所有相簿</string>
+    <string name="album_select">選取相簿</string>
+    <string name="album_selected_for_reanalysis">已選取重新分析</string>
+    <string name="album_reanalysis_queued">已將 %1$d 張圖片加入重新分析佇列</string>
+    <string name="album_reanalysis_empty">所選相簿中沒有已儲存的分析內容。</string>
+    <string name="album_reanalysis_load_model">請先在設定中載入分析模型。</string>
+    <string name="album_reanalysis_model_changed">模型已變更。就緒後請再次點選重新分析。</string>
+    <string name="album_reanalysis_failed">無法將所選相簿加入佇列。</string>
+</resources>

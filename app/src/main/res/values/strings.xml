@@ -60,7 +60,7 @@
     <string name="leaderboard_show_less">Show less</string>
     <string name="leaderboard_see_more">See more</string>
     <string name="leaderboard_rules">Rules</string>
-    <string name="leaderboard_rules_description">The leaderboard refreshes daily at %1$s in your local time. Only Gemma 4 and LFM 2.5 VL entries are recorded.</string>
+    <string name="leaderboard_rules_description">The leaderboard refreshes daily at %1$s in your local time. Only Gemma 4 and LFM2.5 VL 450M entries are recorded.</string>
     <string name="leaderboard_unknown_device">Unknown device</string>
     <string name="leaderboard_value_unavailable">—</string>
     <string name="leaderboard_image_size_value">%1$s × %2$s px</string>
@@ -271,7 +271,7 @@
     <string name="onboarding_page10_title">Advanced Settings</string>
     <string name="onboarding_page10_desc">Fine-tune image resolution, concurrent analysis instances, and enable a Play/Pause toggle. These options are experimental, use at your own risk, as they may cause instability on less capable hardware.</string>
     <string name="more_models">More models</string>
-    <string name="model_lfm_title">LFM 2.5 VL</string>
+    <string name="model_lfm_title">LFM2.5 VL 450M</string>
     <string name="model_lfm_desc">Ultra-efficient vision model optimized for speed and low thermal impact.</string>
     <string name="beta">BETA</string>
     <string name="look_similar_title">Look similar</string>
@@ -391,5 +391,14 @@
     <string name="leaderboard_filter_metric">Metric</string>
     <string name="leaderboard_metric_image_short">Time/Image</string>
     <string name="leaderboard_metric_text_short">Time/Text</string>
+    <string name="model_lfm3b_desc">Understands images and extracts structured information · 3B · Q8_0</string>
+    <string name="model_lfm3b_download">Tap to download model and vision files · about 3.45 GB</string>
+    <string name="model_lfm3b_downloading">Downloading model and vision files · %1$d%%</string>
+    <string name="model_lfm3b_ready">Downloaded · tap to load</string>
+    <string name="embeddinggemma2_search_desc">Natural language &amp; smarter search. Now with text and vision support for faster, more accurate results.</string>
+    <string name="embeddinggemma2_model_repo" translatable="false">litert-community/embeddinggemma-2-text-vision-440m-litert-lm</string>
+    <string name="embeddinggemma_retirement_notice">Will be removed in the next update. Rebuild your index with EmbeddingGemma 2.</string>
+    <string name="most_relevance">Most Relevance</string>
+    <string name="least_relevance">Least Relevance</string>
 </resources>
 

@@ -27,8 +27,8 @@ android {
     applicationId = "com.deryk.skarmetoo"
     minSdk = 29
     targetSdk = 36
-    versionCode = 43
-    versionName = "1.21"
+    versionCode = 44
+    versionName = "1.22"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -108,16 +108,20 @@ dependencies {
   implementation(libs.material.icon.extended)
   implementation("androidx.documentfile:documentfile:1.0.1")
   implementation("io.coil-kt:coil-compose:2.5.0")
+  implementation("androidx.exifinterface:exifinterface:1.4.2")
   implementation(libs.androidx.palette)
   implementation(libs.localagents.rag)
   implementation(libs.llamatik.library)
   implementation(libs.mlkit.genai)
+  // Bundle the reader so Chat can check printed dates without downloading a model at runtime.
+  debugImplementation("com.google.mlkit:text-recognition:16.0.1")
   implementation(libs.protobuf.javalite)
   implementation(platform(libs.firebase.bom))
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.messaging)
   implementation("com.google.android.play:feature-delivery:2.1.0")
   testImplementation(libs.junit)
+  testImplementation("org.robolectric:robolectric:4.16.1")
   // JVM tests use Android's JSON API to validate LAN protocol messages.
   testImplementation("org.json:json:20250107")
   androidTestImplementation(libs.androidx.junit)
@@ -126,6 +130,68 @@ dependencies {
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   debugImplementation(libs.androidx.compose.ui.tooling)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// Enforce the source-set boundary before distributing a release, independently of R8 shrinking.
+val verifyReleaseFeatureExclusion =
+    tasks.register("verifyReleaseFeatureExclusion") {
+      group = "verification"
+      description = "Checks that release compiles no Chat implementation or bundled OCR dependency."
+      dependsOn("compileReleaseKotlin")
+      doLast {
+        val compiler = tasks.named("compileReleaseKotlin").get()
+        val kotlinSources = compiler.inputs.files.asFileTree.matching { include("**/*.kt") }.files
+        check(kotlinSources.any { it.name == "MainActivity.kt" }) {
+          "Release compiler source inputs were not found."
+        }
+        val forbiddenSources =
+            compiler.inputs.files.asFileTree
+                .matching {
+                  include(
+                      "**/chat/*.kt",
+                      "**/ai/agentic/*.kt",
+                      "**/Gemma4Workflow.kt",
+                      "**/*ChatInference.kt")
+                }
+                .files
+        check(forbiddenSources.isEmpty()) {
+          "Chat sources entered release compilation: $forbiddenSources"
+        }
+        val compiledClasses =
+            compiler.outputs.files.asFileTree.matching { include("**/*.class") }.files
+        check(compiledClasses.any { it.name == "MainActivity.class" }) {
+          "Release compiler class outputs were not found."
+        }
+        val forbiddenClasses =
+            compiler.outputs.files.asFileTree
+                .matching {
+                  include(
+                      "**/chat/**/*.class",
+                      "**/ai/agentic/**/*.class",
+                      "**/Gemma4Workflow*.class",
+                      "**/*ChatInference*.class",
+                      "**/VisionBatch*.class")
+                }
+                .files
+        check(forbiddenClasses.isEmpty()) {
+          "Chat classes entered release output: $forbiddenClasses"
+        }
+        val ocr =
+            configurations
+                .getByName("releaseRuntimeClasspath")
+                .resolvedConfiguration
+                .resolvedArtifacts
+                .filter {
+                  it.moduleVersion.id.group == "com.google.mlkit" &&
+                      it.name.startsWith("text-recognition")
+                }
+        check(ocr.isEmpty()) { "Chat-only OCR dependency entered release: $ocr" }
+        logger.lifecycle("Release verified: no Chat sources, classes, or bundled OCR dependency.")
+      }
+    }
+
+tasks.configureEach {
+  if (name == "assembleRelease" || name == "bundleRelease") dependsOn(verifyReleaseFeatureExclusion)
 }
 
 spotless {

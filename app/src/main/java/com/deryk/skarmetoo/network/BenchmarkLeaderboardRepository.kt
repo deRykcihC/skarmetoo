@@ -164,7 +164,7 @@ enum class LeaderboardMetric(val snapshotField: String) {
 
 enum class LeaderboardModel(val snapshotKey: String, val displayName: String) {
   GEMMA_4("gemma4", "Gemma 4"),
-  LFM_2_5_VL("lfm25vl", "LFM 2.5 VL"),
+  LFM_2_5_VL("lfm25vl", "LFM2.5 VL 450M"),
   ALL("all", "All"),
 
   ;
